@@ -11,6 +11,12 @@ idf_component_register(
         "pmic.c"
         "power.c"
         "settings.c"
+        "gfx.c"
+        "font_spleen_8x16.c"
+        "font_spleen_12x24.c"
+        "font_spleen_16x32.c"
+        "imu_cal.c"
+        "ui.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES
         esp_lcd
@@ -21,4 +27,5 @@ idf_component_register(
         esp_psram
         esp_hw_support
         esp_pm
+        nvs_flash
 )

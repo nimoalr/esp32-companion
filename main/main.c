@@ -26,12 +26,15 @@
 #include "power.h"
 #include "settings.h"
 #include "i2c_bus.h"
+#include "gfx.h"
+#include "ui.h"
 
 static const char *TAG = "eyes";
 
 #define VSYNC_TIMEOUT_MS   40
 #define STATS_PERIOD_US    1000000
 #define DROWSY_PERIOD      (60 / CONFIG_EYES_DROWSY_FPS)
+#define UI_TIMEOUT_MS      (CONFIG_EYES_UI_TIMEOUT_S * 1000u)
 
 typedef struct {
     int x0, y0, x1, y1;     /* [x0, x1) x [y0, y1) in pixels; empty when x0 >= x1 */
@@ -143,18 +146,85 @@ static void brightness_set_now(int pct)
 
 /* ---- render task ----------------------------------------------------------- */
 
+typedef enum { MODE_EYES, MODE_UI } mode_t;
+
 typedef struct {
     eyes_t eyes;
     anim_sm_t sm;
     raster_shape_t shapes[2];
     rect_t prev[2];
     anim_id_t saved_anim;      /* expression to restore after DROWSY */
+    mode_t mode;
+    ui_t ui;
 } render_ctx_t;
+
+/* Paint one UI rect through the band path: black, then the screen's elements clipped to the band. */
+static void push_rect_ui(const rect_t *r, const ui_t *ui)
+{
+    const int w = r->x1 - r->x0;
+    for (int y = r->y0; y < r->y1; y += DISPLAY_BAND_ROWS) {
+        int rows = r->y1 - y;
+        if (rows > DISPLAY_BAND_ROWS) rows = DISPLAY_BAND_ROWS;
+        uint16_t *band = display_acquire_band();
+        memset(band, 0, (size_t)w * rows * 2);
+        const gfx_band_t gb = { .dst = band, .x0 = r->x0, .y0 = y, .w = w, .rows = rows };
+        ui_paint(ui, &gb);
+        display_push(r->x0, y, w, rows, band);
+    }
+}
+
+static void enter_ui(render_ctx_t *c, bool first_boot, uint32_t now_ms)
+{
+    c->mode = MODE_UI;
+    ui_init(&c->ui, &g_settings, first_boot, now_ms);
+    ESP_LOGI(TAG, "UI: %s%s", ui_screen_name(c->ui.screen), first_boot ? " (first boot)" : "");
+}
+
+static void leave_ui(render_ctx_t *c, uint32_t now_ms)
+{
+    c->mode = MODE_EYES;
+    display_fill_black();
+    c->prev[0] = c->prev[1] = rect_empty();
+    anim_set(&c->sm, &c->eyes, ANIM_NEUTRAL, now_ms);
+    ESP_LOGI(TAG, "UI closed");
+}
+
+static void run_ui_actions(render_ctx_t *c, uint32_t now_ms)
+{
+    ui_action_t a;
+    while ((a = ui_take_action(&c->ui)) != UI_ACT_NONE) {
+        switch (a) {
+        case UI_ACT_SAVE:
+            settings_save();
+            break;
+        case UI_ACT_BRIGHTNESS:
+            brightness_set_now(g_settings.brightness_active);
+            break;
+        case UI_ACT_EXIT:
+            leave_ui(c, now_ms);
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+static ui_input_t map_touch(touch_event_type_t t)
+{
+    switch (t) {
+    case TOUCH_LONG_PRESS:  return UI_IN_LONG;
+    case TOUCH_SWIPE_UP:    return UI_IN_UP;
+    case TOUCH_SWIPE_DOWN:  return UI_IN_DOWN;
+    case TOUCH_SWIPE_LEFT:  return UI_IN_LEFT;
+    case TOUCH_SWIPE_RIGHT: return UI_IN_RIGHT;
+    default:                return UI_IN_TAP;
+    }
+}
 
 static void drain_taps(void)
 {
-    tap_event_t tap;
-    while (xQueueReceive(s_tap_q, &tap, 0) == pdTRUE) {
+    touch_event_t ev;
+    while (xQueueReceive(s_tap_q, &ev, 0) == pdTRUE) {
     }
 }
 
@@ -230,6 +300,10 @@ static void render_task(void *arg)
 
     display_fill_black();
     brightness_set_now(g_settings.brightness_active);
+    c.mode = MODE_EYES;
+    if (!g_settings.cal.valid) {
+        enter_ui(&c, true, now_ms);
+    }
 
     power_state_t state = power_state();
 
@@ -243,16 +317,40 @@ static void render_task(void *arg)
     for (;;) {
         now_ms = ms_now();
 
-        /* Taps -> next expression (ACTIVE only; in DROWSY the touch itself wakes us). */
-        tap_event_t tap;
-        while (xQueueReceive(s_tap_q, &tap, 0) == pdTRUE) {
-            if (state == POWER_ACTIVE) {
-                anim_next(&c.sm, &c.eyes, now_ms);
+        /* Gestures. Eyes: tap = next expression, swipes = next/previous, hold = setup UI. */
+        touch_event_t ev;
+        while (xQueueReceive(s_tap_q, &ev, 0) == pdTRUE) {
+            if (c.mode == MODE_UI) {
+                ui_input(&c.ui, map_touch(ev.type), now_ms);
+            } else if (state == POWER_ACTIVE) {
+                switch (ev.type) {
+                case TOUCH_TAP:
+                case TOUCH_SWIPE_LEFT:  anim_next(&c.sm, &c.eyes, now_ms); break;
+                case TOUCH_SWIPE_RIGHT: anim_prev(&c.sm, &c.eyes, now_ms); break;
+                case TOUCH_LONG_PRESS:  enter_ui(&c, false, now_ms); break;
+                default: break;
+                }
             }
         }
+        if (c.mode == MODE_UI) {
+            run_ui_actions(&c, now_ms);
+        }
 
-        /* Power state machine. */
-        const power_state_t next = power_update(now_ms, touch_last_activity_ms());
+        /* Power state machine. The UI counts as activity while it is being used. */
+        uint32_t activity_ms = touch_last_activity_ms();
+        if (c.mode == MODE_UI && (int32_t)(c.ui.last_input_ms - activity_ms) > 0) {
+            activity_ms = c.ui.last_input_ms;
+        }
+        const power_state_t next = power_update(now_ms, activity_ms);
+        if (c.mode == MODE_UI) {
+            if (next != POWER_ACTIVE || now_ms - c.ui.last_input_ms >= UI_TIMEOUT_MS) {
+                if (c.ui.first_boot && next == POWER_ACTIVE) {
+                    c.ui.last_input_ms = now_ms;     /* the wizard waits as long as it takes */
+                } else {
+                    leave_ui(&c, now_ms);
+                }
+            }
+        }
         if (next != state) {
             on_transition(&c, state, next, now_ms);
             state = next;
@@ -265,23 +363,40 @@ static void render_task(void *arg)
             continue;
         }
 
-        anim_update(&c.sm, &c.eyes, now_ms);
-        eyes_update(&c.eyes, now_ms, c.shapes);
-
-        /* Dirty rects: union of each eye's previous and current bounding box. */
-        rect_t dirty[2];
+        rect_t dirty[UI_MAX_DIRTY];
         int ndirty = 0;
-        for (int i = 0; i < 2; i++) {
-            const rect_t cur = shape_rect(&c.shapes[i]);
-            const rect_t u = rect_align(rect_union(&c.prev[i], &cur));
-            c.prev[i] = cur;
-            if (!rect_is_empty(&u)) {
-                dirty[ndirty++] = u;
+        if (c.mode == MODE_UI) {
+            ui_sensors_t sens = { 0 };
+            pmic_battery_t b;
+            power_battery(&b);
+            sens.have_accel = power_last_accel(sens.accel, &sens.accel_ms);
+            sens.batt_mv = b.mv;
+            sens.batt_pct = b.present ? b.percent : -1;
+            sens.charging = b.charging;
+            sens.usb = b.vbus;
+            ui_rect_t ur[UI_MAX_DIRTY];
+            const int n = ui_update(&c.ui, now_ms, &sens, ur);
+            for (int i = 0; i < n; i++) {
+                const rect_t r = rect_align((rect_t){ ur[i].x0, ur[i].y0, ur[i].x1, ur[i].y1 });
+                if (!rect_is_empty(&r)) dirty[ndirty++] = r;
             }
-        }
-        if (ndirty == 2 && rect_overlaps(&dirty[0], &dirty[1])) {
-            dirty[0] = rect_union(&dirty[0], &dirty[1]);
-            ndirty = 1;
+        } else {
+            anim_update(&c.sm, &c.eyes, now_ms);
+            eyes_update(&c.eyes, now_ms, c.shapes);
+
+            /* Dirty rects: union of each eye's previous and current bounding box. */
+            for (int i = 0; i < 2; i++) {
+                const rect_t cur = shape_rect(&c.shapes[i]);
+                const rect_t u = rect_align(rect_union(&c.prev[i], &cur));
+                c.prev[i] = cur;
+                if (!rect_is_empty(&u)) {
+                    dirty[ndirty++] = u;
+                }
+            }
+            if (ndirty == 2 && rect_overlaps(&dirty[0], &dirty[1])) {
+                dirty[0] = rect_union(&dirty[0], &dirty[1]);
+                ndirty = 1;
+            }
         }
 
         /* Pacing: every TE edge when ACTIVE; every Nth edge, light-sleeping in between, when DROWSY. */
@@ -296,7 +411,8 @@ static void render_task(void *arg)
         const int64_t t_frame = esp_timer_get_time();
 
         for (int i = 0; i < ndirty; i++) {
-            push_rect(&dirty[i], c.shapes);
+            if (c.mode == MODE_UI) push_rect_ui(&dirty[i], &c.ui);
+            else push_rect(&dirty[i], c.shapes);
         }
         display_wait_idle();
         brightness_step(state == POWER_ACTIVE ? 3 : 2);
@@ -314,7 +430,7 @@ static void render_task(void *arg)
             pmic_battery_t b;
             power_battery(&b);
             ESP_LOGI(TAG, "%s %s: %" PRIu32 " fps | frame %" PRIu32 " us avg, %" PRIu32 " us max | %" PRIu32 " B/frame, %" PRIu32 " rect(s) | pace %s%s | bri %d%% | batt %u mV %d%%%s%s",
-                     power_state_name(state), anim_name(c.sm.id),
+                     power_state_name(state), c.mode == MODE_UI ? ui_screen_name(c.ui.screen) : anim_name(c.sm.id),
                      (frames * 1000u + elapsed_ms / 2) / elapsed_ms,
                      (uint32_t)(frame_us_sum / frames), frame_us_max,
                      bytes / frames, (rects_sum + frames / 2) / frames,
@@ -337,11 +453,11 @@ void app_main(void)
     ESP_LOGI(TAG, "companion eyes, ESP-IDF %s, reset reason %d, wake cause %d",
              esp_get_idf_version(), (int)esp_reset_reason(), (int)esp_sleep_get_wakeup_cause());
 
-    settings_init();
+    ESP_ERROR_CHECK(settings_init());
     ESP_ERROR_CHECK(i2c_bus_init());
     ESP_ERROR_CHECK(display_init());
 
-    s_tap_q = xQueueCreate(4, sizeof(tap_event_t));
+    s_tap_q = xQueueCreate(8, sizeof(touch_event_t));
     assert(s_tap_q);
     ESP_ERROR_CHECK(touch_init(s_tap_q));
     ESP_ERROR_CHECK(power_init());

@@ -31,6 +31,26 @@ menu "Eyes"
             range 1 100
             default 10
 
+        config EYES_TOUCH_MIRROR_X
+            bool "Mirror touch X"
+            default y
+            help
+                The Waveshare BSP mirrors both touch axes for this panel. Turn
+                off if swipes come out reversed on your unit.
+
+        config EYES_TOUCH_MIRROR_Y
+            bool "Mirror touch Y"
+            default y
+
+    endmenu
+
+    menu "Setup UI"
+
+        config EYES_UI_TIMEOUT_S
+            int "Leave the setup UI after this many seconds without input"
+            range 10 3600
+            default 60
+
     endmenu
 
     menu "Power"
