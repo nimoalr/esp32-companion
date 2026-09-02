@@ -18,6 +18,7 @@ typedef struct {
     uint32_t ease_ms;
     eye_pose_t left;
     eye_pose_t right;
+    uint8_t ease;           /* eye_ease_t; SNAP = fast with a small overshoot */
 } anim_kf_t;
 
 typedef enum { MOD_NONE = 0, MOD_SINE, MOD_JITTER } mod_kind_t;
@@ -38,18 +39,26 @@ typedef struct {
     uint32_t loop_ms;               /* 0 = play once and hold the last keyframe */
     int32_t blink_interval_scale;   /* Q16 */
     int32_t blink_speed_scale;      /* Q16 */
+    int32_t dart_scale;             /* Q16 amplitude of the idle gaze darts */
     anim_mod_t mods[3];
 } anim_def_t;
 
 /* pose fields */
-enum { F_SX, F_SY, F_LT, F_LB, F_SL, F_CV, F_DX, F_DY };
+enum { F_SX, F_SY, F_LT, F_LB, F_SL, F_CV, F_DX, F_DY, F_ANG, F_BEND, F_RTL, F_RTR, F_RBL, F_RBR };
 #define BOTH 3
 #define LEFT 1
 #define RIGHT 2
 
-/* pose: sx, sy, lid_top, lid_bottom, slant, curve, dx, dy (floats -> Q16 at compile time) */
-#define P(sx, sy, lt, lb, sl, cv, dx, dy) \
-    { { Q16(sx), Q16(sy), Q16(lt), Q16(lb), Q16(sl), Q16(cv), Q16(dx), Q16(dy) } }
+/*
+ * pose: sx, sy, lid_top, lid_bottom, slant, curve, dx, dy, then (PX only) the
+ * eye angle in degrees, the top lid bend and the four corner radius scales
+ * TL, TR, BL, BR (floats -> Q16 at compile time)
+ */
+#define PX(sx, sy, lt, lb, sl, cv, dx, dy, ang, bend, rtl, rtr, rbl, rbr) \
+    { { Q16(sx), Q16(sy), Q16(lt), Q16(lb), Q16(sl), Q16(cv), Q16(dx), Q16(dy), Q16(ang), Q16(bend), \
+        { Q16(rtl), Q16(rtr), Q16(rbl), Q16(rbr) } } }
+#define P(sx, sy, lt, lb, sl, cv, dx, dy) PX(sx, sy, lt, lb, sl, cv, dx, dy, 0, 0, 1, 1, 1, 1)
+#define SNAP EYE_EASE_SNAP
 #define NEUTRAL_POSE P(1.00, 1.00, 0.00, 0.00, 0.00, 0.00, 0, 0)
 #define SINE(f, e, a, per, pl, pr)   { MOD_SINE, f, e, Q16(a), per, pl, pr }
 #define JITTER(f, e, a, per)         { MOD_JITTER, f, e, Q16(a), per, 0, 0 }
@@ -58,147 +67,163 @@ enum { F_SX, F_SY, F_LT, F_LB, F_SL, F_CV, F_DX, F_DY };
 /* ---- the original eight --------------------------------------------------- */
 
 static const anim_kf_t kf_neutral[] = {
-    { 0, 250, NEUTRAL_POSE, NEUTRAL_POSE },
+    { 0, 250, NEUTRAL_POSE, NEUTRAL_POSE, 0 },
 };
+#define HAPPY_POSE PX(1.06, 0.88, 0.00, 0.04, 0.00, 0.52, 0, 3, 0, 0, 1.15, 1.15, 0.55, 0.55)
 static const anim_kf_t kf_happy[] = {
-    { 0, 250, P(1.06, 0.88, 0.00, 0.04, 0.00, 0.52, 0, 3), P(1.06, 0.88, 0.00, 0.04, 0.00, 0.52, 0, 3) },
+    { 0, 250, HAPPY_POSE, HAPPY_POSE, SNAP },
 };
+#define SAD_L(dy) PX(1.00, 0.95, 0.12, 0.00, -0.30, 0.00, 0, dy, -9, 0.10, 1.2, 1.2, 1.0, 1.0)
+#define SAD_R(dy) PX(1.00, 0.95, 0.12, 0.00, 0.30, 0.00, 0, dy, 9, 0.10, 1.2, 1.2, 1.0, 1.0)
 static const anim_kf_t kf_sad[] = {
-    { 0,   250, P(1.00, 0.95, 0.14, 0.00, -0.38, 0.00, 0, 2),  P(1.00, 0.95, 0.14, 0.00, 0.38, 0.00, 0, 2) },
-    { 250, 900, P(1.00, 0.95, 0.14, 0.00, -0.38, 0.00, 0, 10), P(1.00, 0.95, 0.14, 0.00, 0.38, 0.00, 0, 10) },
+    { 0,   250, SAD_L(2),  SAD_R(2), 0 },
+    { 250, 900, SAD_L(10), SAD_R(10), 0 },
 };
 static const anim_kf_t kf_angry[] = {
-    { 0, 250, P(1.00, 0.74, 0.20, 0.04, 0.42, 0.00, 0, 0), P(1.00, 0.74, 0.20, 0.04, -0.42, 0.00, 0, 0) },
+    { 0, 220, PX(1.00, 0.74, 0.18, 0.04, 0.34, 0.00, 2, 0, 7, -0.06, 1.0, 0.25, 1.0, 0.7),
+              PX(1.00, 0.74, 0.18, 0.04, -0.34, 0.00, -2, 0, -7, -0.06, 0.25, 1.0, 0.7, 1.0), SNAP },
 };
+#define SURPRISED_POSE PX(1.30, 1.30, 0.00, 0.00, 0.00, 0.00, 0, -2, 0, 0, 1.3, 1.3, 1.3, 1.3)
 static const anim_kf_t kf_surprised[] = {
-    { 0, 120, P(1.30, 1.30, 0.00, 0.00, 0.00, 0.00, 0, 0), P(1.30, 1.30, 0.00, 0.00, 0.00, 0.00, 0, 0) },
+    { 0,  60,  P(0.96, 0.92, 0.00, 0.00, 0.00, 0.00, 0, 2), P(0.96, 0.92, 0.00, 0.00, 0.00, 0.00, 0, 2), 0 },
+    { 60, 150, SURPRISED_POSE, SURPRISED_POSE, SNAP },
 };
-#define SLEEPY(dy) P(1.00, 1.00, 0.55, 0.15, 0.00, 0.00, 0, dy)
+#define SLEEPY(dy) PX(1.00, 1.00, 0.50, 0.15, 0.00, 0.00, 0, dy, 0, 0.16, 1, 1, 1, 1)
 static const anim_kf_t kf_sleepy[] = {
-    { 0,    300,  SLEEPY(2), SLEEPY(2) },
-    { 300,  2500, SLEEPY(6), SLEEPY(6) },
-    { 2800, 2500, SLEEPY(1), SLEEPY(1) },
+    { 0,    300,  SLEEPY(2), SLEEPY(2), 0 },
+    { 300,  2500, SLEEPY(6), SLEEPY(6), 0 },
+    { 2800, 2500, SLEEPY(1), SLEEPY(1), 0 },
 };
 #define LOOK(dx, dy) P(1.00, 1.00, 0.00, 0.00, 0.00, 0.00, dx, dy)
 static const anim_kf_t kf_look_around[] = {
-    { 0,    260, LOOK(-16, 0),  LOOK(-16, 0) },
-    { 900,  300, LOOK(16, 0),   LOOK(16, 0) },
-    { 1800, 300, LOOK(0, -14),  LOOK(0, -14) },
-    { 2700, 300, LOOK(0, 0),    LOOK(0, 0) },
+    { 0,    260, LOOK(-16, 0),  LOOK(-16, 0), 0 },
+    { 900,  300, LOOK(16, 0),   LOOK(16, 0), 0 },
+    { 1800, 300, LOOK(0, -14),  LOOK(0, -14), 0 },
+    { 2700, 300, LOOK(0, 0),    LOOK(0, 0), 0 },
 };
-#define CLOSED_POSE P(1.00, 0.03, 0.00, 0.00, 0.00, 0.00, 0, 0)
+#define CLOSED_POSE P(1.25, 0.03, 0.00, 0.00, 0.00, 0.00, 0, 0)
 static const anim_kf_t kf_wink[] = {
-    { 0,   250, NEUTRAL_POSE, NEUTRAL_POSE },
-    { 500, 90,  NEUTRAL_POSE, CLOSED_POSE },
-    { 800, 120, NEUTRAL_POSE, NEUTRAL_POSE },
+    { 0,   250, NEUTRAL_POSE, NEUTRAL_POSE, 0 },
+    { 500, 110, PX(1.00, 1.04, 0.00, 0.00, 0.00, 0.10, 0, 0, 0, 0, 1, 1, 1, 1), CLOSED_POSE, 0 },
+    { 800, 170, NEUTRAL_POSE, NEUTRAL_POSE, 0 },
 };
 
 /* ---- new expressions -------------------------------------------------------- */
 
 /* One eye wide and lifted, the other squinting: "hm?" */
 static const anim_kf_t kf_curious[] = {
-    { 0, 280, P(1.10, 1.16, 0.00, 0.00, 0.00, 0.00, -3, -8), P(0.98, 0.70, 0.26, 0.04, -0.30, 0.00, -3, 4) },
+    { 0, 280, PX(1.10, 1.16, 0.00, 0.00, 0.00, 0.00, -3, -8, -6, 0, 1.25, 1.25, 1.25, 1.25),
+              PX(0.98, 0.70, 0.26, 0.04, -0.30, 0.00, -3, 4, 0, 0.08, 1, 1, 0.8, 0.8), SNAP },
 };
 /* Lids at odds, gaze drifting side to side. */
 static const anim_kf_t kf_confused[] = {
-    { 0, 280, P(1.00, 1.00, 0.16, 0.00, 0.32, 0.00, 0, 0), P(1.00, 1.05, 0.00, 0.00, 0.00, 0.00, 0, 0) },
+    { 0, 280, PX(1.00, 1.00, 0.16, 0.00, 0.32, 0.00, 0, 0, 0, 0.06, 1, 1, 1, 1),
+              PX(1.00, 1.05, 0.00, 0.00, 0.00, 0.00, 0, 0, 12, 0, 1.15, 1.15, 1.15, 1.15), 0 },
 };
 /* Tall, soft eyes with a heartbeat. */
+#define LOVE_POSE PX(1.05, 1.15, 0.00, 0.00, 0.00, 0.12, 0, -2, 0, -0.05, 1.3, 1.3, 1.3, 1.3)
 static const anim_kf_t kf_love[] = {
-    { 0, 300, P(1.05, 1.15, 0.00, 0.00, 0.00, 0.12, 0, -2), P(1.05, 1.15, 0.00, 0.00, 0.00, 0.12, 0, -2) },
+    { 0, 300, LOVE_POSE, LOVE_POSE, SNAP },
 };
 /* Half lids, eyes circling in opposite directions. */
 static const anim_kf_t kf_dizzy[] = {
-    { 0, 300, P(1.00, 0.95, 0.22, 0.14, 0.00, 0.00, 0, 0), P(1.00, 0.95, 0.22, 0.14, 0.00, 0.00, 0, 0) },
+    { 0, 300, P(1.00, 0.95, 0.22, 0.14, 0.00, 0.00, 0, 0), P(1.00, 0.95, 0.22, 0.14, 0.00, 0.00, 0, 0), 0 },
 };
 /* Happy arcs bouncing. */
+#define LAUGH_POSE PX(1.08, 0.80, 0.00, 0.04, 0.00, 0.56, 0, 4, 0, 0, 1.2, 1.2, 0.45, 0.45)
 static const anim_kf_t kf_laughing[] = {
-    { 0, 220, P(1.08, 0.80, 0.00, 0.04, 0.00, 0.56, 0, 4), P(1.08, 0.80, 0.00, 0.04, 0.00, 0.56, 0, 4) },
+    { 0, 220, LAUGH_POSE, LAUGH_POSE, SNAP },
 };
 /* Wide, high and trembling. */
+#define SCARED_POSE PX(1.18, 1.26, 0.00, 0.00, 0.00, 0.00, 0, -9, 0, -0.04, 1.3, 1.3, 1.3, 1.3)
 static const anim_kf_t kf_scared[] = {
-    { 0, 140, P(1.18, 1.26, 0.00, 0.00, 0.00, 0.00, 0, -9), P(1.18, 1.26, 0.00, 0.00, 0.00, 0.00, 0, -9) },
+    { 0, 140, SCARED_POSE, SCARED_POSE, SNAP },
 };
 /* One flat lid, the other eye open: raised eyebrow. */
 static const anim_kf_t kf_skeptical[] = {
-    { 0, 260, P(1.00, 1.00, 0.42, 0.00, 0.00, 0.00, 4, 0), P(1.02, 1.10, 0.00, 0.00, 0.00, 0.00, 4, -3) },
+    { 0, 260, PX(1.00, 1.00, 0.42, 0.00, 0.00, 0.00, 4, 0, 0, 0.04, 0.6, 0.6, 1, 1),
+              PX(1.02, 1.10, 0.00, 0.00, 0.00, 0.00, 4, -3, -4, -0.12, 1.2, 1.2, 1.2, 1.2), 0 },
 };
 /* Looking up and away, lids a little heavy. */
 static const anim_kf_t kf_thinking[] = {
-    { 0,    300, P(1.00, 1.00, 0.20, 0.00, 0.00, 0.00, -10, -12), P(1.00, 1.00, 0.20, 0.00, 0.00, 0.00, -10, -12) },
-    { 2600, 400, P(1.00, 1.00, 0.20, 0.00, 0.00, 0.00, 8, -12),   P(1.00, 1.00, 0.20, 0.00, 0.00, 0.00, 8, -12) },
+    { 0,    300, P(1.00, 1.00, 0.20, 0.00, 0.00, 0.00, -10, -12), P(1.00, 1.00, 0.20, 0.00, 0.00, 0.00, -10, -12), 0 },
+    { 2600, 400, P(1.00, 1.00, 0.20, 0.00, 0.00, 0.00, 8, -12),   P(1.00, 1.00, 0.20, 0.00, 0.00, 0.00, 8, -12), 0 },
 };
 /* Heavy lids, slow gaze from side to side with long holds. */
-#define BORED(dx) P(1.00, 1.00, 0.36, 0.00, 0.00, 0.00, dx, 4)
+#define BORED(dx) PX(1.00, 1.00, 0.34, 0.00, 0.00, 0.00, dx, 4, 0, 0.12, 0.7, 0.7, 1, 1)
 static const anim_kf_t kf_bored[] = {
-    { 0,    800, BORED(-10), BORED(-10) },
-    { 3000, 800, BORED(10),  BORED(10) },
+    { 0,    800, BORED(-10), BORED(-10), 0 },
+    { 3000, 800, BORED(10),  BORED(10), 0 },
 };
 /* Big eyes jumping. */
+#define EXCITED_POSE PX(1.15, 1.20, 0.00, 0.00, 0.00, 0.10, 0, -4, 0, 0, 1.2, 1.2, 1.2, 1.2)
 static const anim_kf_t kf_excited[] = {
-    { 0, 160, P(1.15, 1.20, 0.00, 0.00, 0.00, 0.10, 0, -4), P(1.15, 1.20, 0.00, 0.00, 0.00, 0.10, 0, -4) },
+    { 0, 160, EXCITED_POSE, EXCITED_POSE, SNAP },
 };
 /* Looking down, occasional glance up. */
 #define SHY(dy) P(1.00, 0.86, 0.14, 0.00, 0.00, 0.00, 6, dy)
 static const anim_kf_t kf_shy[] = {
-    { 0,    300, SHY(14), SHY(14) },
-    { 2500, 300, SHY(-2), SHY(-2) },
-    { 3200, 300, SHY(14), SHY(14) },
+    { 0,    300, SHY(14), SHY(14), 0 },
+    { 2500, 300, SHY(-2), SHY(-2), 0 },
+    { 3200, 300, SHY(14), SHY(14), 0 },
 };
 /* Flat lids and an eye-roll. */
-#define ANN(dx, dy) P(1.00, 1.00, 0.40, 0.00, 0.00, 0.00, dx, dy)
+#define ANN(dx, dy) PX(1.00, 1.00, 0.38, 0.00, 0.00, 0.00, dx, dy, 0, 0.10, 0.6, 0.6, 1, 1)
 static const anim_kf_t kf_annoyed[] = {
-    { 0,    300, ANN(0, 0),     ANN(0, 0) },
-    { 700,  260, ANN(12, 0),    ANN(12, 0) },
-    { 960,  260, ANN(9, -11),   ANN(9, -11) },
-    { 1220, 260, ANN(0, -13),   ANN(0, -13) },
-    { 1480, 260, ANN(-9, -9),   ANN(-9, -9) },
-    { 1740, 300, ANN(0, 0),     ANN(0, 0) },
+    { 0,    300, ANN(0, 0),     ANN(0, 0), 0 },
+    { 700,  260, ANN(12, 0),    ANN(12, 0), 0 },
+    { 960,  260, ANN(9, -11),   ANN(9, -11), 0 },
+    { 1220, 260, ANN(0, -13),   ANN(0, -13), 0 },
+    { 1480, 260, ANN(-9, -9),   ANN(-9, -9), 0 },
+    { 1740, 300, ANN(0, 0),     ANN(0, 0), 0 },
 };
 /* Closed, breathing slowly. */
 static const anim_kf_t kf_sleeping[] = {
-    { 0, 600, P(1.00, 0.06, 0.00, 0.00, 0.00, 0.00, 0, 6), P(1.00, 0.06, 0.00, 0.00, 0.00, 0.00, 0, 6) },
+    { 0, 600, P(1.00, 0.06, 0.00, 0.00, 0.00, 0.00, 0, 6), P(1.00, 0.06, 0.00, 0.00, 0.00, 0.00, 0, 6), 0 },
 };
 /* Dance: the pose is neutral, everything happens in the modulation layer. */
 static const anim_kf_t kf_dance[] = {
-    { 0, 250, NEUTRAL_POSE, NEUTRAL_POSE },
+    { 0, 250, NEUTRAL_POSE, NEUTRAL_POSE, 0 },
 };
 
-#define DEF(nm, arr, loop, bi, bs, ...) \
-    { nm, arr, (int)(sizeof(arr) / sizeof(arr[0])), loop, Q16(bi), Q16(bs), { __VA_ARGS__ } }
+/* name, keyframes, loop ms, blink interval scale, blink speed scale, dart amplitude scale, modulators */
+#define DEF(nm, arr, loop, bi, bs, ds, ...) \
+    { nm, arr, (int)(sizeof(arr) / sizeof(arr[0])), loop, Q16(bi), Q16(bs), Q16(ds), { __VA_ARGS__ } }
 
 static const anim_def_t k_anims[ANIM_COUNT] = {
-    [ANIM_NEUTRAL]     = DEF("NEUTRAL",     kf_neutral,     0,    1.0, 1.0, NOMOD),
-    [ANIM_HAPPY]       = DEF("HAPPY",       kf_happy,       0,    1.0, 1.0, NOMOD),
-    [ANIM_SAD]         = DEF("SAD",         kf_sad,         0,    1.3, 1.3, NOMOD),
-    [ANIM_ANGRY]       = DEF("ANGRY",       kf_angry,       0,    1.0, 1.0, NOMOD),
-    [ANIM_SURPRISED]   = DEF("SURPRISED",   kf_surprised,   0,    1.6, 1.0, NOMOD),
-    [ANIM_SLEEPY]      = DEF("SLEEPY",      kf_sleepy,      5300, 2.5, 2.2, NOMOD),
-    [ANIM_LOOK_AROUND] = DEF("LOOK_AROUND", kf_look_around, 3600, 1.0, 1.0, NOMOD),
-    [ANIM_WINK]        = DEF("WINK",        kf_wink,        3500, 1.0, 1.0, NOMOD),
-    [ANIM_CURIOUS]     = DEF("CURIOUS",     kf_curious,     0,    1.2, 1.0,
+    [ANIM_NEUTRAL]     = DEF("NEUTRAL",     kf_neutral,     0,    1.0, 1.0, 1.0, NOMOD),
+    [ANIM_HAPPY]       = DEF("HAPPY",       kf_happy,       0,    1.0, 1.0, 0.9, NOMOD),
+    [ANIM_SAD]         = DEF("SAD",         kf_sad,         0,    1.3, 1.3, 0.5, NOMOD),
+    [ANIM_ANGRY]       = DEF("ANGRY",       kf_angry,       0,    1.0, 1.0, 0.6, NOMOD),
+    [ANIM_SURPRISED]   = DEF("SURPRISED",   kf_surprised,   0,    1.6, 1.0, 0.3, NOMOD),
+    [ANIM_SLEEPY]      = DEF("SLEEPY",      kf_sleepy,      5300, 2.5, 2.2, 0.4, NOMOD),
+    [ANIM_LOOK_AROUND] = DEF("LOOK_AROUND", kf_look_around, 3600, 1.0, 1.0, 0.5, NOMOD),
+    [ANIM_WINK]        = DEF("WINK",        kf_wink,        3500, 1.0, 1.0, 0.8, NOMOD),
+    [ANIM_CURIOUS]     = DEF("CURIOUS",     kf_curious,     0,    1.2, 1.0, 0.7,
                              SINE(F_DY, LEFT, 3.0, 1500, 0, 0)),
-    [ANIM_CONFUSED]    = DEF("CONFUSED",    kf_confused,    0,    1.0, 1.0,
-                             SINE(F_DX, BOTH, 8.0, 1600, 0, 0), SINE(F_DY, RIGHT, 4.0, 900, 0, 90)),
-    [ANIM_LOVE]        = DEF("LOVE",        kf_love,        0,    1.4, 1.2,
+    [ANIM_CONFUSED]    = DEF("CONFUSED",    kf_confused,    0,    1.0, 1.0, 0.8,
+                             SINE(F_DX, BOTH, 8.0, 1600, 0, 0), SINE(F_DY, RIGHT, 4.0, 900, 0, 90),
+                             SINE(F_ANG, RIGHT, 4.0, 1600, 90, 90)),
+    [ANIM_LOVE]        = DEF("LOVE",        kf_love,        0,    1.4, 1.2, 0.5,
                              SINE(F_SY, BOTH, 0.07, 700, 0, 0), SINE(F_SX, BOTH, 0.05, 700, 0, 0)),
-    [ANIM_DIZZY]       = DEF("DIZZY",       kf_dizzy,       0,    2.0, 1.5,
-                             SINE(F_DX, BOTH, 10.0, 900, 0, 180), SINE(F_DY, BOTH, 10.0, 900, 90, 270)),
-    [ANIM_LAUGHING]    = DEF("LAUGHING",    kf_laughing,    0,    1.5, 1.0,
+    [ANIM_DIZZY]       = DEF("DIZZY",       kf_dizzy,       0,    2.0, 1.5, 0.0,
+                             SINE(F_DX, BOTH, 10.0, 900, 0, 180), SINE(F_DY, BOTH, 10.0, 900, 90, 270),
+                             SINE(F_ANG, BOTH, 14.0, 900, 180, 0)),
+    [ANIM_LAUGHING]    = DEF("LAUGHING",    kf_laughing,    0,    1.5, 1.0, 0.5,
                              SINE(F_DY, BOTH, 5.0, 260, 0, 0), SINE(F_SY, BOTH, 0.05, 260, 90, 90)),
-    [ANIM_SCARED]      = DEF("SCARED",      kf_scared,      0,    3.0, 0.6,
+    [ANIM_SCARED]      = DEF("SCARED",      kf_scared,      0,    3.0, 0.6, 1.4,
                              JITTER(F_DX, BOTH, 3.0, 50), JITTER(F_DY, BOTH, 3.0, 50)),
-    [ANIM_SKEPTICAL]   = DEF("SKEPTICAL",   kf_skeptical,   0,    1.0, 1.0, NOMOD),
-    [ANIM_THINKING]    = DEF("THINKING",    kf_thinking,    5200, 1.3, 1.3,
+    [ANIM_SKEPTICAL]   = DEF("SKEPTICAL",   kf_skeptical,   0,    1.0, 1.0, 0.6, NOMOD),
+    [ANIM_THINKING]    = DEF("THINKING",    kf_thinking,    5200, 1.3, 1.3, 0.6,
                              SINE(F_DX, BOTH, 2.0, 2500, 0, 0)),
-    [ANIM_BORED]       = DEF("BORED",       kf_bored,       6000, 1.6, 1.8, NOMOD),
-    [ANIM_EXCITED]     = DEF("EXCITED",     kf_excited,     0,    0.7, 0.8,
+    [ANIM_BORED]       = DEF("BORED",       kf_bored,       6000, 1.6, 1.8, 0.5, NOMOD),
+    [ANIM_EXCITED]     = DEF("EXCITED",     kf_excited,     0,    0.7, 0.8, 1.2,
                              SINE(F_DY, BOTH, 8.0, 320, 0, 0), SINE(F_SX, BOTH, 0.04, 320, 90, 90)),
-    [ANIM_SHY]         = DEF("SHY",         kf_shy,         5000, 1.0, 1.0, NOMOD),
-    [ANIM_ANNOYED]     = DEF("ANNOYED",     kf_annoyed,     4500, 1.0, 1.0, NOMOD),
-    [ANIM_SLEEPING]    = DEF("SLEEPING",    kf_sleeping,    0,    20.0, 3.0,
+    [ANIM_SHY]         = DEF("SHY",         kf_shy,         5000, 1.0, 1.0, 0.6, NOMOD),
+    [ANIM_ANNOYED]     = DEF("ANNOYED",     kf_annoyed,     4500, 1.0, 1.0, 0.5, NOMOD),
+    [ANIM_SLEEPING]    = DEF("SLEEPING",    kf_sleeping,    0,    20.0, 3.0, 0.0,
                              SINE(F_DY, BOTH, 2.0, 3200, 0, 0), SINE(F_SX, BOTH, 0.02, 3200, 0, 0)),
-    [ANIM_DANCE]       = DEF("DANCE",       kf_dance,       0,    1.0, 1.0, NOMOD),
+    [ANIM_DANCE]       = DEF("DANCE",       kf_dance,       0,    1.0, 1.0, 0.5, NOMOD),
 };
 
 const char *anim_name(anim_id_t id)
@@ -231,7 +256,7 @@ static void anim_enter(anim_sm_t *sm, eyes_t *eyes, anim_id_t id, uint32_t now_m
     sm->dance_side = 1;
     sm->dance_last_sound_ms = now_ms;
     eyes_clear_mod(eyes);
-    eyes_set_idle_rates(eyes, d->blink_interval_scale, d->blink_speed_scale);
+    eyes_set_idle_rates(eyes, d->blink_interval_scale, d->blink_speed_scale, d->dart_scale);
     ESP_LOGI(TAG, "-> %s", d->name);
 }
 
@@ -362,6 +387,7 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
         m->dy = (int32_t)((-16.f * kick) * 65536.f);
         m->dx = (int32_t)((7.f * kick * side + 9.f * sm->dance_bal * music) * 65536.f);
         m->slant = (int32_t)((0.22f * kick * side) * 65536.f);
+        m->angle = (int32_t)((9.f * kick * side) * 65536.f);
         m->curve = (int32_t)((0.55f * loud) * 65536.f);
         m->lid_bottom = (int32_t)((0.05f * loud) * 65536.f);
         /* quiet for a long time: lids sag */
@@ -373,7 +399,7 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
         }
     }
     /* blink a little more in a lively room */
-    eyes_set_idle_rates(eyes, (int32_t)((1.0f - 0.4f * loud) * 65536.f), Q16_ONE);
+    eyes_set_idle_rates(eyes, (int32_t)((1.0f - 0.4f * loud) * 65536.f), Q16_ONE, Q16(0.5));
 }
 
 void anim_update(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
@@ -388,8 +414,8 @@ void anim_update(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
     }
     while (sm->next_kf < d->nkf && d->kf[sm->next_kf].t_ms <= el) {
         const anim_kf_t *k = &d->kf[sm->next_kf];
-        eyes_set_target(eyes, 0, &k->left, k->ease_ms, now_ms);
-        eyes_set_target(eyes, 1, &k->right, k->ease_ms, now_ms);
+        eyes_set_target_ex(eyes, 0, &k->left, k->ease_ms, now_ms, (eye_ease_t)k->ease);
+        eyes_set_target_ex(eyes, 1, &k->right, k->ease_ms, now_ms, (eye_ease_t)k->ease);
         sm->next_kf++;
     }
 

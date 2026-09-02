@@ -118,7 +118,7 @@ void gfx_disc(const gfx_band_t *b, int cx, int cy, int r, uint16_t color)
     }
     raster_shape_t s = {
         .cx = cx << 16, .cy = cy << 16,
-        .hw = r << 16, .hh = r << 16, .r = r << 16,
+        .hw = r << 16, .hh = r << 16, .rad = { r << 16, r << 16, r << 16, r << 16 },
         .top_base = (cy - r - 1) << 16, .slant = 0,
         .bot_base = (cy + r + 1) << 16, .curve = 0,
         .lut = lut,
