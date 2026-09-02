@@ -43,6 +43,13 @@
 #define BOARD_IMU_ADDR         0x6B             /* [HWREF] "IMU address selected by the board schematic" */
 #define BOARD_IMU_INT2         GPIO_NUM_21      /* [HWREF][SCH QMI_INT2 -> GPIO21]; RTC-capable, usable as a sleep wake source */
 
+/* ---- ES7210 microphone ADC (I2S + shared I2C bus) ------------------------- */
+#define BOARD_I2S_MCLK         GPIO_NUM_42      /* [HWREF][BSP BSP_I2S_MCLK][SCH I2S_MCLK] */
+#define BOARD_I2S_BCLK         GPIO_NUM_9       /* [HWREF][BSP BSP_I2S_SCLK][SCH I2S_SCLK] */
+#define BOARD_I2S_LRCK         GPIO_NUM_45      /* [HWREF][BSP BSP_I2S_LCLK][SCH I2S_LRCK] */
+#define BOARD_I2S_DIN          GPIO_NUM_10      /* [HWREF][BSP BSP_I2S_DSIN][SCH I2S_ASDOUT]: ES7210 -> ESP32 */
+#define BOARD_ES7210_ADDR_7BIT 0x40             /* [HWREF]; esp_codec_dev takes the 8-bit form 0x80 */
+
 /* ---- AXP2101 PMIC (shared I2C bus) ---------------------------------------- */
 #define BOARD_PMIC_ADDR        0x34             /* [HWREF][SCH] */
 

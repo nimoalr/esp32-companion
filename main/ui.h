@@ -36,6 +36,7 @@ typedef enum {
     UI_ACT_EXIT,            /* leave the UI, back to the eyes */
     UI_ACT_SAVE,            /* settings changed, persist them */
     UI_ACT_BRIGHTNESS,      /* apply g_settings.brightness_active now */
+    UI_ACT_DANCE,           /* leave the UI into the dance mode */
 } ui_action_t;
 
 typedef struct {

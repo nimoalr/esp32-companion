@@ -8,3 +8,5 @@ dependencies:
   # CST9217 capacitive touch driver, maintained by Waveshare. Pulls in
   # espressif/esp_lcd_touch as a public dependency.
   waveshare/esp_lcd_touch_cst9217: "^2.0.0"
+  # ES7210 microphone ADC driver and the I2S/I2C glue around it (Espressif).
+  espressif/esp_codec_dev: "~1.5"

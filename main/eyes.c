@@ -101,6 +101,11 @@ void eyes_set_target(eyes_t *e, int eye, const eye_pose_t *pose, uint32_t dur_ms
     }
 }
 
+void eyes_clear_mod(eyes_t *e)
+{
+    memset(e->mod, 0, sizeof(e->mod));
+}
+
 void eyes_set_idle_rates(eyes_t *e, int32_t blink_interval_scale, int32_t blink_speed_scale)
 {
     e->idle.blink_interval_scale = blink_interval_scale;
@@ -170,27 +175,41 @@ static void idle_saccade(eyes_idle_t *idle, uint32_t now_ms, int32_t *ox, int32_
     *oy = idle->sacc_from_y + q16_mul(idle->sacc_to_y - idle->sacc_from_y, k);
 }
 
-static void eye_effective_params(const EyeState *s, int32_t blink, int32_t sx_off, int32_t sy_off, EyeParams *p)
+static inline int32_t clamp_q16(int32_t v, int32_t lo, int32_t hi)
 {
-    const eye_pose_t *c = &s->cur;
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
+static void eye_effective_params(const EyeState *s, const eye_pose_t *mod, int32_t blink, int32_t sx_off, int32_t sy_off, EyeParams *p)
+{
+    eye_pose_t c;
+    for (int i = 0; i < EYE_POSE_FIELDS; i++) {
+        c.v[i] = s->cur.v[i] + mod->v[i];
+    }
+    c.sx = clamp_q16(c.sx, Q16(0.2), Q16(2.0));
+    c.sy = clamp_q16(c.sy, Q16(0.02), Q16(2.0));
+    c.lid_top = clamp_q16(c.lid_top, 0, Q16_ONE);
+    c.lid_bottom = clamp_q16(c.lid_bottom, 0, Q16_ONE);
+    c.curve = clamp_q16(c.curve, 0, Q16_ONE);
+
     p->color = s->base.color;
-    p->cx = s->base.cx + c->dx + sx_off;
-    p->cy = s->base.cy + c->dy + sy_off;
-    p->w = q16_mul(s->base.w, c->sx);
-    int32_t h = q16_mul(s->base.h, c->sy);
+    p->cx = s->base.cx + c.dx + sx_off;
+    p->cy = s->base.cy + c.dy + sy_off;
+    p->w = q16_mul(s->base.w, c.sx);
+    int32_t h = q16_mul(s->base.h, c.sy);
     h = q16_mul(h, Q16_ONE - blink);
     if (h < (EYE_MIN_H_PX << 16)) {
         h = EYE_MIN_H_PX << 16;
     }
     p->h = h;
-    int32_t r = q16_mul(s->base.radius, c->sx < c->sy ? c->sx : c->sy);
+    int32_t r = q16_mul(s->base.radius, c.sx < c.sy ? c.sx : c.sy);
     if (r > h / 2) r = h / 2;
     if (r > p->w / 2) r = p->w / 2;
     p->radius = r;
-    p->lid_top = c->lid_top;
-    p->lid_bottom = c->lid_bottom;
-    p->slant = c->slant;
-    p->curve = q16_mul(h, c->curve);
+    p->lid_top = c.lid_top;
+    p->lid_bottom = c.lid_bottom;
+    p->slant = c.slant;
+    p->curve = q16_mul(h, c.curve);
 }
 
 static void params_to_shape(const EyeParams *p, const uint16_t *lut, raster_shape_t *s)
@@ -218,7 +237,7 @@ void eyes_update(eyes_t *e, uint32_t now_ms, raster_shape_t out[2])
         EyeState *s = &e->eye[i];
         eye_ease(s, now_ms);
         EyeParams p;
-        eye_effective_params(s, blink, sx, sy, &p);
+        eye_effective_params(s, &e->mod[i], blink, sx, sy, &p);
         params_to_shape(&p, s->lut, &out[i]);
     }
 }

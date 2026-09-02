@@ -59,6 +59,7 @@ typedef struct {
 
 typedef struct {
     EyeState eye[2];                   /* 0 = left (viewer's left), 1 = right */
+    eye_pose_t mod[2];                 /* per-frame additive modulation (wobble, bounce, beat); deltas */
     eyes_idle_t idle;
 } eyes_t;
 
@@ -66,6 +67,9 @@ void eyes_init(eyes_t *e, uint32_t now_ms);
 
 /* Retarget every pose field of one eye; a retarget during a transition restarts from the current value. */
 void eyes_set_target(eyes_t *e, int eye, const eye_pose_t *pose, uint32_t dur_ms, uint32_t now_ms);
+
+/* Per-frame additive modulation on top of the eased pose; cleared by eyes_clear_mod(). */
+void eyes_clear_mod(eyes_t *e);
 
 /* Idle-layer tuning used by animations. */
 void eyes_set_idle_rates(eyes_t *e, int32_t blink_interval_scale, int32_t blink_speed_scale);

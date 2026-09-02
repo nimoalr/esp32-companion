@@ -44,6 +44,20 @@ menu "Eyes"
 
     endmenu
 
+    menu "Dance mode (microphones)"
+
+        config EYES_AUDIO_I2S_NUM
+            int "I2S port for the ES7210"
+            range 0 1
+            default 1
+
+        config EYES_AUDIO_GAIN_DB
+            int "Microphone gain (dB)"
+            range 0 40
+            default 30
+
+    endmenu
+
     menu "Setup UI"
 
         config EYES_UI_TIMEOUT_S

@@ -188,8 +188,29 @@ measured. Runtime assumes 85 % of nominal capacity is usable.
 A day with one hour of active use and the rest asleep is about 120 mAh, so
 roughly 3.5 days per charge. Formula: `hours = mAh x 0.85 / mA`.
 
+## Microphones: ES7210
+
+Only used by the dance mode; the I2S peripheral and the codec are brought up
+when the expression is entered and torn down when it is left.
+
+| Signal | GPIO | Source |
+| --- | ---: | --- |
+| I2S MCLK | 42 | HWREF, BSP `BSP_I2S_MCLK` |
+| I2S BCLK | 9 | HWREF, BSP `BSP_I2S_SCLK` |
+| I2S LRCK / WS | 45 | HWREF, BSP `BSP_I2S_LCLK` |
+| I2S data in (ES7210 SDOUT) | 10 | HWREF, BSP `BSP_I2S_DSIN` |
+
+ES7210 at 7-bit address `0x40` (esp_codec_dev takes the 8-bit form `0x80`).
+MIC1 and MIC2 are the two front microphones; the firmware selects exactly
+those two, which keeps the codec in standard 2-channel I2S rather than the
+4-slot TDM the Waveshare BSP uses for its echo-reference path. Sample format
+16 kHz, 16-bit stereo, the same as Waveshare's spectrum-analyser example. The
+ES7210 is an I2S slave and needs MCLK; the I2S driver generates it at 256 x fs.
+Microphone gain is `EYES_AUDIO_GAIN_DB` (30 dB default, as in the Waveshare
+example). The ES8311 playback codec and the NS4150B amplifier are not used.
+
 ## Things deliberately not touched
 
-ES8311/ES7210 audio, NS4150B amplifier (GPIO46), PCF85063 RTC, TCA9554
-expander (0x20), SD card (GPIO1/2/3/41), USB, Wi-Fi, Bluetooth, NVS. Their
-GPIOs are never configured.
+ES8311 playback, NS4150B amplifier (GPIO46), PCF85063 RTC, TCA9554 expander
+(0x20), SD card (GPIO1/2/3/41), USB, Wi-Fi, Bluetooth. Their GPIOs are never
+configured.
