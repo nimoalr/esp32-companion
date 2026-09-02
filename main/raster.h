@@ -47,3 +47,6 @@ void raster_build_lut(uint16_t lut[256], uint8_t r, uint8_t g, uint8_t b);
  * Shapes must not overlap each other.
  */
 void raster_band(uint16_t *dst, int x0, int y0, int w, int rows, const raster_shape_t *shapes, int nshapes);
+
+/* Same, but without clearing the band and without touching pixels the shapes do not cover. */
+void raster_shapes_over(uint16_t *dst, int x0, int y0, int w, int rows, const raster_shape_t *shapes, int nshapes);

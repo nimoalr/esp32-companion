@@ -123,6 +123,12 @@ void anim_next(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
     anim_update(sm, eyes, now_ms);
 }
 
+void anim_prev(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
+{
+    anim_enter(sm, eyes, (anim_id_t)((sm->id + ANIM_COUNT - 1) % ANIM_COUNT), now_ms);
+    anim_update(sm, eyes, now_ms);
+}
+
 void anim_set(anim_sm_t *sm, eyes_t *eyes, anim_id_t id, uint32_t now_ms)
 {
     anim_enter(sm, eyes, id, now_ms);

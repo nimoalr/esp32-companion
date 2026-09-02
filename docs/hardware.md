@@ -91,8 +91,10 @@ firmware logs a warning and paces frames with a 60 Hz `esp_timer` instead.
 * Driver: `waveshare/esp_lcd_touch_cst9217` v2.0.0 on top of
   `espressif/esp_lcd_touch` v1.2.1. Interrupt on the falling edge of GPIO11
   (`levels.interrupt = 0`, as in the BSP), reset active low on GPIO40.
-* The BSP mirrors X and Y for LVGL. Tap detection only needs travel distance,
-  so this firmware reads raw coordinates and applies no mirroring.
+* The BSP mirrors X and Y for LVGL; this firmware does the same
+  (`EYES_TOUCH_MIRROR_X/Y`, both on by default) so swipe directions match the
+  screen. Not yet verified on hardware; flip the options if they come out
+  reversed.
 * The driver reads the report register with retries and a 2 ms settle delay,
   so each poll costs a few milliseconds of the touch task's time on core 0.
 
@@ -140,6 +142,18 @@ SLEEP the chip is reset into its hardware wake-on-motion mode (low-power 21 Hz
 accelerometer, threshold `EYES_WOM_MG`, INT2 idles low and goes high on
 motion); normal data output is unavailable in that mode, so the chip is reset
 back to polling mode on wake.
+
+Calibration (setup UI, first boot): three poses, 40 still samples each. In
+each pose one axis reads about +1 g and the other two read their bias; the
+bias of an axis is the mean of its readings in the two poses where it is
+horizontal, the scale comes from the pose where it is vertical (+-15 %
+tolerance, otherwise the pose is rejected). Because the accelerometer reads
+"up", the flat pose gives the out-of-screen direction, the upright pose the
+screen-up direction and the left-edge pose the screen-right direction; after
+Gram-Schmidt these form the sensor-to-screen rotation stored with the
+calibration. Everything downstream (level screen, future motion features)
+works in screen coordinates, so the sensor's mounting orientation never has
+to be hard-coded.
 
 ## Sleep and wake plumbing
 

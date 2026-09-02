@@ -60,6 +60,9 @@ void power_wake_to_active(uint32_t now_ms);
 /* DEEP: does not return. */
 void power_enter_deep(void) __attribute__((noreturn));
 
+/* Latest raw accelerometer sample and its timestamp (ms); returns false if the IMU is unavailable. */
+bool power_last_accel(int16_t raw[3], uint32_t *sample_ms);
+
 /* Battery telemetry, refreshed every few seconds by power_update(). */
 void power_battery(pmic_battery_t *out);
 bool power_motion_recent(uint32_t now_ms, uint32_t window_ms);

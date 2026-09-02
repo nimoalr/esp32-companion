@@ -58,11 +58,36 @@ used as a wake button. Holding PWR for 6 s forces the PMIC off at any time
 (AXP2101 hardware default). The state machine can be disabled entirely
 (`EYES_POWER_ENABLE=n`) for benchmarking.
 
+**Setup UI.** Hold a finger on the eyes for 0.7 s to open a small setup menu
+styled like a terminal UI and laid out for the disc: title with a rule, a list
+with an inverted selection bar, bracketed progress bars, a thin ring at the
+edge, hints along the bottom. Navigation is single-touch: swipe up/down to
+move, tap to select, hold (or swipe right) to go back. The menu leaves after
+60 s without input (`EYES_UI_TIMEOUT_S`).
+
+| Screen | What it does |
+| --- | --- |
+| Calibrate accel | Three poses (flat screen-up, upright USB-down, resting on the left edge), 2 s of stillness each with a `[####....]` bar. Computes per-axis bias and scale and the sensor-to-screen frame, shows the result, tap saves it to NVS. Runs automatically on first boot. |
+| Level | Ball on cross-hairs driven by the calibrated accelerometer, pitch and roll in degrees. Turns green when level. |
+| Brightness | Tap or swipe cycles 25/50/75/100 %; applied live, saved on exit. |
+| Battery | Voltage, percent, charge state; the outer ring is the gauge. |
+| Back to eyes | Leave the menu. |
+
+Text is Spleen (BSD-2-Clause, `tools/bdf2c.py` converts the BDF files into
+`main/font_spleen_*.c`). In the eyes, a swipe left/right also steps through
+the expressions.
+
+**Persistence.** Brightness and the accelerometer calibration live in NVS
+(namespace `companion`). `idf.py erase-flash` brings back the first-boot
+wizard.
+
 **Console.** One line per second:
 
 ```
 I (12345) eyes: ACTIVE NEUTRAL: 60 fps | frame 3210 us avg, 3480 us max | 62604 B/frame, 2 rect(s) | pace TE | bri 100% | batt 3987 mV 87% chg usb
 ```
+
+In the setup UI the expression name is replaced by the screen name.
 
 `frame` is the wall time from the V-blank edge until the last DMA transfer of
 the frame completed; a full frame would be 434 312 B. Battery numbers come from
@@ -79,7 +104,7 @@ main/
   main.c                  render task (core 1): state transitions, dirty rects, stats
   board.h                 pin map, I2C addresses, panel constants, each with its source
   display.c/.h            QSPI + CO5300 via esp_lcd, band buffers, TE sync, brightness, sleep
-  touch.c/.h              CST9217 via esp_lcd_touch, ISR -> task (core 0) -> tap queue
+  touch.c/.h              CST9217 via esp_lcd_touch, ISR -> task (core 0) -> gesture queue (tap, hold, swipes)
   raster.c/.h             Q16.16 scanline rasteriser, 4x vertical sampling, coverage LUT
   eyes.c/.h               EyeParams / EyeState, per-field easing, blink + saccade layer
   anim.c/.h               keyframe table for the eight expressions + state machine
@@ -87,7 +112,12 @@ main/
   imu.c/.h                QMI8658: accelerometer polling, hardware wake-on-motion
   pmic.c/.h               AXP2101: battery telemetry, soft power off
   i2c_bus.c/.h            the one shared I2C bus
-  settings.c/.h           runtime settings (brightness), Kconfig defaults, no persistence yet
+  settings.c/.h           brightness + calibration in NVS, Kconfig defaults
+  ui.c/.h                 setup screens (menu, calibration wizard, level, brightness, battery); pure C
+  gfx.c/.h                band-clipped primitives: fill, text, anti-aliased disc and ring/arc
+  font_spleen_*.c         Spleen 8x16 / 12x24 / 16x32 glyph tables (generated)
+  imu_cal.c/.h            three-pose accelerometer calibration and screen-frame tilt; pure C
+tools/bdf2c.py            BDF -> C glyph table converter
 docs/hardware.md          pin sources, TE, QSPI clock, power rails, battery budget
 ```
 
@@ -117,8 +147,9 @@ docs/hardware.md          pin sources, TE, QSPI clock, power rails, battery budg
   time based, never frame-count based.
 * **Tasks.** Render task pinned to core 1; it is the only task that touches
   the panel, the IMU and the PMIC. Touch task on core 0: GPIO ISR ->
-  semaphore -> I2C read -> tap detector -> queue. SPI and I2C interrupts live
-  on core 0.
+  semaphore -> I2C read -> gesture detector -> queue. SPI and I2C interrupts
+  live on core 0. UI screens paint into the same band buffers through
+  `gfx.h`, so a menu redraw and an eye blink go down the identical DMA path.
 
 ## Performance
 
@@ -130,6 +161,11 @@ blinks and saccades live averages 58.5 kB per frame and peaks at 106.7 kB
 (SURPRISED), with no writes outside the dirty rectangles under
 AddressSanitizer/UBSan.
 
+Every UI screen is rendered on the host by the same code (`ui.c`, `gfx.c`,
+`raster.c` compile unchanged with gcc), which is how the layouts were checked.
+
 On-device frame time, fps and sleep currents have not been measured yet. The
 per-second log line reports the first two live; `docs/hardware.md` has the
-battery-life estimates that the measurements will replace.
+battery-life estimates that the measurements will replace. Touch mirroring
+follows the Waveshare BSP (`EYES_TOUCH_MIRROR_X/Y`); if swipes come out
+reversed on your unit, flip them in menuconfig.

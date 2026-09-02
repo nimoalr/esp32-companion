@@ -157,8 +157,16 @@ static inline void IRAM_ATTR cov_add(uint8_t *cov, int base, int n, int32_t l, i
     cov[ir - base] += (uint8_t)(((r - (ir << 16)) * w) >> 16);
 }
 
+static bool s_over;   /* raster_shapes_over(): leave uncovered pixels alone */
+
 static inline void IRAM_ATTR blit_cov(uint16_t *dst, const uint8_t *cov, int n, const uint16_t *lut)
 {
+    if (s_over) {
+        for (int i = 0; i < n; i++) {
+            if (cov[i]) dst[i] = lut[cov[i]];
+        }
+        return;
+    }
     for (int i = 0; i < n; i++) {
         dst[i] = lut[cov[i]];
     }
@@ -286,9 +294,8 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
     blit_cov(row + (pl - bx0), s_cov, n, lut);
 }
 
-void IRAM_ATTR raster_band(uint16_t *dst, int x0, int y0, int w, int rows, const raster_shape_t *shapes, int nshapes)
+static void IRAM_ATTR draw_shapes(uint16_t *dst, int x0, int y0, int w, int rows, const raster_shape_t *shapes, int nshapes)
 {
-    memset(dst, 0, (size_t)w * (size_t)rows * 2u);
     const int x1 = x0 + w;
     for (int i = 0; i < nshapes; i++) {
         const raster_shape_t *s = &shapes[i];
@@ -301,6 +308,20 @@ void IRAM_ATTR raster_band(uint16_t *dst, int x0, int y0, int w, int rows, const
             render_row(dst + (size_t)(py - y0) * w, x0, x1, py, s);
         }
     }
+}
+
+void IRAM_ATTR raster_band(uint16_t *dst, int x0, int y0, int w, int rows, const raster_shape_t *shapes, int nshapes)
+{
+    memset(dst, 0, (size_t)w * (size_t)rows * 2u);
+    s_over = false;
+    draw_shapes(dst, x0, y0, w, rows, shapes, nshapes);
+}
+
+void raster_shapes_over(uint16_t *dst, int x0, int y0, int w, int rows, const raster_shape_t *shapes, int nshapes)
+{
+    s_over = true;
+    draw_shapes(dst, x0, y0, w, rows, shapes, nshapes);
+    s_over = false;
 }
 
 void raster_shape_finalize(raster_shape_t *s, int screen_w, int screen_h)

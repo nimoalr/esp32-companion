@@ -36,6 +36,8 @@ static int32_t s_grav[3];
 static bool s_grav_init;
 static int s_motion_hits;
 static pmic_battery_t s_batt;
+static int16_t s_last_raw[3];
+static uint32_t s_last_raw_ms;
 
 const char *power_state_name(power_state_t s)
 {
@@ -139,6 +141,8 @@ static void sample_motion(uint32_t now_ms)
     if (imu_read_accel(a) != ESP_OK) {
         return;
     }
+    s_last_raw[0] = a[0]; s_last_raw[1] = a[1]; s_last_raw[2] = a[2];
+    s_last_raw_ms = now_ms;
     if (!s_grav_init) {
         for (int i = 0; i < 3; i++) s_grav[i] = a[i];
         s_grav_init = true;
@@ -307,6 +311,14 @@ void power_enter_deep(void)
         esp_sleep_enable_timer_wakeup(24ULL * 3600ULL * 1000000ULL);
     }
     esp_deep_sleep_start();
+}
+
+bool power_last_accel(int16_t raw[3], uint32_t *sample_ms)
+{
+    if (!s_imu_ok || !s_last_raw_ms) return false;
+    raw[0] = s_last_raw[0]; raw[1] = s_last_raw[1]; raw[2] = s_last_raw[2];
+    if (sample_ms) *sample_ms = s_last_raw_ms;
+    return true;
 }
 
 void power_battery(pmic_battery_t *out)
