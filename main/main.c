@@ -264,7 +264,9 @@ static void drain_taps(void)
 
 static void eyes_closed_now(render_ctx_t *c, uint32_t now_ms)
 {
-    const eye_pose_t closed = { { Q16_ONE, Q16(0.03), 0, 0, 0, 0, 0, 0 } };
+    eye_pose_t closed = EYE_POSE_NEUTRAL;
+    closed.sy = Q16(0.03);
+    closed.sx = Q16(1.25);
     eyes_set_target(&c->eyes, 0, &closed, 1, now_ms);
     eyes_set_target(&c->eyes, 1, &closed, 1, now_ms);
     eyes_update(&c->eyes, now_ms + 2, c->shapes);   /* settle the closed pose */

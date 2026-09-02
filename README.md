@@ -32,18 +32,24 @@ brightness, power timeouts, thresholds, CPU clock, deep state). Defaults are in
 
 ## What it does
 
-**Eyes.** Two orange capsules blink every 2..6 s and make a small saccade every
-1..3 s. A tap (or a left swipe; right swipe goes back) cycles through 22
-expressions, easing over 120..300 ms; a tap mid-transition retargets from the
-current shape:
+**Eyes.** Two orange capsules blink every 3..10 s and dart to a new spot
+every 1..2.25 s, with the secondary motion that makes them read as alive:
+they squash on the way through a dart, widen into a sliver as they close,
+grow when looking up and shrink when looking down, stretch along fast moves
+and overshoot a little on expressive changes. The timing and proportions
+follow Anki Vector's procedural face; see `docs/animation.md` for the sources
+and what was taken from them. A tap (or a left swipe; right swipe goes back)
+cycles through 22 expressions, easing over 120..300 ms; a tap mid-transition
+retargets from the current shape:
 
 NEUTRAL, HAPPY, SAD, ANGRY, SURPRISED, SLEEPY, LOOK_AROUND, WINK, CURIOUS,
 CONFUSED, LOVE, DIZZY, LAUGHING, SCARED, SKEPTICAL, THINKING, BORED, EXCITED,
 SHY, ANNOYED, SLEEPING, DANCE.
 
-Each expression is a keyframe pose per eye plus up to three modulators
-(a sine or a random jitter on one pose field) applied every frame on top of
-the eased pose: the heartbeat in LOVE, the circling gaze in DIZZY, the
+Each expression is a keyframe pose per eye (size, position, lids, slant,
+lid bend, angle, four corner radii) plus up to three modulators (a sine or a
+random jitter on one pose field) applied every frame on top of the eased
+pose: the heartbeat in LOVE, the circling gaze in DIZZY, the
 bounce in LAUGHING and EXCITED, the tremble in SCARED, the breathing in
 SLEEPING. Adding an expression is one table entry in `main/anim.c`.
 
@@ -139,7 +145,7 @@ main/
   display.c/.h            QSPI + CO5300 via esp_lcd, band buffers, TE sync, brightness, sleep
   touch.c/.h              CST9217 via esp_lcd_touch, ISR -> task (core 0) -> gesture queue (tap, hold, swipes)
   raster.c/.h             Q16.16 scanline rasteriser, 4x vertical sampling, coverage LUT
-  eyes.c/.h               EyeParams / EyeState, per-field easing, blink + saccade layer
+  eyes.c/.h               EyeParams / EyeState, per-field easing, blink + dart layer, squash/stretch, gaze scaling
   anim.c/.h               keyframe + modulator table for 22 expressions, dance choreography
   audio.c/.h              ES7210 microphones over I2S via esp_codec_dev; 256-point FFT, bands, onsets, balance
   behavior.c/.h           environment reactions: shake/knock-out, face-down, music sniffing, mood, gravity face; pure C
@@ -169,19 +175,21 @@ docs/hardware.md          pin sources, TE, QSPI clock, power rails, battery budg
   pushed as a partial window (CASET/RASET/RAMWR per band via
   `esp_lcd_panel_draw_bitmap`). The black background is drawn once at boot and
   after every wake from SLEEP.
-* **Analytic rasteriser.** An eye is a rounded rectangle (capsule) with a
-  straight, optionally slanted top lid and a bottom lid that can bulge upward
-  (the happy arc). Each pixel row is sampled on four sub-scanlines; edge pixels
+* **Analytic rasteriser.** An eye is a rounded rectangle with an independent
+  radius per corner, a top lid that can be slanted and bent, and a bottom lid
+  that can bulge upward (the happy arc). Each pixel row is sampled on four sub-scanlines; edge pixels
   get exact horizontal coverage, the covered core is written with 32-bit
   stores, and coverage indexes a 256-entry RGB565 LUT pre-swapped to panel
   byte order. Everything per row and per pixel is integer Q16.16; the band
   rasteriser is linked into IRAM. Rotated faces use the same scheme: the
   scanline through a rotated rounded rectangle is computed in closed form
   from the nine Voronoi regions of its core (a square root only in the four
-  corner regions), lids stay half-planes and the arc is a quadratic, all
-  evaluated once per sub-scanline in float and fed to the same coverage code.
-  On the host a rotated frame costs about 2.8x an upright one, mostly because
-  the rotated bounding box is larger.
+  corner regions), straight lids stay half-planes and the arc and the bent
+  lid are quadratics, all evaluated once per sub-scanline in float and fed
+  to the same coverage code. Unequal corner radii split the scanline at the
+  eye's local axes so each quadrant uses its own radius. On the host a
+  rotated frame costs about 2.2x an upright one, mostly because the rotated
+  bounding box is larger; a bent lid on an upright eye costs about 10 %.
 * **Frame pacing.** TE is wired to GPIO13, so each frame's panel write starts
   on the rising TE edge. In DROWSY the task sleeps until ~2.5 ms before the
   Nth predicted edge, then locks onto the real edge. If TE never pulses, a
@@ -198,10 +206,13 @@ docs/hardware.md          pin sources, TE, QSPI clock, power rails, battery budg
 Host build of the rasteriser (`raster.c`, `eyes.c`, `anim.c` compile unchanged
 with gcc): neutral eyes are 2 x 31 302 px per frame, about 62.6 kB pushed per
 frame, 14 % of a full frame. Bus time at 40 MHz QSPI is 3.1 ms per frame
-(1.6 ms at 80 MHz). A sweep through all eight expressions at 60 Hz with
-blinks and saccades live averages 58.5 kB per frame and peaks at 106.7 kB
-(SURPRISED), with no writes outside the dirty rectangles under
-AddressSanitizer/UBSan.
+(1.6 ms at 80 MHz). A sweep through all 22 expressions at 60 Hz, once
+upright and once with the face turning, with blinks and darts live, averages
+78.7 kB per frame and peaks at 231 kB (SURPRISED while rotated), with no
+writes outside the dirty rectangles under AddressSanitizer/UBSan. Overlaid
+props (`raster_shapes_over`, used by `gfx_disc` and `gfx_line`) blend their
+anti-aliased edges over the pixels already in the band, so thick strokes
+built from overlapping discs stay solid.
 
 Audio analysis runs in its own task on core 0 and never touches the render
 task: 16 kHz stereo, 256-sample frames (16 ms), a hand-written radix-2 FFT
