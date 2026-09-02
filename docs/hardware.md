@@ -2,6 +2,7 @@
 
 Board: Waveshare ESP32-S3-Touch-AMOLED-1.75, SKU 31261, and the 31262 "-B" variant
 (same board supplied with a case). MCU ESP32-S3R8 (8 MB octal PSRAM), 16 MB QIO flash.
+Battery: the 3.7 V 500 mAh MX1.25 pouch sold for the board.
 
 ## Sources
 
@@ -100,13 +101,81 @@ firmware logs a warning and paces frames with a 60 Hz `esp_timer` instead.
 The panel connector J3 is fed from `VCC3V3`, which the schematic labels as the
 AXP2101 **DCDC1** output; the same rail powers the ESP32-S3. Neither the
 maintained BSP nor the Arduino display examples write to the AXP2101 to bring
-the display up, so this firmware does not talk to the PMIC at all (address
-`0x34` is never addressed). The other AXP2101 outputs (ALDO1..4, BLDO1..2,
-DCDC2..4, CPUSLDO) feed audio, RTC and sensor circuits that this demo does not
-use, and are left in their power-on state.
+the display up, so no rail is ever changed by this firmware. The other AXP2101
+outputs (ALDO1..4, BLDO1..2, DCDC2..4, CPUSLDO) feed audio, RTC and sensor
+circuits and are left in their power-on state.
+
+What the firmware does use (address `0x34`, register names as in XPowersLib):
+
+| Register | Use |
+| --- | --- |
+| `0x03` IC type | probe, expects `0x4A` |
+| `0x30` ADC channel control | battery voltage ADC on; TS (thermistor) measurement off, as in Waveshare's AXP2101 example for this board, because the supplied pouch has no NTC and an open TS input stops the charger |
+| `0x00` / `0x01` status | battery present, VBUS good, charging state |
+| `0x34` / `0x35`, `0xA4` | battery voltage (mV) and fuel-gauge percent |
+| `0x10` common config, bit 0 | soft power off (DEEP state) |
+
+Power paths, from the schematic:
+
+* AXP2101 **PWROK -> ESP32-S3 CHIP_PU**: the PMIC holds the MCU in reset until
+  the rails are up, and a PMIC power-off removes the MCU's power entirely.
+* PWR button (Key1) **-> AXP2101 PWRON**: the hardware power-on path. A press
+  of the configured on-time (default 128 ms) starts the PMIC; holding it for
+  the off-time (default 6 s) forces a power off with no firmware involved.
+  Plugging in USB also powers the PMIC on. The conditioned button state
+  (`SYS_OUT`) and the PMIC IRQ only reach the TCA9554 expander, not an ESP32
+  GPIO, so the PWR button cannot wake the ESP32 from sleep; it can only restart
+  a powered-off board.
+* **BOOT (GPIO0)** is a strapping pin: if it is low when the ROM samples it
+  after a reset or deep-sleep wake, the chip enters download mode. It is not
+  used as a wake button for that reason.
+
+## Motion: QMI8658
+
+Address `0x6B`. INT2 is wired to **GPIO21**, an RTC-capable pin, which is what
+makes wake-on-motion usable as a light- and deep-sleep wake source. INT1 only
+reaches the TCA9554 expander. Awake, the accelerometer runs at +-8 g, 62.5 Hz
+with the low-pass filter on and is polled every 50 ms (200 ms in DROWSY). For
+SLEEP the chip is reset into its hardware wake-on-motion mode (low-power 21 Hz
+accelerometer, threshold `EYES_WOM_MG`, INT2 idles low and goes high on
+motion); normal data output is unavailable in that mode, so the chip is reset
+back to polling mode on wake.
+
+## Sleep and wake plumbing
+
+* DROWSY uses ESP-IDF power management: `esp_pm_configure` with the CPU between
+  40 MHz and `EYES_CPU_MAX_MHZ`, automatic light sleep when no lock is held.
+  The render task holds `ESP_PM_NO_LIGHT_SLEEP` from just before the TE wait
+  until the frame's DMA is done, and releases it while waiting for the next
+  frame slot. The SPI and I2C drivers hold their own APB locks during
+  transfers.
+* SLEEP is a manual `esp_light_sleep_start` with three wake sources: GPIO21
+  high (IMU), GPIO11 low (touch INT) and a timer for the DEEP deadline.
+  `gpio_wakeup_enable` switches a pin to level interrupts, so the touch pin's
+  edge interrupt is disabled before sleep and restored afterwards.
+* DEEP (default) writes the AXP2101 soft power-off bit after Display Off +
+  Sleep In. Alternative (`EYES_DEEP_SLEEP`): `esp_deep_sleep_start` with EXT1
+  wake on GPIO21 high; the rails stay up, so the board draws far more.
+
+## Battery budget (500 mAh pouch)
+
+Estimated draws; the ESP32 numbers are from the datasheet, the board-level
+additions (panel, PSRAM, codecs at idle, PMIC quiescent) are estimates until
+measured. Runtime assumes 85 % of nominal capacity is usable.
+
+| State | Board draw (est.) | Runtime on 500 mAh |
+| --- | ---: | ---: |
+| ACTIVE, eyes at 60 fps, 100 % brightness | ~75 mA | ~5.7 h |
+| DROWSY, 10 % brightness, 15 fps, light sleep between frames | ~5 mA | ~3.5 days |
+| SLEEP, panel off, light sleep, IMU wake-on-motion | ~2 mA | ~9 days |
+| DEEP as ESP32 deep sleep (rails on) | ~0.7 mA | ~25 days |
+| DEEP as PMIC off | ~0.04 mA | limited by self-discharge (>1 year) |
+
+A day with one hour of active use and the rest asleep is about 120 mAh, so
+roughly 3.5 days per charge. Formula: `hours = mAh x 0.85 / mA`.
 
 ## Things deliberately not touched
 
-ES8311/ES7210 audio, NS4150B amplifier (GPIO46), QMI8658 IMU, PCF85063 RTC,
-TCA9554 expander (0x20), SD card (GPIO1/2/3/41), USB, Wi-Fi, Bluetooth, NVS,
-sleep modes. Their GPIOs are never configured.
+ES8311/ES7210 audio, NS4150B amplifier (GPIO46), PCF85063 RTC, TCA9554
+expander (0x20), SD card (GPIO1/2/3/41), USB, Wi-Fi, Bluetooth, NVS. Their
+GPIOs are never configured.
