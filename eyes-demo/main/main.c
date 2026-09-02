@@ -1,19 +1,21 @@
 /*
  * Eyes render demo for the Waveshare ESP32-S3-Touch-AMOLED-1.75.
  *
- *   core 0: app_main (init)
+ *   core 0: app_main (init), touch task (CST9217 -> tap queue)
  *   core 1: render task (animation -> dirty rects -> band rasteriser -> QSPI DMA)
  */
 #include <inttypes.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 
 #include "board.h"
 #include "display.h"
+#include "touch.h"
 #include "raster.h"
 #include "eyes.h"
 #include "anim.h"
@@ -26,6 +28,8 @@ static const char *TAG = "eyes";
 typedef struct {
     int x0, y0, x1, y1;     /* [x0, x1) x [y0, y1) in pixels; empty when x0 >= x1 */
 } rect_t;
+
+static QueueHandle_t s_tap_q;
 
 static inline rect_t rect_empty(void)
 {
@@ -101,7 +105,6 @@ static void render_task(void *arg)
     anim_init(&sm, &eyes, now_ms);
 
     display_fill_black();
-    uint32_t last_advance_ms = now_ms;
 
     /* stats */
     int64_t stats_t0 = esp_timer_get_time();
@@ -111,10 +114,10 @@ static void render_task(void *arg)
     uint32_t rects_sum = 0;
 
     for (;;) {
-        /* Stage 3: no touch yet, advance the expression every 5 s. */
-        now_ms = (uint32_t)(esp_timer_get_time() / 1000);
-        if (now_ms - last_advance_ms >= 5000) {
-            last_advance_ms = now_ms;
+        /* Tap -> next animation. Handled before this frame's pose is computed. */
+        tap_event_t tap;
+        while (xQueueReceive(s_tap_q, &tap, 0) == pdTRUE) {
+            now_ms = (uint32_t)(esp_timer_get_time() / 1000);
             anim_next(&sm, &eyes, now_ms);
         }
 
@@ -181,6 +184,10 @@ void app_main(void)
     ESP_LOGI(TAG, "eyes render demo, ESP-IDF %s", esp_get_idf_version());
 
     ESP_ERROR_CHECK(display_init());
+
+    s_tap_q = xQueueCreate(4, sizeof(tap_event_t));
+    assert(s_tap_q);
+    ESP_ERROR_CHECK(touch_init(s_tap_q));
 
     ESP_LOGI(TAG, "free internal %u B, free PSRAM %u B (renderer uses none)",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
