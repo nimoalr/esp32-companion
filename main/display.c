@@ -48,6 +48,8 @@ static uint32_t s_band_seq;               /* which buffer the next acquire hands
 
 static SemaphoreHandle_t s_vsync;         /* given by the TE edge (or the fallback timer) */
 static volatile uint32_t s_te_edges;
+static volatile int64_t s_te_last_us;
+static int64_t s_last_frame_te_us;
 static bool s_te_active;
 static esp_timer_handle_t s_pace_timer;
 
@@ -63,6 +65,7 @@ static bool IRAM_ATTR on_color_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_
 static void IRAM_ATTR te_isr(void *arg)
 {
     s_te_edges++;
+    s_te_last_us = esp_timer_get_time();
     BaseType_t woken = pdFALSE;
     xSemaphoreGiveFromISR(s_vsync, &woken);
     if (woken) {
@@ -175,7 +178,56 @@ bool display_wait_vsync(uint32_t timeout_ms)
 {
     /* Drop a stale edge so the frame always starts on a fresh V-blank. */
     xSemaphoreTake(s_vsync, 0);
-    return xSemaphoreTake(s_vsync, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+    const bool ok = xSemaphoreTake(s_vsync, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+    s_last_frame_te_us = s_te_last_us;
+    return ok;
+}
+
+#define TE_PERIOD_US   16667
+#define TE_LEAD_US     2500     /* wake this early so light-sleep exit latency and tick jitter are covered */
+
+void display_delay_until_frame(uint32_t period)
+{
+    if (period < 1) {
+        period = 1;
+    }
+    const int64_t now = esp_timer_get_time();
+    const int64_t ref = (s_te_active && s_last_frame_te_us) ? s_last_frame_te_us : now;
+    const int64_t target = ref + (int64_t)period * TE_PERIOD_US - TE_LEAD_US;
+    if (target > now) {
+        vTaskDelay(pdMS_TO_TICKS((uint32_t)((target - now) / 1000)));
+    }
+}
+
+/* QSPI command framing used by the CO5300 driver: opcode 0x02, command in bits 15:8. */
+static void panel_cmd(uint8_t cmd, const uint8_t *param, size_t len)
+{
+    const int lcd_cmd = (0x02 << 24) | ((int)cmd << 8);
+    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(s_io, lcd_cmd, param, len));
+}
+
+void display_set_brightness(uint8_t percent)
+{
+    if (percent > 100) {
+        percent = 100;
+    }
+    const uint8_t v = (uint8_t)((percent * 255u) / 100u);
+    panel_cmd(0x51, &v, 1);
+}
+
+void display_sleep(bool sleep)
+{
+    if (sleep) {
+        panel_cmd(0x28, NULL, 0);           /* Display Off */
+        vTaskDelay(pdMS_TO_TICKS(20));
+        panel_cmd(0x10, NULL, 0);           /* Sleep In */
+        vTaskDelay(pdMS_TO_TICKS(120));
+    } else {
+        panel_cmd(0x11, NULL, 0);           /* Sleep Out */
+        vTaskDelay(pdMS_TO_TICKS(120));
+        display_fill_black();               /* GRAM is not trusted across sleep */
+        panel_cmd(0x29, NULL, 0);           /* Display On */
+    }
 }
 
 bool display_te_active(void)

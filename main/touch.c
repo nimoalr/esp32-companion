@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include "freertos/task.h"
 #include "freertos/semphr.h"
-#include "driver/i2c_master.h"
+#include "i2c_bus.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_io_i2c.h"
 #include "esp_lcd_touch.h"
@@ -20,11 +20,12 @@ static const char *TAG = "touch";
 #define TAP_DEBOUNCE_MS     150     /* ignore a tap this soon after the previous one */
 #define BOUNCE_MS           40      /* a new touch this soon after a release is contact bounce */
 #define POLL_TOUCHED_MS     10      /* re-read cadence while a finger is down */
-#define POLL_IDLE_MS        100     /* safety poll in case an interrupt edge is missed */
+#define POLL_IDLE_MS        500     /* safety poll in case an interrupt edge is missed */
 
 static esp_lcd_touch_handle_t s_tp;
 static SemaphoreHandle_t s_int_sem;
 static QueueHandle_t s_tap_q;
+static volatile uint32_t s_last_activity_ms;
 
 static void IRAM_ATTR touch_isr_cb(esp_lcd_touch_handle_t tp)
 {
@@ -62,6 +63,9 @@ static void touch_task(void *arg)
             }
         }
         const uint32_t t = now_ms();
+        if (pressed) {
+            s_last_activity_ms = t;
+        }
 
         if (pressed && !touched) {
             if (t - release_ms < BOUNCE_MS) {
@@ -97,16 +101,8 @@ esp_err_t touch_init(QueueHandle_t tap_queue)
     s_int_sem = xSemaphoreCreateBinary();
     ESP_RETURN_ON_FALSE(s_int_sem, ESP_ERR_NO_MEM, TAG, "semaphore");
 
-    i2c_master_bus_handle_t bus = NULL;
-    const i2c_master_bus_config_t bus_cfg = {
-        .i2c_port = BOARD_I2C_PORT,
-        .sda_io_num = BOARD_I2C_SDA,
-        .scl_io_num = BOARD_I2C_SCL,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-    ESP_RETURN_ON_ERROR(i2c_new_master_bus(&bus_cfg, &bus), TAG, "i2c bus");
+    ESP_RETURN_ON_ERROR(i2c_bus_init(), TAG, "i2c bus");
+    i2c_master_bus_handle_t bus = i2c_bus_get();
 
     esp_lcd_panel_io_handle_t io = NULL;
     esp_lcd_panel_io_i2c_config_t io_cfg = ESP_LCD_TOUCH_IO_I2C_CST9217_CONFIG();
@@ -129,4 +125,9 @@ esp_err_t touch_init(QueueHandle_t tap_queue)
     ESP_LOGI(TAG, "CST9217 on I2C%d (SDA %d, SCL %d, %d kHz), INT GPIO%d, RST GPIO%d",
              BOARD_I2C_PORT, BOARD_I2C_SDA, BOARD_I2C_SCL, BOARD_I2C_HZ / 1000, BOARD_TOUCH_INT, BOARD_TOUCH_RST);
     return ESP_OK;
+}
+
+uint32_t touch_last_activity_ms(void)
+{
+    return s_last_activity_ms;
 }

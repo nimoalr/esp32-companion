@@ -21,6 +21,14 @@ CONFIG_COMPILER_OPTIMIZATION_PERF=y
 # 1 ms tick so frame-pacing timeouts are precise
 CONFIG_FREERTOS_HZ=1000
 
+# Power management: dynamic frequency scaling and automatic light sleep when
+# every task is blocked. The render task holds locks while ACTIVE, so this
+# only takes effect in the DROWSY state.
+CONFIG_PM_ENABLE=y
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+CONFIG_PM_SLP_IRAM_OPT=y
+CONFIG_PM_RTOS_IDLE_OPT=y
+
 # Touch: a single point is all tap detection needs
 CONFIG_ESP_LCD_TOUCH_MAX_POINTS=1
 
