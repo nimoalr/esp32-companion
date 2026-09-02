@@ -2,6 +2,8 @@ idf_component_register(
     SRCS
         "main.c"
         "display.c"
+        "raster.c"
+        "eyes.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES
         esp_lcd
