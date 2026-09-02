@@ -124,8 +124,10 @@ static void eye_ease(EyeState *s, uint32_t now_ms)
 /* Blink amount in Q16: 0 open .. ONE closed. */
 static int32_t idle_blink(eyes_idle_t *idle, uint32_t now_ms)
 {
-    const uint32_t close_ms = (uint32_t)q16_mul(BLINK_CLOSE_MS << 16, idle->blink_speed_scale) >> 16;
-    const uint32_t open_ms = (uint32_t)q16_mul(BLINK_OPEN_MS << 16, idle->blink_speed_scale) >> 16;
+    uint32_t close_ms = (uint32_t)q16_mul(BLINK_CLOSE_MS << 16, idle->blink_speed_scale) >> 16;
+    uint32_t open_ms = (uint32_t)q16_mul(BLINK_OPEN_MS << 16, idle->blink_speed_scale) >> 16;
+    if (close_ms == 0) close_ms = 1;
+    if (open_ms == 0) open_ms = 1;
 
     if (!idle->blinking) {
         if ((int32_t)(now_ms - idle->next_blink_ms) < 0) {
@@ -154,8 +156,8 @@ static void idle_saccade(eyes_idle_t *idle, uint32_t now_ms, int32_t *ox, int32_
     if ((int32_t)(now_ms - idle->next_sacc_ms) >= 0) {
         idle->sacc_from_x = idle->sacc_to_x;
         idle->sacc_from_y = idle->sacc_to_y;
-        idle->sacc_to_x = ((int32_t)rng_range(idle, 0, 2 * SACC_MAX_DX_PX) - SACC_MAX_DX_PX) << 16;
-        idle->sacc_to_y = ((int32_t)rng_range(idle, 0, 2 * SACC_MAX_DY_PX) - SACC_MAX_DY_PX) << 16;
+        idle->sacc_to_x = ((int32_t)rng_range(idle, 0, 2 * SACC_MAX_DX_PX) - SACC_MAX_DX_PX) * Q16_ONE;
+        idle->sacc_to_y = ((int32_t)rng_range(idle, 0, 2 * SACC_MAX_DY_PX) - SACC_MAX_DY_PX) * Q16_ONE;
         idle->sacc_t0_ms = now_ms;
         idle->next_sacc_ms = now_ms + rng_range(idle, SACC_MIN_MS, SACC_MAX_MS);
     }

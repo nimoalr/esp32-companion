@@ -113,6 +113,9 @@ compile unchanged with gcc): neutral eyes are 2 x 31 302 px per frame, about
 62.6 kB pushed per frame, 14 % of a full frame. Bus time at 40 MHz QSPI is
 3.1 ms per frame (1.6 ms at 80 MHz); the CPU side is a fraction of that and
 overlaps the DMA. The remaining budget at 60 fps is more than 10 ms per frame.
+A host sweep through all eight expressions at 60 Hz with blinks and saccades
+live averages 58.5 kB per frame and peaks at 106.7 kB (SURPRISED), with no
+writes outside the dirty rectangles under AddressSanitizer/UBSan.
 
 On-device frame time and fps were not measured while writing this; there was no
 board attached. The per-second log line above reports them live.

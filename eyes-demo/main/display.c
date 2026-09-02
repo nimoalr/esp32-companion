@@ -1,5 +1,6 @@
 #include "display.h"
 
+#include <inttypes.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -123,11 +124,15 @@ esp_err_t display_init(void)
     ESP_RETURN_ON_FALSE(err == ESP_OK || err == ESP_ERR_INVALID_STATE, err, TAG, "gpio isr service");
     ESP_RETURN_ON_ERROR(gpio_isr_handler_add(BOARD_LCD_TE, te_isr, NULL), TAG, "te isr");
 
-    /* Decide the pacing source: give TE 100 ms (~6 refresh periods) to show up. */
-    vTaskDelay(pdMS_TO_TICKS(100));
+    /* Decide the pacing source: wait up to 500 ms for TE to start pulsing. */
+    int waited_ms = 0;
+    while (s_te_edges < 2 && waited_ms < 500) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+        waited_ms += 20;
+    }
     s_te_active = s_te_edges >= 2;
     if (s_te_active) {
-        ESP_LOGI(TAG, "TE detected on GPIO%d (%" PRIu32 " edges in 100 ms): frames locked to TE", BOARD_LCD_TE, s_te_edges);
+        ESP_LOGI(TAG, "TE detected on GPIO%d (%" PRIu32 " edges after %d ms): frames locked to TE", BOARD_LCD_TE, s_te_edges, waited_ms);
     } else {
         gpio_isr_handler_remove(BOARD_LCD_TE);
         const esp_timer_create_args_t targs = {
