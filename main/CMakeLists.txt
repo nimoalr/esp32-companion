@@ -6,6 +6,11 @@ idf_component_register(
         "raster.c"
         "eyes.c"
         "anim.c"
+        "i2c_bus.c"
+        "imu.c"
+        "pmic.c"
+        "power.c"
+        "settings.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES
         esp_lcd
@@ -15,4 +20,5 @@ idf_component_register(
         esp_timer
         esp_psram
         esp_hw_support
+        esp_pm
 )

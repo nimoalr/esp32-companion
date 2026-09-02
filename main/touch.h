@@ -14,3 +14,6 @@ typedef struct {
  * up within 300 ms, less than 10 px of travel) are posted to `tap_queue`.
  */
 esp_err_t touch_init(QueueHandle_t tap_queue);
+
+/* Timestamp (ms) of the most recent sample with a finger on the panel; 0 if never. */
+uint32_t touch_last_activity_ms(void);

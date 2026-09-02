@@ -1,22 +1,112 @@
-menu "Eyes demo"
+menu "Eyes"
 
-    choice EYES_LCD_PCLK
-        prompt "CO5300 QSPI clock"
-        default EYES_LCD_PCLK_40M
-        help
-            40 MHz is the clock used by every Waveshare reference program for
-            this board and is known to work. 80 MHz halves the bus time per
-            frame; whether the panel tolerates it has to be verified on hardware.
+    menu "Display"
 
-        config EYES_LCD_PCLK_40M
-            bool "40 MHz (Waveshare reference value)"
-        config EYES_LCD_PCLK_80M
-            bool "80 MHz (experimental)"
-    endchoice
+        choice EYES_LCD_PCLK
+            prompt "CO5300 QSPI clock"
+            default EYES_LCD_PCLK_40M
+            help
+                40 MHz is the clock used by every Waveshare reference program for
+                this board and is known to work. 80 MHz halves the bus time per
+                frame; whether the panel tolerates it has to be verified on hardware.
 
-    config EYES_LCD_PCLK_HZ
-        int
-        default 80000000 if EYES_LCD_PCLK_80M
-        default 40000000
+            config EYES_LCD_PCLK_40M
+                bool "40 MHz (Waveshare reference value)"
+            config EYES_LCD_PCLK_80M
+                bool "80 MHz (experimental)"
+        endchoice
+
+        config EYES_LCD_PCLK_HZ
+            int
+            default 80000000 if EYES_LCD_PCLK_80M
+            default 40000000
+
+        config EYES_BRIGHTNESS_ACTIVE
+            int "Brightness while active (%)"
+            range 1 100
+            default 100
+
+        config EYES_BRIGHTNESS_AOD
+            int "Brightness in the dimmed always-on (drowsy) state (%)"
+            range 1 100
+            default 10
+
+    endmenu
+
+    menu "Power"
+
+        config EYES_POWER_ENABLE
+            bool "Enable the power state machine"
+            default y
+            help
+                When disabled the eyes stay in the ACTIVE state forever: full
+                brightness, 60 fps, no sleep. Useful for benchmarking.
+
+        choice EYES_CPU_MAX
+            prompt "CPU clock while active"
+            default EYES_CPU_MAX_240
+            config EYES_CPU_MAX_240
+                bool "240 MHz"
+            config EYES_CPU_MAX_160
+                bool "160 MHz"
+        endchoice
+
+        config EYES_CPU_MAX_MHZ
+            int
+            default 160 if EYES_CPU_MAX_160
+            default 240
+
+        config EYES_ACTIVE_TIMEOUT_S
+            int "ACTIVE -> DROWSY after this many seconds without touch or motion"
+            range 5 3600
+            default 30
+
+        config EYES_DROWSY_MIN_S
+            int "Minimum time in DROWSY before SLEEP (seconds)"
+            range 10 36000
+            default 300
+
+        config EYES_DROWSY_FPS
+            int "Frame rate in DROWSY (frames per second, divides 60)"
+            range 1 60
+            default 15
+
+        config EYES_SLEEP_TO_DEEP_S
+            int "SLEEP -> DEEP after this many seconds (seconds)"
+            range 60 86400
+            default 3600
+
+        config EYES_MOTION_MG
+            int "Motion threshold while awake (milli-g deviation from gravity)"
+            range 10 1000
+            default 80
+            help
+                Accelerometer samples are compared against a slow low-pass of
+                the gravity vector; two consecutive samples above this threshold
+                count as "someone is handling the device".
+
+        config EYES_WOM_MG
+            int "Wake-on-motion threshold while asleep (milli-g, QMI8658 hardware)"
+            range 10 255
+            default 100
+
+        choice EYES_DEEP_MODE
+            prompt "DEEP state"
+            default EYES_DEEP_PMIC_OFF
+            help
+                PMIC off cuts every rail through the AXP2101 (tens of microamps);
+                only the PWR button or USB brings the board back. ESP32 deep sleep
+                keeps the rails up (about a milliamp) and wakes on IMU motion.
+                The BOOT button is a strapping pin and cannot be used as a wake
+                button: if it is still held when the ROM samples it, the chip
+                enters download mode.
+
+            config EYES_DEEP_PMIC_OFF
+                bool "AXP2101 power off, wake with the PWR button"
+            config EYES_DEEP_SLEEP
+                bool "ESP32 deep sleep, wake on IMU motion"
+        endchoice
+
+    endmenu
 
 endmenu

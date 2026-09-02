@@ -32,6 +32,19 @@ void display_wait_idle(void);
 bool display_wait_vsync(uint32_t timeout_ms);
 bool display_te_active(void);
 
+/* Panel brightness, 0..100 (CO5300 command 0x51). */
+void display_set_brightness(uint8_t percent);
+
+/* Display Off + Sleep In (true) or Sleep Out + Display On (false). Blocking. */
+void display_sleep(bool sleep);
+
+/*
+ * Low-power frame pacing: block (letting the chip light-sleep) until just
+ * before the TE edge that is `period` refresh periods after the last frame.
+ * Follow with display_wait_vsync() to lock onto that edge.
+ */
+void display_delay_until_frame(uint32_t period);
+
 /* Paint the whole panel black through the band path. */
 void display_fill_black(void);
 

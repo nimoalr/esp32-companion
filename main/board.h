@@ -39,9 +39,19 @@
 #define BOARD_TOUCH_RST        GPIO_NUM_40      /* [HWREF][BSP][SCH TP_RESET][ARD] */
 #define BOARD_TOUCH_INT        GPIO_NUM_11      /* [HWREF][BSP][SCH TP_INT][ARD] */
 
+/* ---- QMI8658 IMU (shared I2C bus) ---------------------------------------- */
+#define BOARD_IMU_ADDR         0x6B             /* [HWREF] "IMU address selected by the board schematic" */
+#define BOARD_IMU_INT2         GPIO_NUM_21      /* [HWREF][SCH QMI_INT2 -> GPIO21]; RTC-capable, usable as a sleep wake source */
+
+/* ---- AXP2101 PMIC (shared I2C bus) ---------------------------------------- */
+#define BOARD_PMIC_ADDR        0x34             /* [HWREF][SCH] */
+
 /* ---- Power ----------------------------------------------------------------
  * The panel connector J3 is fed from VCC3V3, which is AXP2101 DCDC1, the same
  * always-on rail that powers the ESP32-S3 itself [SCH]. Neither the maintained
- * BSP nor the Arduino display examples touch the AXP2101 (0x34) to bring the
- * display up [BSP][ARD], so this firmware does not talk to the PMIC at all.
+ * BSP nor the Arduino display examples touch the AXP2101 to bring the display
+ * up [BSP][ARD]. This firmware only reads battery telemetry from it and, for
+ * the final power state, issues its soft power-off. AXP2101 PWROK drives the
+ * ESP32-S3 CHIP_PU, and the PWR button drives AXP2101 PWRON [SCH], so a
+ * PWR press is the hardware power-on path.
  */
