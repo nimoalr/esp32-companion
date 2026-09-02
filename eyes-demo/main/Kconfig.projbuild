@@ -1,0 +1,22 @@
+menu "Eyes demo"
+
+    choice EYES_LCD_PCLK
+        prompt "CO5300 QSPI clock"
+        default EYES_LCD_PCLK_40M
+        help
+            40 MHz is the clock used by every Waveshare reference program for
+            this board and is known to work. 80 MHz halves the bus time per
+            frame; whether the panel tolerates it has to be verified on hardware.
+
+        config EYES_LCD_PCLK_40M
+            bool "40 MHz (Waveshare reference value)"
+        config EYES_LCD_PCLK_80M
+            bool "80 MHz (experimental)"
+    endchoice
+
+    config EYES_LCD_PCLK_HZ
+        int
+        default 80000000 if EYES_LCD_PCLK_80M
+        default 40000000
+
+endmenu
