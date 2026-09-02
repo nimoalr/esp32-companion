@@ -1,5 +1,6 @@
 #include "eyes.h"
 
+#include <math.h>
 #include <string.h>
 #include "esp_random.h"
 #include "board.h"
@@ -79,6 +80,7 @@ void eyes_init(eyes_t *e, uint32_t now_ms)
     eye_init(&e->eye[0], BOARD_LCD_H_RES / 2 - EYE_SEP_PX, now_ms);
     eye_init(&e->eye[1], BOARD_LCD_H_RES / 2 + EYE_SEP_PX, now_ms);
 
+    e->face_cos = Q16_ONE;
     e->idle.rng = esp_random() | 1u;
     e->idle.blink_interval_scale = Q16_ONE;
     e->idle.blink_speed_scale = Q16_ONE;
@@ -104,6 +106,25 @@ void eyes_set_target(eyes_t *e, int eye, const eye_pose_t *pose, uint32_t dur_ms
 void eyes_clear_mod(eyes_t *e)
 {
     memset(e->mod, 0, sizeof(e->mod));
+}
+
+void eyes_set_env(eyes_t *e, int eye, const eye_pose_t *delta)
+{
+    e->env[eye] = *delta;
+}
+
+void eyes_set_face_angle(eyes_t *e, float deg)
+{
+    if (fabsf(deg) < 0.05f) {
+        e->face_rot = false;
+        e->face_cos = Q16_ONE;
+        e->face_sin = 0;
+        return;
+    }
+    const float rad = deg * 0.01745329f;
+    e->face_rot = true;
+    e->face_cos = (int32_t)(cosf(rad) * 65536.f);
+    e->face_sin = (int32_t)(sinf(rad) * 65536.f);
 }
 
 void eyes_set_idle_rates(eyes_t *e, int32_t blink_interval_scale, int32_t blink_speed_scale)
@@ -180,11 +201,11 @@ static inline int32_t clamp_q16(int32_t v, int32_t lo, int32_t hi)
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
-static void eye_effective_params(const EyeState *s, const eye_pose_t *mod, int32_t blink, int32_t sx_off, int32_t sy_off, EyeParams *p)
+static void eye_effective_params(const EyeState *s, const eye_pose_t *mod, const eye_pose_t *env, int32_t blink, int32_t sx_off, int32_t sy_off, EyeParams *p)
 {
     eye_pose_t c;
     for (int i = 0; i < EYE_POSE_FIELDS; i++) {
-        c.v[i] = s->cur.v[i] + mod->v[i];
+        c.v[i] = s->cur.v[i] + mod->v[i] + env->v[i];
     }
     c.sx = clamp_q16(c.sx, Q16(0.2), Q16(2.0));
     c.sy = clamp_q16(c.sy, Q16(0.02), Q16(2.0));
@@ -212,16 +233,26 @@ static void eye_effective_params(const EyeState *s, const eye_pose_t *mod, int32
     p->curve = q16_mul(h, c.curve);
 }
 
-static void params_to_shape(const EyeParams *p, const uint16_t *lut, raster_shape_t *s)
+static void params_to_shape(const eyes_t *e, const EyeParams *p, const uint16_t *lut, raster_shape_t *s)
 {
-    s->cx = p->cx;
-    s->cy = p->cy;
+    s->rot = e->face_rot;
+    s->rc = e->face_cos;
+    s->rs = e->face_sin;
+    if (e->face_rot) {
+        /* the eye's centre swings around the screen centre with the face */
+        const int32_t ox = p->cx - (BOARD_LCD_H_RES / 2 << 16), oy = p->cy - (BOARD_LCD_V_RES / 2 << 16);
+        s->cx = (BOARD_LCD_H_RES / 2 << 16) + (int32_t)(((int64_t)ox * e->face_cos - (int64_t)oy * e->face_sin) >> 16);
+        s->cy = (BOARD_LCD_V_RES / 2 << 16) + (int32_t)(((int64_t)ox * e->face_sin + (int64_t)oy * e->face_cos) >> 16);
+    } else {
+        s->cx = p->cx;
+        s->cy = p->cy;
+    }
     s->hw = p->w / 2;
     s->hh = p->h / 2;
     s->r = p->radius;
-    s->top_base = (p->cy - s->hh) + q16_mul(p->h, p->lid_top);
+    s->top_base = (s->cy - s->hh) + q16_mul(p->h, p->lid_top);
     s->slant = p->slant;
-    s->bot_base = (p->cy + s->hh) - q16_mul(p->h, p->lid_bottom);
+    s->bot_base = (s->cy + s->hh) - q16_mul(p->h, p->lid_bottom);
     s->curve = p->curve;
     s->lut = lut;
     raster_shape_finalize(s, BOARD_LCD_H_RES, BOARD_LCD_V_RES);
@@ -237,7 +268,7 @@ void eyes_update(eyes_t *e, uint32_t now_ms, raster_shape_t out[2])
         EyeState *s = &e->eye[i];
         eye_ease(s, now_ms);
         EyeParams p;
-        eye_effective_params(s, &e->mod[i], blink, sx, sy, &p);
-        params_to_shape(&p, s->lut, &out[i]);
+        eye_effective_params(s, &e->mod[i], &e->env[i], blink, sx, sy, &p);
+        params_to_shape(e, &p, s->lut, &out[i]);
     }
 }

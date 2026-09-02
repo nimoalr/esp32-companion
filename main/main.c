@@ -30,6 +30,8 @@
 #include "gfx.h"
 #include "ui.h"
 #include "audio.h"
+#include "accessories.h"
+#include "behavior.h"
 
 static const char *TAG = "eyes";
 
@@ -100,19 +102,6 @@ static rect_t shape_rect(const raster_shape_t *s)
     return (rect_t){ s->px0, s->py0, s->px1, s->py1 };
 }
 
-/* Rasterise and push one rect in bands of DISPLAY_BAND_ROWS rows. */
-static void push_rect(const rect_t *r, const raster_shape_t *shapes)
-{
-    const int w = r->x1 - r->x0;
-    for (int y = r->y0; y < r->y1; y += DISPLAY_BAND_ROWS) {
-        int rows = r->y1 - y;
-        if (rows > DISPLAY_BAND_ROWS) rows = DISPLAY_BAND_ROWS;
-        uint16_t *band = display_acquire_band();
-        raster_band(band, r->x0, y, w, rows, shapes, 2);
-        display_push(r->x0, y, w, rows, band);
-    }
-}
-
 /* ---- brightness fade ------------------------------------------------------ */
 
 static int s_bri_cur = -1;     /* last value sent to the panel */
@@ -156,9 +145,31 @@ typedef struct {
     raster_shape_t shapes[2];
     rect_t prev[2];
     anim_id_t saved_anim;      /* expression to restore after DROWSY */
+    anim_id_t user_anim;       /* what the user picked by tapping; behaviour may override it */
     mode_t mode;
     ui_t ui;
+    behavior_t beh;
+    accessories_t acc;
+    uint32_t tap_count;
+    bool mic_ok;
 } render_ctx_t;
+
+/* Eyes + accessories into one band. */
+static void push_rect_scene(const rect_t *r, const raster_shape_t *shapes, const accessories_t *acc, uint32_t now_ms)
+{
+    const int w = r->x1 - r->x0;
+    for (int y = r->y0; y < r->y1; y += DISPLAY_BAND_ROWS) {
+        int rows = r->y1 - y;
+        if (rows > DISPLAY_BAND_ROWS) rows = DISPLAY_BAND_ROWS;
+        uint16_t *band = display_acquire_band();
+        raster_band(band, r->x0, y, w, rows, shapes, 2);
+        if (acc_any(acc)) {
+            const gfx_band_t gb = { .dst = band, .x0 = r->x0, .y0 = y, .w = w, .rows = rows };
+            acc_paint(acc, &gb, now_ms);
+        }
+        display_push(r->x0, y, w, rows, band);
+    }
+}
 
 /* Paint one UI rect through the band path: black, then the screen's elements clipped to the band. */
 static void push_rect_ui(const rect_t *r, const ui_t *ui)
@@ -187,17 +198,20 @@ static void leave_ui(render_ctx_t *c, uint32_t now_ms)
     c->mode = MODE_EYES;
     display_fill_black();
     c->prev[0] = c->prev[1] = rect_empty();
+    acc_init(&c->acc, BOARD_LCD_H_RES / 2 - 95, BOARD_LCD_H_RES / 2 + 95, BOARD_LCD_V_RES / 2);
+    c->user_anim = ANIM_NEUTRAL;
     anim_set(&c->sm, &c->eyes, ANIM_NEUTRAL, now_ms);
     ESP_LOGI(TAG, "UI closed");
 }
 
 /* Keep the microphones running exactly while the DANCE expression is showing. */
-static void sync_audio(const render_ctx_t *c)
+static void sync_audio(render_ctx_t *c, bool want)
 {
-    const bool want = c->mode == MODE_EYES && c->sm.id == ANIM_DANCE;
+    want = want && c->mode == MODE_EYES;
     if (want && !audio_running()) {
         if (audio_start() != ESP_OK) {
-            ESP_LOGW(TAG, "dance mode without microphones");
+            ESP_LOGW(TAG, "microphones unavailable");
+            c->mic_ok = false;
         }
     } else if (!want && audio_running()) {
         audio_stop();
@@ -211,6 +225,7 @@ static void run_ui_actions(render_ctx_t *c, uint32_t now_ms)
         switch (a) {
         case UI_ACT_DANCE:
             leave_ui(c, now_ms);
+            c->user_anim = ANIM_DANCE;
             anim_set(&c->sm, &c->eyes, ANIM_DANCE, now_ms);
             break;
         case UI_ACT_SAVE:
@@ -284,6 +299,7 @@ static void do_sleep(render_ctx_t *c)
     eyes_closed_now(c, now_ms);
     c->prev[0] = c->prev[1] = rect_empty();
     display_sleep(false);
+    c->user_anim = ANIM_NEUTRAL;
     anim_set(&c->sm, &c->eyes, ANIM_NEUTRAL, ms_now());
     brightness_set_now(g_settings.brightness_active);
     drain_taps();
@@ -293,12 +309,14 @@ static void on_transition(render_ctx_t *c, power_state_t from, power_state_t to,
 {
     switch (to) {
     case POWER_DROWSY:
-        c->saved_anim = c->sm.id;
+        c->saved_anim = c->user_anim;
+        c->user_anim = ANIM_SLEEPY;
         anim_set(&c->sm, &c->eyes, ANIM_SLEEPY, now_ms);
         brightness_target(g_settings.brightness_aod);
         break;
     case POWER_ACTIVE:
         if (from == POWER_DROWSY) {
+            c->user_anim = c->saved_anim;
             anim_set(&c->sm, &c->eyes, c->saved_anim, now_ms);
             brightness_target(g_settings.brightness_active);
             drain_taps();      /* the touch that woke us is not an expression change */
@@ -317,6 +335,10 @@ static void render_task(void *arg)
     anim_init(&c.sm, &c.eyes, now_ms);
     c.prev[0] = c.prev[1] = rect_empty();
     c.saved_anim = ANIM_NEUTRAL;
+    c.user_anim = ANIM_NEUTRAL;
+    c.mic_ok = true;
+    behavior_init(&c.beh, now_ms);
+    acc_init(&c.acc, BOARD_LCD_H_RES / 2 - 95, BOARD_LCD_H_RES / 2 + 95, BOARD_LCD_V_RES / 2);
 
     display_fill_black();
     brightness_set_now(g_settings.brightness_active);
@@ -345,8 +367,14 @@ static void render_task(void *arg)
             } else if (state == POWER_ACTIVE) {
                 switch (ev.type) {
                 case TOUCH_TAP:
-                case TOUCH_SWIPE_LEFT:  anim_next(&c.sm, &c.eyes, now_ms); break;
-                case TOUCH_SWIPE_RIGHT: anim_prev(&c.sm, &c.eyes, now_ms); break;
+                case TOUCH_SWIPE_LEFT:
+                    c.tap_count++;
+                    c.user_anim = (anim_id_t)((c.user_anim + 1) % ANIM_COUNT);
+                    break;
+                case TOUCH_SWIPE_RIGHT:
+                    c.tap_count++;
+                    c.user_anim = (anim_id_t)((c.user_anim + ANIM_COUNT - 1) % ANIM_COUNT);
+                    break;
                 case TOUCH_LONG_PRESS:  enter_ui(&c, false, now_ms); break;
                 default: break;
                 }
@@ -355,10 +383,32 @@ static void render_task(void *arg)
         if (c.mode == MODE_UI) {
             run_ui_actions(&c, now_ms);
         }
-        sync_audio(&c);
+
+        /* Character: environment reactions decide what is shown and whether the mics run. */
         audio_features_t af = { 0 };
         if (audio_running()) {
             audio_get_features(&af);
+        }
+        behavior_out_t bo = { .override_anim = -1 };
+        if (c.mode == MODE_EYES) {
+            behavior_in_t bi = { .cal = &g_settings.cal, .audio = af, .mic_available = c.mic_ok,
+                                 .user_interacting = now_ms - touch_last_activity_ms() < 3000, .tap_count = c.tap_count };
+            bi.have_accel = power_last_accel(bi.accel, &bi.accel_ms);
+            behavior_update(&c.beh, &bi, now_ms, &bo);
+            const anim_id_t want = bo.override_anim >= 0 ? (anim_id_t)bo.override_anim : c.user_anim;
+            if (want != c.sm.id && state == POWER_ACTIVE) {
+                anim_set(&c.sm, &c.eyes, want, now_ms);
+            }
+            eyes_set_env(&c.eyes, 0, &bo.env[0]);
+            eyes_set_env(&c.eyes, 1, &bo.env[1]);
+            eyes_set_face_angle(&c.eyes, bo.face_angle_deg);
+            acc_set_angle(&c.acc, bo.face_angle_deg);
+            acc_set_headphones(&c.acc, bo.headphones, now_ms);
+            acc_set_knocked_out(&c.acc, bo.knocked_out, now_ms);
+            acc_set_zz(&c.acc, bo.zz || c.sm.id == ANIM_SLEEPING, now_ms);
+        }
+        sync_audio(&c, (c.sm.id == ANIM_DANCE && bo.override_anim < 0) || bo.want_mic);
+        if (audio_running()) {
             anim_set_audio(&c.sm, &af);
         }
 
@@ -392,7 +442,7 @@ static void render_task(void *arg)
             continue;
         }
 
-        rect_t dirty[UI_MAX_DIRTY];
+        rect_t dirty[UI_MAX_DIRTY + ACC_MAX_DIRTY + 2];
         int ndirty = 0;
         if (c.mode == MODE_UI) {
             ui_sensors_t sens = { 0 };
@@ -412,6 +462,9 @@ static void render_task(void *arg)
         } else {
             anim_update(&c.sm, &c.eyes, now_ms);
             eyes_update(&c.eyes, now_ms, c.shapes);
+            if (bo.knocked_out) {
+                c.shapes[0].visible = c.shapes[1].visible = false;   /* X eyes are drawn as accessories */
+            }
 
             /* Dirty rects: union of each eye's previous and current bounding box. */
             for (int i = 0; i < 2; i++) {
@@ -425,6 +478,12 @@ static void render_task(void *arg)
             if (ndirty == 2 && rect_overlaps(&dirty[0], &dirty[1])) {
                 dirty[0] = rect_union(&dirty[0], &dirty[1]);
                 ndirty = 1;
+            }
+            acc_rect_t ar[ACC_MAX_DIRTY];
+            const int na = acc_update(&c.acc, now_ms, ar);
+            for (int i = 0; i < na; i++) {
+                const rect_t r = rect_align((rect_t){ ar[i].x0, ar[i].y0, ar[i].x1, ar[i].y1 });
+                if (!rect_is_empty(&r)) dirty[ndirty++] = r;
             }
         }
 
@@ -441,7 +500,7 @@ static void render_task(void *arg)
 
         for (int i = 0; i < ndirty; i++) {
             if (c.mode == MODE_UI) push_rect_ui(&dirty[i], &c.ui);
-            else push_rect(&dirty[i], c.shapes);
+            else push_rect_scene(&dirty[i], c.shapes, &c.acc, now_ms);
         }
         display_wait_idle();
         brightness_step(state == POWER_ACTIVE ? 3 : 2);
@@ -462,8 +521,9 @@ static void render_task(void *arg)
             if (af.active) {
                 snprintf(audio_s, sizeof audio_s, " | audio %" PRIu32 " us/frame, %d bpm", af.cpu_us, (int)af.bpm);
             }
-            ESP_LOGI(TAG, "%s %s: %" PRIu32 " fps | frame %" PRIu32 " us avg, %" PRIu32 " us max | %" PRIu32 " B/frame, %" PRIu32 " rect(s) | pace %s%s | bri %d%% | batt %u mV %d%%%s%s%s",
+            ESP_LOGI(TAG, "%s %s [%s, energy %.2f]: %" PRIu32 " fps | frame %" PRIu32 " us avg, %" PRIu32 " us max | %" PRIu32 " B/frame, %" PRIu32 " rect(s) | pace %s%s | bri %d%% | batt %u mV %d%%%s%s%s",
                      power_state_name(state), c.mode == MODE_UI ? ui_screen_name(c.ui.screen) : anim_name(c.sm.id),
+                     behavior_state_name(c.beh.state), behavior_energy(&c.beh),
                      (frames * 1000u + elapsed_ms / 2) / elapsed_ms,
                      (uint32_t)(frame_us_sum / frames), frame_us_max,
                      bytes / frames, (rects_sum + frames / 2) / frames,

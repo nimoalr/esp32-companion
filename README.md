@@ -47,6 +47,21 @@ the eased pose: the heartbeat in LOVE, the circling gaze in DIZZY, the
 bounce in LAUGHING and EXCITED, the tremble in SCARED, the breathing in
 SLEEPING. Adding an expression is one table entry in `main/anim.c`.
 
+**Character.** A behaviour layer watches the environment and overrides the
+tapped expression while a reaction lasts:
+
+| Trigger | Reaction |
+| --- | --- |
+| Tilting the device | The whole face turns about the screen centre so "up" stays up, like a badge on a wheel hub (past ~17 deg of tilt; back upright when flat). Within that, the eyes slide a little toward the low side, and slight handling adds a small wobble. |
+| Shaking | Dizzy after about a second; passing out after about four: X eyes, stars circling overhead for 8 s, then a groggy few seconds. |
+| Face down on the table | Eyes close, z's float up; lifting it back gives a short surprised wake. |
+| Music | Every 20 s while awake the mics listen for 3 s. Regular beats trigger a reaction rolled against his mood: usually a dance, headphones sliding on more often when he is energetic, sometimes an unimpressed look before ignoring the music for a while. Quiet or a tap ends it. |
+
+Mood is a single "energy" value that rises when he is handled or touched,
+sinks with time and wanders a little; it biases the music reaction and can
+drive more later. Props (headphones, stars, X eyes, z's) are drawn through the
+same band path as the eyes and rotate with the face.
+
 **Dance mode.** The last expression (also reachable from the setup menu)
 switches the two microphones on and lets the eyes follow the music: the
 bass level makes them grow and squash, each beat makes them jump with an
@@ -127,6 +142,8 @@ main/
   eyes.c/.h               EyeParams / EyeState, per-field easing, blink + saccade layer
   anim.c/.h               keyframe + modulator table for 22 expressions, dance choreography
   audio.c/.h              ES7210 microphones over I2S via esp_codec_dev; 256-point FFT, bands, onsets, balance
+  behavior.c/.h           environment reactions: shake/knock-out, face-down, music sniffing, mood, gravity face; pure C
+  accessories.c/.h        headphones, stars, X eyes, z's; rotate with the face; pure C
   power.c/.h              ACTIVE / DROWSY / SLEEP / DEEP, motion detector, PM locks, sleep
   imu.c/.h                QMI8658: accelerometer polling, hardware wake-on-motion
   pmic.c/.h               AXP2101: battery telemetry, soft power off
@@ -158,7 +175,13 @@ docs/hardware.md          pin sources, TE, QSPI clock, power rails, battery budg
   get exact horizontal coverage, the covered core is written with 32-bit
   stores, and coverage indexes a 256-entry RGB565 LUT pre-swapped to panel
   byte order. Everything per row and per pixel is integer Q16.16; the band
-  rasteriser is linked into IRAM.
+  rasteriser is linked into IRAM. Rotated faces use the same scheme: the
+  scanline through a rotated rounded rectangle is computed in closed form
+  from the nine Voronoi regions of its core (a square root only in the four
+  corner regions), lids stay half-planes and the arc is a quadratic, all
+  evaluated once per sub-scanline in float and fed to the same coverage code.
+  On the host a rotated frame costs about 2.8x an upright one, mostly because
+  the rotated bounding box is larger.
 * **Frame pacing.** TE is wired to GPIO13, so each frame's panel write starts
   on the rising TE edge. In DROWSY the task sleeps until ~2.5 ms before the
   Nth predicted edge, then locks onto the real edge. If TE never pulses, a

@@ -60,7 +60,10 @@ typedef struct {
 typedef struct {
     EyeState eye[2];                   /* 0 = left (viewer's left), 1 = right */
     eye_pose_t mod[2];                 /* per-frame additive modulation (wobble, bounce, beat); deltas */
+    eye_pose_t env[2];                 /* environment layer (gravity gaze), set by the behaviour code; deltas */
     eyes_idle_t idle;
+    bool face_rot;                     /* whole face rotated about the screen centre */
+    int32_t face_cos, face_sin;        /* Q16 */
 } eyes_t;
 
 void eyes_init(eyes_t *e, uint32_t now_ms);
@@ -70,6 +73,10 @@ void eyes_set_target(eyes_t *e, int eye, const eye_pose_t *pose, uint32_t dur_ms
 
 /* Per-frame additive modulation on top of the eased pose; cleared by eyes_clear_mod(). */
 void eyes_clear_mod(eyes_t *e);
+void eyes_set_env(eyes_t *e, int eye, const eye_pose_t *delta);
+
+/* Rotate the whole face about the screen centre; degrees, clockwise on screen, 0 = upright. */
+void eyes_set_face_angle(eyes_t *e, float deg);
 
 /* Idle-layer tuning used by animations. */
 void eyes_set_idle_rates(eyes_t *e, int32_t blink_interval_scale, int32_t blink_speed_scale);

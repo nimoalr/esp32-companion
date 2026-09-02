@@ -58,6 +58,35 @@ menu "Eyes"
 
     endmenu
 
+    menu "Character"
+
+        config EYES_SHAKE_MG
+            int "Shake threshold (milli-g of |a| deviation from 1 g, smoothed)"
+            range 100 2000
+            default 350
+            help
+                Above this he gets dizzy after about a second of shaking and
+                passes out after about four.
+
+        config EYES_GRAVITY_FACE
+            bool "Keep the face upright against gravity when the device is tilted"
+            default y
+            help
+                Like a badge on a wheel hub: the whole face (eyes and props)
+                rotates about the screen centre so "up" stays up. Engages
+                past about 17 degrees of tilt and returns upright when flat.
+
+        config EYES_SNIFF_INTERVAL_S
+            int "Listen for music every N seconds while awake (0 = never)"
+            range 0 600
+            default 20
+            help
+                A 3 s microphone sample every N seconds. Regular beats start a
+                reaction (dance, sometimes with headphones, sometimes an
+                unimpressed look) depending on his mood.
+
+    endmenu
+
     menu "Setup UI"
 
         config EYES_UI_TIMEOUT_S

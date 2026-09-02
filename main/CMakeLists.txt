@@ -18,6 +18,8 @@ idf_component_register(
         "imu_cal.c"
         "ui.c"
         "audio.c"
+        "accessories.c"
+        "behavior.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES
         esp_lcd
