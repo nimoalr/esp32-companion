@@ -1,18 +1,20 @@
-# Eyes render demo
+# esp32-companion
 
-Two orange cartoon eyes on the round 1.75" AMOLED of the Waveshare
-ESP32-S3-Touch-AMOLED-1.75. They blink and glance around on their own; a tap
-on the screen cycles through eight expressions. Nothing else: no audio, IMU,
-RTC, Wi-Fi, Bluetooth, storage or menus, and no graphics library. The renderer
-is a custom fixed-point scanline rasteriser feeding the panel through DMA.
+A small companion character for the Waveshare ESP32-S3-Touch-AMOLED-1.75: two
+orange cartoon eyes on the round 1.75" AMOLED that blink and glance around on
+their own, change expression when tapped, dim into an always-on face when left
+alone, and sleep until the device is picked up. No graphics library: the
+renderer is a custom fixed-point scanline rasteriser feeding the panel through
+DMA, and the whole thing is plain ESP-IDF C.
 
 Target: **ESP-IDF v5.5.5** (any 5.5.x should work; managed components need
-`idf >= 5.5`).
+`idf >= 5.5`). Hardware notes, pin sources and power budget:
+[`docs/hardware.md`](docs/hardware.md).
 
 ## Build and flash
 
 ```sh
-git clone <this repo>
+git clone <this repo> esp32-companion
 cd esp32-companion
 idf.py set-target esp32s3
 idf.py build
@@ -24,46 +26,69 @@ The first build downloads two managed components from the Espressif registry
 2.0.0; versions are pinned in `dependencies.lock`). The board enumerates as a
 USB-Serial/JTAG device. Exit the monitor with `Ctrl+]`.
 
-## What you should see
+Tunables live under `idf.py menuconfig` -> "Eyes" (display clock and
+brightness, power timeouts, thresholds, CPU clock, deep state). Defaults are in
+`sdkconfig.defaults`.
 
-1. Boot: black screen, then two orange capsule eyes appear.
-2. Idle: a blink every 2..6 s (about 120 ms close and open) and a small
-   saccade every 1..3 s.
-3. Each tap advances the expression, easing over 120..300 ms, in this order:
-   NEUTRAL, HAPPY, SAD, ANGRY, SURPRISED, SLEEPY, LOOK_AROUND, WINK, then back
-   to NEUTRAL on the eighth tap. A tap in the middle of a transition retargets
-   immediately from the current shape.
-4. The console prints one line per second:
+## What it does
+
+**Eyes.** Two orange capsules blink every 2..6 s and make a small saccade every
+1..3 s. A tap cycles NEUTRAL, HAPPY, SAD, ANGRY, SURPRISED, SLEEPY, LOOK_AROUND,
+WINK and back, easing over 120..300 ms; a tap mid-transition retargets from the
+current shape. A tap is a touch-down and touch-up within 300 ms with under
+10 px of travel; holds and drags are ignored.
+
+**Power states.** Driven by touch and by the QMI8658 accelerometer, which is
+polled at 20 Hz while awake to detect the device being handled (deviation from
+the gravity vector above `EYES_MOTION_MG`, default 80 mg, on two consecutive
+samples).
+
+| State | Trigger | Display | CPU / sleep |
+| --- | --- | --- | --- |
+| ACTIVE | boot, touch, motion | full brightness (`EYES_BRIGHTNESS_ACTIVE`, 100 %), 60 fps | max clock, no light sleep |
+| DROWSY | 30 s without touch or motion | dimmed always-on (`EYES_BRIGHTNESS_AOD`, 10 %), sleepy face, 15 fps | DFS to 40 MHz, automatic light sleep between frames |
+| SLEEP | 5 min in DROWSY without activity | panel Display Off + Sleep In | light sleep; IMU wake-on-motion (INT2 -> GPIO21) or touch (GPIO11) wakes to ACTIVE |
+| DEEP | 1 h in SLEEP | off | AXP2101 power off: only the PWR button (or plugging USB) restarts the board |
+
+Any touch or motion in DROWSY returns to ACTIVE with the previous expression.
+Waking from SLEEP takes about 250 ms: Sleep Out, a black clear, then the eyes
+open from closed. The DEEP state can be switched to ESP32 deep sleep with IMU
+wake in menuconfig; the BOOT button is a strapping pin and is deliberately not
+used as a wake button. Holding PWR for 6 s forces the PMIC off at any time
+(AXP2101 hardware default). The state machine can be disabled entirely
+(`EYES_POWER_ENABLE=n`) for benchmarking.
+
+**Console.** One line per second:
 
 ```
-I (12345) eyes: NEUTRAL: 60 fps | frame 3210 us avg, 3480 us max (raster+DMA) | 62604 B/frame in 2 rect(s) | pace TE
+I (12345) eyes: ACTIVE NEUTRAL: 60 fps | frame 3210 us avg, 3480 us max | 62604 B/frame, 2 rect(s) | pace TE | bri 100% | batt 3987 mV 87% chg usb
 ```
 
 `frame` is the wall time from the V-blank edge until the last DMA transfer of
-the frame has completed. `B/frame` is the number of bytes pushed to the panel
-per frame; a full frame would be 434 312 B.
-
-A tap is a touch-down followed by a touch-up within 300 ms with less than 10 px
-of travel. Holds and drags are ignored; taps closer than 150 ms apart are
-debounced.
+the frame completed; a full frame would be 434 312 B. Battery numbers come from
+the AXP2101 fuel gauge.
 
 ## Layout
 
 ```
-.
 CMakeLists.txt            builds `main` only (no Wi-Fi/BT/NVS components in the tree)
-sdkconfig.defaults        esp32s3, 240 MHz, octal PSRAM 80 MHz, 32K/64K caches, -O2, 1 kHz tick
+sdkconfig.defaults        esp32s3, 240 MHz, octal PSRAM 80 MHz, caches, -O2, 1 kHz tick, PM + tickless idle
 main/
-  idf_component.yml       esp_lcd_co5300 + esp_lcd_touch_cst9217 (component manager reads it here)
-  Kconfig.projbuild       QSPI clock choice (40 MHz default, 80 MHz experimental)
-  main.c                  init, render task (core 1), dirty rects, stats
-  board.h                 pin map and panel constants, each with its source
-  display.c/.h            QSPI + CO5300 via esp_lcd, two band buffers, TE sync, 60 Hz fallback
+  idf_component.yml       esp_lcd_co5300 + esp_lcd_touch_cst9217
+  Kconfig.projbuild       "Eyes" menu: display and power options
+  main.c                  render task (core 1): state transitions, dirty rects, stats
+  board.h                 pin map, I2C addresses, panel constants, each with its source
+  display.c/.h            QSPI + CO5300 via esp_lcd, band buffers, TE sync, brightness, sleep
   touch.c/.h              CST9217 via esp_lcd_touch, ISR -> task (core 0) -> tap queue
   raster.c/.h             Q16.16 scanline rasteriser, 4x vertical sampling, coverage LUT
   eyes.c/.h               EyeParams / EyeState, per-field easing, blink + saccade layer
   anim.c/.h               keyframe table for the eight expressions + state machine
-docs/hardware.md          pin sources, TE, QSPI clock, power rail
+  power.c/.h              ACTIVE / DROWSY / SLEEP / DEEP, motion detector, PM locks, sleep
+  imu.c/.h                QMI8658: accelerometer polling, hardware wake-on-motion
+  pmic.c/.h               AXP2101: battery telemetry, soft power off
+  i2c_bus.c/.h            the one shared I2C bus
+  settings.c/.h           runtime settings (brightness), Kconfig defaults, no persistence yet
+docs/hardware.md          pin sources, TE, QSPI clock, power rails, battery budget
 ```
 
 ## Rendering architecture
@@ -76,52 +101,35 @@ docs/hardware.md          pin sources, TE, QSPI clock, power rail
 * **Dirty rectangles.** Each eye's pixel bounding box for the previous and the
   current frame are unioned, aligned to the panel's 2-pixel granularity, and
   pushed as a partial window (CASET/RASET/RAMWR per band via
-  `esp_lcd_panel_draw_bitmap`). The two eyes are pushed as two rects unless
-  their rects overlap, in which case they merge. The black background is only
-  drawn once at boot. A closed eye shrinks its rect to a few rows.
+  `esp_lcd_panel_draw_bitmap`). The black background is drawn once at boot and
+  after every wake from SLEEP.
 * **Analytic rasteriser.** An eye is a rounded rectangle (capsule) with a
-  straight, optionally slanted top lid line and a bottom lid that can bulge
-  upward (the happy arc). Each pixel row is sampled on four sub-scanlines; the
-  left/right edge pixels get exact horizontal coverage, the fully covered core
-  is written with 32-bit stores, and coverage indexes a 256-entry RGB565 LUT
-  (eye colour over black, pre-swapped to panel byte order). Everything on the
-  per-row and per-pixel path is integer Q16.16; the whole band rasteriser is
-  linked into IRAM.
+  straight, optionally slanted top lid and a bottom lid that can bulge upward
+  (the happy arc). Each pixel row is sampled on four sub-scanlines; edge pixels
+  get exact horizontal coverage, the covered core is written with 32-bit
+  stores, and coverage indexes a 256-entry RGB565 LUT pre-swapped to panel
+  byte order. Everything per row and per pixel is integer Q16.16; the band
+  rasteriser is linked into IRAM.
 * **Frame pacing.** TE is wired to GPIO13, so each frame's panel write starts
-  on the rising TE edge (V-blank). If TE never pulses, a 60 Hz `esp_timer`
-  takes over and the log says `pace timer`. All motion is time based
-  (`esp_timer_get_time`), never frame-count based.
-* **Tasks.** Render task pinned to core 1 at priority `configMAX_PRIORITIES-3`.
-  Touch task on core 0: GPIO ISR -> semaphore -> I2C read -> tap detection ->
-  FreeRTOS queue -> render task. The SPI and I2C interrupts live on core 0.
-
-## Eye model
-
-`EyeParams` (`cx, cy, w, h, radius, lid_top, lid_bottom, slant, curve, color`)
-is what the rasteriser consumes. `curve` is one field beyond the brief: the
-upward bulge of the bottom lid that makes the HAPPY arc. Animations write an
-`eye_pose_t` (scale, lids, slant, curve, offset) as keyframes; `EyeState` eases
-every field independently with a smoothstep, so a retarget mid-transition
-starts from the current value. Blink (vertical squash) and saccades (shared
-centre offset) are layered on top for every expression; SLEEPY slows the blink
-rate and speed, SURPRISED blinks less.
+  on the rising TE edge. In DROWSY the task sleeps until ~2.5 ms before the
+  Nth predicted edge, then locks onto the real edge. If TE never pulses, a
+  60 Hz `esp_timer` takes over and the log says `pace timer`. All motion is
+  time based, never frame-count based.
+* **Tasks.** Render task pinned to core 1; it is the only task that touches
+  the panel, the IMU and the PMIC. Touch task on core 0: GPIO ISR ->
+  semaphore -> I2C read -> tap detector -> queue. SPI and I2C interrupts live
+  on core 0.
 
 ## Performance
 
-Measured on the host build of the rasteriser (`raster.c`, `eyes.c`, `anim.c`
-compile unchanged with gcc): neutral eyes are 2 x 31 302 px per frame, about
-62.6 kB pushed per frame, 14 % of a full frame. Bus time at 40 MHz QSPI is
-3.1 ms per frame (1.6 ms at 80 MHz); the CPU side is a fraction of that and
-overlaps the DMA. The remaining budget at 60 fps is more than 10 ms per frame.
-A host sweep through all eight expressions at 60 Hz with blinks and saccades
-live averages 58.5 kB per frame and peaks at 106.7 kB (SURPRISED), with no
-writes outside the dirty rectangles under AddressSanitizer/UBSan.
+Host build of the rasteriser (`raster.c`, `eyes.c`, `anim.c` compile unchanged
+with gcc): neutral eyes are 2 x 31 302 px per frame, about 62.6 kB pushed per
+frame, 14 % of a full frame. Bus time at 40 MHz QSPI is 3.1 ms per frame
+(1.6 ms at 80 MHz). A sweep through all eight expressions at 60 Hz with
+blinks and saccades live averages 58.5 kB per frame and peaks at 106.7 kB
+(SURPRISED), with no writes outside the dirty rectangles under
+AddressSanitizer/UBSan.
 
-On-device frame time and fps were not measured while writing this; there was no
-board attached. The per-second log line above reports them live.
-
-## Configuration
-
-`idf.py menuconfig` -> "Eyes demo" -> "CO5300 QSPI clock": 40 MHz (default, the
-value all Waveshare reference code uses) or 80 MHz (untested). See
-`docs/hardware.md` for the reasoning and the bus-time table.
+On-device frame time, fps and sleep currents have not been measured yet. The
+per-second log line reports the first two live; `docs/hardware.md` has the
+battery-life estimates that the measurements will replace.
