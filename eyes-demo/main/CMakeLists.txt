@@ -4,6 +4,7 @@ idf_component_register(
         "display.c"
         "raster.c"
         "eyes.c"
+        "anim.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES
         esp_lcd

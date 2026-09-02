@@ -1,5 +1,5 @@
 /*
- * Eyes render demo, stage 2: static eyes with the idle blink/saccade layer.
+ * Eyes render demo for the Waveshare ESP32-S3-Touch-AMOLED-1.75.
  *
  *   core 0: app_main (init)
  *   core 1: render task (animation -> dirty rects -> band rasteriser -> QSPI DMA)
@@ -16,6 +16,7 @@
 #include "display.h"
 #include "raster.h"
 #include "eyes.h"
+#include "anim.h"
 
 static const char *TAG = "eyes";
 
@@ -91,13 +92,16 @@ static void push_rect(const rect_t *r, const raster_shape_t *shapes)
 static void render_task(void *arg)
 {
     eyes_t eyes;
+    anim_sm_t sm;
     raster_shape_t shapes[2];
     rect_t prev[2] = { rect_empty(), rect_empty() };
 
     uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
     eyes_init(&eyes, now_ms);
+    anim_init(&sm, &eyes, now_ms);
 
     display_fill_black();
+    uint32_t last_advance_ms = now_ms;
 
     /* stats */
     int64_t stats_t0 = esp_timer_get_time();
@@ -107,8 +111,15 @@ static void render_task(void *arg)
     uint32_t rects_sum = 0;
 
     for (;;) {
+        /* Stage 3: no touch yet, advance the expression every 5 s. */
+        now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        if (now_ms - last_advance_ms >= 5000) {
+            last_advance_ms = now_ms;
+            anim_next(&sm, &eyes, now_ms);
+        }
 
         now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        anim_update(&sm, &eyes, now_ms);
         eyes_update(&eyes, now_ms, shapes);
 
         /* Dirty rects: union of each eye's previous and current bounding box. */
@@ -148,7 +159,8 @@ static void render_task(void *arg)
         if (now_us - stats_t0 >= STATS_PERIOD_US) {
             const uint32_t bytes = display_take_bytes();
             const uint32_t elapsed_ms = (uint32_t)((now_us - stats_t0) / 1000);
-            ESP_LOGI(TAG, "%" PRIu32 " fps | frame %" PRIu32 " us avg, %" PRIu32 " us max (raster+DMA) | %" PRIu32 " B/frame in %" PRIu32 " rect(s) | pace %s%s",
+            ESP_LOGI(TAG, "%s: %" PRIu32 " fps | frame %" PRIu32 " us avg, %" PRIu32 " us max (raster+DMA) | %" PRIu32 " B/frame in %" PRIu32 " rect(s) | pace %s%s",
+                     anim_name(sm.id),
                      (frames * 1000u + elapsed_ms / 2) / elapsed_ms,
                      (uint32_t)(frame_us_sum / frames), frame_us_max,
                      bytes / frames, (rects_sum + frames / 2) / frames,
