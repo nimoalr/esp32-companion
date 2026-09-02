@@ -8,8 +8,12 @@ typedef struct {
 } span_t;
 
 /* Four sub-scanlines per row at y + 1/8, 3/8, 5/8, 7/8; weights sum to 255. */
-static const int32_t k_sub_off[4] = { 8192, 24576, 40960, 57344 };
-static const uint8_t k_sub_w[4] = { 64, 64, 64, 63 };
+static const DRAM_ATTR int32_t k_sub_off[4] = { 8192, 24576, 40960, 57344 };
+static const DRAM_ATTR uint8_t k_sub_w[4] = { 64, 64, 64, 63 };
+
+/* Slopes/bulges below 1/256 px are treated as zero so their reciprocals stay in range. */
+#define RCP_MIN_Q16  256
+#define X_CLAMP_Q16  (1 << 30)
 
 /* Row-local coverage accumulator (band width max). */
 static uint8_t s_cov[512];
@@ -75,7 +79,10 @@ static inline int IRAM_ATTR shape_spans(const raster_shape_t *s, int32_t y, span
             return 0;
         }
     } else {
-        const int32_t xc = s->cx + (int32_t)(((int64_t)dt * s->slant_rcp) >> 16);
+        int64_t xc64 = (int64_t)s->cx + (((int64_t)dt * s->slant_rcp) >> 16);
+        if (xc64 > X_CLAMP_Q16) xc64 = X_CLAMP_Q16;
+        if (xc64 < -X_CLAMP_Q16) xc64 = -X_CLAMP_Q16;
+        const int32_t xc = (int32_t)xc64;
         if (s->slant > 0) {
             if (xc < xr) {
                 xr = xc;
@@ -298,8 +305,10 @@ void IRAM_ATTR raster_band(uint16_t *dst, int x0, int y0, int w, int rows, const
 
 void raster_shape_finalize(raster_shape_t *s, int screen_w, int screen_h)
 {
+    if (s->slant > -RCP_MIN_Q16 && s->slant < RCP_MIN_Q16) s->slant = 0;
+    if (s->curve < RCP_MIN_Q16) s->curve = 0;
     s->slant_rcp = s->slant ? (int32_t)((1LL << 32) / s->slant) : 0;
-    s->curve_rcp = s->curve > 0 ? (int32_t)((1LL << 32) / s->curve) : 0;
+    s->curve_rcp = s->curve ? (int32_t)((1LL << 32) / s->curve) : 0;
 
     if (s->hw <= 0 || s->hh <= 0) {
         s->visible = false;
