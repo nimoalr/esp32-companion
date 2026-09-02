@@ -6,6 +6,7 @@
  *           band rasteriser -> QSPI DMA)
  */
 #include <inttypes.h>
+#include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -28,6 +29,7 @@
 #include "i2c_bus.h"
 #include "gfx.h"
 #include "ui.h"
+#include "audio.h"
 
 static const char *TAG = "eyes";
 
@@ -189,11 +191,28 @@ static void leave_ui(render_ctx_t *c, uint32_t now_ms)
     ESP_LOGI(TAG, "UI closed");
 }
 
+/* Keep the microphones running exactly while the DANCE expression is showing. */
+static void sync_audio(const render_ctx_t *c)
+{
+    const bool want = c->mode == MODE_EYES && c->sm.id == ANIM_DANCE;
+    if (want && !audio_running()) {
+        if (audio_start() != ESP_OK) {
+            ESP_LOGW(TAG, "dance mode without microphones");
+        }
+    } else if (!want && audio_running()) {
+        audio_stop();
+    }
+}
+
 static void run_ui_actions(render_ctx_t *c, uint32_t now_ms)
 {
     ui_action_t a;
     while ((a = ui_take_action(&c->ui)) != UI_ACT_NONE) {
         switch (a) {
+        case UI_ACT_DANCE:
+            leave_ui(c, now_ms);
+            anim_set(&c->sm, &c->eyes, ANIM_DANCE, now_ms);
+            break;
         case UI_ACT_SAVE:
             settings_save();
             break;
@@ -239,6 +258,7 @@ static void eyes_closed_now(render_ctx_t *c, uint32_t now_ms)
 /* SLEEP: panel off, light sleep until motion/touch (-> ACTIVE) or the deadline (-> DEEP). */
 static void do_sleep(render_ctx_t *c)
 {
+    if (audio_running()) audio_stop();
     brightness_set_now(0);
     display_sleep(true);
     const uint32_t entered = ms_now();
@@ -335,11 +355,20 @@ static void render_task(void *arg)
         if (c.mode == MODE_UI) {
             run_ui_actions(&c, now_ms);
         }
+        sync_audio(&c);
+        audio_features_t af = { 0 };
+        if (audio_running()) {
+            audio_get_features(&af);
+            anim_set_audio(&c.sm, &af);
+        }
 
         /* Power state machine. The UI counts as activity while it is being used. */
         uint32_t activity_ms = touch_last_activity_ms();
         if (c.mode == MODE_UI && (int32_t)(c.ui.last_input_ms - activity_ms) > 0) {
             activity_ms = c.ui.last_input_ms;
+        }
+        if (af.active && af.last_beat_ms && (int32_t)(af.last_beat_ms - activity_ms) > 0) {
+            activity_ms = af.last_beat_ms;      /* music playing counts as company */
         }
         const power_state_t next = power_update(now_ms, activity_ms);
         if (c.mode == MODE_UI) {
@@ -429,7 +458,11 @@ static void render_task(void *arg)
             const uint32_t elapsed_ms = (uint32_t)((now_us - stats_t0) / 1000);
             pmic_battery_t b;
             power_battery(&b);
-            ESP_LOGI(TAG, "%s %s: %" PRIu32 " fps | frame %" PRIu32 " us avg, %" PRIu32 " us max | %" PRIu32 " B/frame, %" PRIu32 " rect(s) | pace %s%s | bri %d%% | batt %u mV %d%%%s%s",
+            char audio_s[48] = "";
+            if (af.active) {
+                snprintf(audio_s, sizeof audio_s, " | audio %" PRIu32 " us/frame, %d bpm", af.cpu_us, (int)af.bpm);
+            }
+            ESP_LOGI(TAG, "%s %s: %" PRIu32 " fps | frame %" PRIu32 " us avg, %" PRIu32 " us max | %" PRIu32 " B/frame, %" PRIu32 " rect(s) | pace %s%s | bri %d%% | batt %u mV %d%%%s%s%s",
                      power_state_name(state), c.mode == MODE_UI ? ui_screen_name(c.ui.screen) : anim_name(c.sm.id),
                      (frames * 1000u + elapsed_ms / 2) / elapsed_ms,
                      (uint32_t)(frame_us_sum / frames), frame_us_max,
@@ -437,7 +470,7 @@ static void render_task(void *arg)
                      display_te_active() ? "TE" : "timer",
                      vsync_miss ? " (missed vsync)" : "",
                      s_bri_cur,
-                     b.mv, b.percent, b.charging ? " chg" : "", b.vbus ? " usb" : "");
+                     b.mv, b.percent, b.charging ? " chg" : "", b.vbus ? " usb" : "", audio_s);
             stats_t0 = now_us;
             frames = 0;
             vsync_miss = 0;

@@ -1,0 +1,285 @@
+#include "audio.h"
+
+#include <math.h>
+#include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/i2s_std.h"
+#include "esp_codec_dev.h"
+#include "esp_codec_dev_defaults.h"
+#include "es7210_adc.h"
+#include "esp_timer.h"
+#include "esp_check.h"
+#include "esp_log.h"
+#include "sdkconfig.h"
+#include "board.h"
+#include "i2c_bus.h"
+
+static const char *TAG = "audio";
+
+#define SAMPLE_RATE     16000
+#define FRAME           256                 /* samples per channel per analysis frame (16 ms) */
+#define BINS            (FRAME / 2)         /* 62.5 Hz per bin */
+#define BIN_BASS_LO     1                   /* 62 Hz */
+#define BIN_BASS_HI     4                   /* 312 Hz */
+#define BIN_MID_HI      32                  /* 2 kHz */
+#define BEAT_MIN_GAP_MS 240                 /* 250 bpm ceiling */
+
+static i2s_chan_handle_t s_rx;
+static esp_codec_dev_handle_t s_dev;
+static const audio_codec_ctrl_if_t *s_ctrl_if;
+static const audio_codec_if_t *s_codec_if;
+static const audio_codec_data_if_t *s_data_if;
+static TaskHandle_t s_task;
+static volatile bool s_run;
+
+static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
+static audio_features_t s_feat;
+
+/* analysis state */
+static float s_win[FRAME];
+static float s_tw_cos[FRAME / 2], s_tw_sin[FRAME / 2];
+static float s_re[FRAME], s_im[FRAME];
+static float s_max_bass = 1.f, s_max_mid = 1.f, s_max_high = 1.f, s_max_loud = 1.f;
+static float s_bass_mean;
+static uint32_t s_last_beat_ms;
+static uint32_t s_beat_gaps[8];
+static int s_gap_idx, s_gap_n;
+static float s_balance;
+
+static void tables_init(void)
+{
+    for (int i = 0; i < FRAME; i++) {
+        s_win[i] = 0.5f - 0.5f * cosf(6.2831853f * (float)i / (float)(FRAME - 1));
+    }
+    for (int i = 0; i < FRAME / 2; i++) {
+        s_tw_cos[i] = cosf(-6.2831853f * (float)i / (float)FRAME);
+        s_tw_sin[i] = sinf(-6.2831853f * (float)i / (float)FRAME);
+    }
+}
+
+/* In-place radix-2 FFT of s_re/s_im, FRAME points. */
+static void fft(void)
+{
+    /* bit reversal */
+    for (int i = 1, j = 0; i < FRAME; i++) {
+        int bit = FRAME >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) {
+            float t = s_re[i]; s_re[i] = s_re[j]; s_re[j] = t;
+            t = s_im[i]; s_im[i] = s_im[j]; s_im[j] = t;
+        }
+    }
+    for (int len = 2; len <= FRAME; len <<= 1) {
+        const int half = len >> 1;
+        const int step = FRAME / len;
+        for (int i = 0; i < FRAME; i += len) {
+            for (int k = 0; k < half; k++) {
+                const float wr = s_tw_cos[k * step], wi = s_tw_sin[k * step];
+                const int a = i + k, b = a + half;
+                const float xr = s_re[b] * wr - s_im[b] * wi;
+                const float xi = s_re[b] * wi + s_im[b] * wr;
+                s_re[b] = s_re[a] - xr; s_im[b] = s_im[a] - xi;
+                s_re[a] += xr;          s_im[a] += xi;
+            }
+        }
+    }
+}
+
+static inline float agc(float level, float *running_max)
+{
+    /* slow decay so a quiet passage does not blow the gain up instantly */
+    *running_max *= 0.9985f;
+    if (level > *running_max) *running_max = level;
+    if (*running_max < 1e-3f) *running_max = 1e-3f;
+    float n = level / *running_max;
+    return n > 1.f ? 1.f : n;
+}
+
+static void analyse(const int16_t *pcm, uint32_t now_ms)
+{
+    float l_e = 0.f, r_e = 0.f;
+    for (int i = 0; i < FRAME; i++) {
+        const float l = (float)pcm[2 * i] * (1.f / 32768.f);
+        const float r = (float)pcm[2 * i + 1] * (1.f / 32768.f);
+        l_e += l * l;
+        r_e += r * r;
+        s_re[i] = 0.5f * (l + r) * s_win[i];
+        s_im[i] = 0.f;
+    }
+    fft();
+
+    float bass = 0.f, mid = 0.f, high = 0.f;
+    for (int k = BIN_BASS_LO; k < BINS; k++) {
+        const float p = s_re[k] * s_re[k] + s_im[k] * s_im[k];
+        if (k <= BIN_BASS_HI) bass += p;
+        else if (k <= BIN_MID_HI) mid += p;
+        else high += p;
+    }
+    bass = sqrtf(bass);
+    mid = sqrtf(mid);
+    high = sqrtf(high);
+    const float loud = sqrtf((l_e + r_e) / (2.f * FRAME));
+
+    /* onset: bass energy jumps above its recent mean */
+    const bool beat = bass > 1.45f * s_bass_mean && bass > 0.02f && (now_ms - s_last_beat_ms) >= BEAT_MIN_GAP_MS;
+    s_bass_mean += (bass - s_bass_mean) * (1.f / 24.f);
+    if (beat) {
+        if (s_last_beat_ms) {
+            s_beat_gaps[s_gap_idx] = now_ms - s_last_beat_ms;
+            s_gap_idx = (s_gap_idx + 1) % 8;
+            if (s_gap_n < 8) s_gap_n++;
+        }
+        s_last_beat_ms = now_ms;
+    }
+    float bpm = 0.f;
+    if (s_gap_n >= 4) {
+        uint32_t acc = 0;
+        for (int i = 0; i < s_gap_n; i++) acc += s_beat_gaps[i];
+        const float gap = (float)acc / (float)s_gap_n;
+        if (gap > 0.f) bpm = 60000.f / gap;
+    }
+    const float tot = l_e + r_e;
+    const float bal = tot > 1e-6f ? (r_e - l_e) / tot : 0.f;
+    s_balance += (bal - s_balance) * 0.2f;
+
+    portENTER_CRITICAL(&s_lock);
+    s_feat.active = true;
+    s_feat.bass = agc(bass, &s_max_bass);
+    s_feat.mid = agc(mid, &s_max_mid);
+    s_feat.high = agc(high, &s_max_high);
+    s_feat.loud = agc(loud, &s_max_loud);
+    s_feat.balance = s_balance;
+    if (beat) s_feat.beat_count++;
+    s_feat.last_beat_ms = s_last_beat_ms;
+    s_feat.bpm = bpm;
+    portEXIT_CRITICAL(&s_lock);
+}
+
+static void audio_task(void *arg)
+{
+    static int16_t pcm[FRAME * 2];
+    while (s_run) {
+        const int r = esp_codec_dev_read(s_dev, pcm, sizeof(pcm));
+        if (r != ESP_CODEC_DEV_OK) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
+        }
+        const int64_t t0 = esp_timer_get_time();
+        analyse(pcm, (uint32_t)(t0 / 1000));
+        const uint32_t us = (uint32_t)(esp_timer_get_time() - t0);
+        portENTER_CRITICAL(&s_lock);
+        s_feat.cpu_us = us;
+        portEXIT_CRITICAL(&s_lock);
+    }
+    s_task = NULL;
+    vTaskDelete(NULL);
+}
+
+esp_err_t audio_start(void)
+{
+    if (s_run) return ESP_OK;
+    static bool tables;
+    if (!tables) {
+        tables_init();
+        tables = true;
+    }
+
+    i2s_chan_config_t chan = I2S_CHANNEL_DEFAULT_CONFIG(CONFIG_EYES_AUDIO_I2S_NUM, I2S_ROLE_MASTER);
+    chan.auto_clear = true;
+    ESP_RETURN_ON_ERROR(i2s_new_channel(&chan, NULL, &s_rx), TAG, "i2s channel");
+    const i2s_std_config_t std = {
+        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
+        .gpio_cfg = {
+            .mclk = BOARD_I2S_MCLK,
+            .bclk = BOARD_I2S_BCLK,
+            .ws = BOARD_I2S_LRCK,
+            .dout = I2S_GPIO_UNUSED,
+            .din = BOARD_I2S_DIN,
+            .invert_flags = { 0 },
+        },
+    };
+    esp_err_t err = i2s_channel_init_std_mode(s_rx, &std);
+    if (err == ESP_OK) err = i2s_channel_enable(s_rx);
+    if (err != ESP_OK) {
+        i2s_del_channel(s_rx);
+        s_rx = NULL;
+        ESP_RETURN_ON_ERROR(err, TAG, "i2s std");
+    }
+
+    audio_codec_i2s_cfg_t i2s_cfg = { .port = CONFIG_EYES_AUDIO_I2S_NUM, .rx_handle = s_rx, .tx_handle = NULL };
+    s_data_if = audio_codec_new_i2s_data(&i2s_cfg);
+    audio_codec_i2c_cfg_t i2c_cfg = { .port = BOARD_I2C_PORT, .addr = ES7210_CODEC_DEFAULT_ADDR, .bus_handle = i2c_bus_get() };
+    s_ctrl_if = audio_codec_new_i2c_ctrl(&i2c_cfg);
+    es7210_codec_cfg_t es_cfg = { .ctrl_if = s_ctrl_if, .mic_selected = ES7210_SEL_MIC1 | ES7210_SEL_MIC2 };
+    s_codec_if = es7210_codec_new(&es_cfg);
+    esp_codec_dev_cfg_t dev_cfg = { .dev_type = ESP_CODEC_DEV_TYPE_IN, .codec_if = s_codec_if, .data_if = s_data_if };
+    s_dev = (s_data_if && s_ctrl_if && s_codec_if) ? esp_codec_dev_new(&dev_cfg) : NULL;
+    if (!s_dev) {
+        ESP_LOGE(TAG, "ES7210 setup failed (data_if %p ctrl_if %p codec_if %p)", s_data_if, s_ctrl_if, s_codec_if);
+        audio_stop();
+        return ESP_FAIL;
+    }
+    esp_codec_dev_sample_info_t fs = { .sample_rate = SAMPLE_RATE, .channel = 2, .bits_per_sample = 16 };
+    if (esp_codec_dev_set_in_gain(s_dev, (float)CONFIG_EYES_AUDIO_GAIN_DB) != ESP_CODEC_DEV_OK ||
+        esp_codec_dev_open(s_dev, &fs) != ESP_CODEC_DEV_OK) {
+        ESP_LOGE(TAG, "ES7210 open failed");
+        audio_stop();
+        return ESP_FAIL;
+    }
+
+    portENTER_CRITICAL(&s_lock);
+    memset(&s_feat, 0, sizeof(s_feat));
+    portEXIT_CRITICAL(&s_lock);
+    s_bass_mean = 0.f;
+    s_last_beat_ms = 0;
+    s_gap_n = s_gap_idx = 0;
+    s_max_bass = s_max_mid = s_max_high = s_max_loud = 1e-3f;
+
+    s_run = true;
+    if (xTaskCreatePinnedToCore(audio_task, "audio", 6144, NULL, 6, &s_task, 0) != pdPASS) {
+        s_run = false;
+        audio_stop();
+        return ESP_ERR_NO_MEM;
+    }
+    ESP_LOGI(TAG, "microphones on: ES7210, %d Hz stereo, %d-sample frames, gain %d dB", SAMPLE_RATE, FRAME, CONFIG_EYES_AUDIO_GAIN_DB);
+    return ESP_OK;
+}
+
+void audio_stop(void)
+{
+    s_run = false;
+    /* let the task fall out of its read loop */
+    for (int i = 0; i < 50 && s_task; i++) vTaskDelay(pdMS_TO_TICKS(10));
+    if (s_dev) {
+        esp_codec_dev_close(s_dev);
+        esp_codec_dev_delete(s_dev);
+        s_dev = NULL;
+    }
+    if (s_codec_if) { audio_codec_delete_codec_if(s_codec_if); s_codec_if = NULL; }
+    if (s_ctrl_if) { audio_codec_delete_ctrl_if(s_ctrl_if); s_ctrl_if = NULL; }
+    if (s_data_if) { audio_codec_delete_data_if(s_data_if); s_data_if = NULL; }
+    if (s_rx) {
+        i2s_channel_disable(s_rx);
+        i2s_del_channel(s_rx);
+        s_rx = NULL;
+    }
+    portENTER_CRITICAL(&s_lock);
+    s_feat.active = false;
+    portEXIT_CRITICAL(&s_lock);
+    ESP_LOGI(TAG, "microphones off");
+}
+
+bool audio_running(void)
+{
+    return s_run;
+}
+
+void audio_get_features(audio_features_t *out)
+{
+    portENTER_CRITICAL(&s_lock);
+    *out = s_feat;
+    portEXIT_CRITICAL(&s_lock);
+}

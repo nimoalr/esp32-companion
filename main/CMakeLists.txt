@@ -17,6 +17,7 @@ idf_component_register(
         "font_spleen_16x32.c"
         "imu_cal.c"
         "ui.c"
+        "audio.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES
         esp_lcd
@@ -28,4 +29,5 @@ idf_component_register(
         esp_hw_support
         esp_pm
         nvs_flash
+        esp_driver_i2s
 )

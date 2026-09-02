@@ -112,7 +112,7 @@ const char *ui_screen_name(ui_screen_t s)
 
 /* ---- menu ------------------------------------------------------------------ */
 
-enum { MENU_CALIBRATE, MENU_LEVEL, MENU_BRIGHTNESS, MENU_BATTERY, MENU_EYES, MENU_COUNT };
+enum { MENU_CALIBRATE, MENU_LEVEL, MENU_BRIGHTNESS, MENU_BATTERY, MENU_DANCE, MENU_EYES, MENU_COUNT };
 
 static const char *menu_label(const ui_t *u, int i, char *buf, int len)
 {
@@ -121,6 +121,7 @@ static const char *menu_label(const ui_t *u, int i, char *buf, int len)
     case MENU_LEVEL:      return "Level";
     case MENU_BRIGHTNESS: snprintf(buf, (size_t)len, "Brightness   %3u%%", u->settings->brightness_active); return buf;
     case MENU_BATTERY:    return "Battery";
+    case MENU_DANCE:      return "Dance mode";
     default:              return "Back to eyes";
     }
 }
@@ -170,6 +171,9 @@ static void menu_input(ui_t *u, ui_input_t in, uint32_t now_ms)
             break;
         case MENU_BATTERY:
             goto_screen(u, UI_SCREEN_BATTERY, now_ms);
+            break;
+        case MENU_DANCE:
+            action(u, UI_ACT_DANCE);
             break;
         default:
             action(u, UI_ACT_EXIT);

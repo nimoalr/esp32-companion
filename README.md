@@ -21,9 +21,9 @@ idf.py build
 idf.py -p /dev/ttyACM0 flash monitor      # or /dev/ttyUSB0 / COMx
 ```
 
-The first build downloads two managed components from the Espressif registry
-(`espressif/esp_lcd_co5300` 2.1.0 and `waveshare/esp_lcd_touch_cst9217`
-2.0.0; versions are pinned in `dependencies.lock`). The board enumerates as a
+The first build downloads three managed components from the Espressif
+registry (`espressif/esp_lcd_co5300`, `waveshare/esp_lcd_touch_cst9217`,
+`espressif/esp_codec_dev`; versions are pinned in `dependencies.lock`). The board enumerates as a
 USB-Serial/JTAG device. Exit the monitor with `Ctrl+]`.
 
 Tunables live under `idf.py menuconfig` -> "Eyes" (display clock and
@@ -33,10 +33,28 @@ brightness, power timeouts, thresholds, CPU clock, deep state). Defaults are in
 ## What it does
 
 **Eyes.** Two orange capsules blink every 2..6 s and make a small saccade every
-1..3 s. A tap cycles NEUTRAL, HAPPY, SAD, ANGRY, SURPRISED, SLEEPY, LOOK_AROUND,
-WINK and back, easing over 120..300 ms; a tap mid-transition retargets from the
-current shape. A tap is a touch-down and touch-up within 300 ms with under
-10 px of travel; holds and drags are ignored.
+1..3 s. A tap (or a left swipe; right swipe goes back) cycles through 22
+expressions, easing over 120..300 ms; a tap mid-transition retargets from the
+current shape:
+
+NEUTRAL, HAPPY, SAD, ANGRY, SURPRISED, SLEEPY, LOOK_AROUND, WINK, CURIOUS,
+CONFUSED, LOVE, DIZZY, LAUGHING, SCARED, SKEPTICAL, THINKING, BORED, EXCITED,
+SHY, ANNOYED, SLEEPING, DANCE.
+
+Each expression is a keyframe pose per eye plus up to three modulators
+(a sine or a random jitter on one pose field) applied every frame on top of
+the eased pose: the heartbeat in LOVE, the circling gaze in DIZZY, the
+bounce in LAUGHING and EXCITED, the tremble in SCARED, the breathing in
+SLEEPING. Adding an expression is one table entry in `main/anim.c`.
+
+**Dance mode.** The last expression (also reachable from the setup menu)
+switches the two microphones on and lets the eyes follow the music: the
+bass level makes them grow and squash, each beat makes them jump with an
+alternating lean, loudness bends the bottom lids into a smile, the gaze
+turns toward the louder side, and when the room goes quiet they settle back
+and eventually get heavy lids. Leaving the expression switches the
+microphones off. Beats also count as company for the power state machine,
+so a device playing along does not fall asleep.
 
 **Power states.** Driven by touch and by the QMI8658 accelerometer, which is
 polled at 20 Hz while awake to detect the device being handled (deviation from
@@ -107,7 +125,8 @@ main/
   touch.c/.h              CST9217 via esp_lcd_touch, ISR -> task (core 0) -> gesture queue (tap, hold, swipes)
   raster.c/.h             Q16.16 scanline rasteriser, 4x vertical sampling, coverage LUT
   eyes.c/.h               EyeParams / EyeState, per-field easing, blink + saccade layer
-  anim.c/.h               keyframe table for the eight expressions + state machine
+  anim.c/.h               keyframe + modulator table for 22 expressions, dance choreography
+  audio.c/.h              ES7210 microphones over I2S via esp_codec_dev; 256-point FFT, bands, onsets, balance
   power.c/.h              ACTIVE / DROWSY / SLEEP / DEEP, motion detector, PM locks, sleep
   imu.c/.h                QMI8658: accelerometer polling, hardware wake-on-motion
   pmic.c/.h               AXP2101: battery telemetry, soft power off
@@ -160,6 +179,15 @@ frame, 14 % of a full frame. Bus time at 40 MHz QSPI is 3.1 ms per frame
 blinks and saccades live averages 58.5 kB per frame and peaks at 106.7 kB
 (SURPRISED), with no writes outside the dirty rectangles under
 AddressSanitizer/UBSan.
+
+Audio analysis runs in its own task on core 0 and never touches the render
+task: 16 kHz stereo, 256-sample frames (16 ms), a hand-written radix-2 FFT
+with precomputed twiddles and a Hann window, band energies from squared
+magnitudes (one square root per band, none per bin), automatic gain per band,
+and a bass-onset detector with a 240 ms refractory period. The stats line
+shows its per-frame CPU time (`audio N us/frame`) and the estimated tempo.
+The choreography itself is a few dozen float operations per frame in the
+render task.
 
 Every UI screen is rendered on the host by the same code (`ui.c`, `gfx.c`,
 `raster.c` compile unchanged with gcc), which is how the layouts were checked.
