@@ -30,6 +30,11 @@ typedef struct {
     int32_t bot_base;       /* y of the bottom lid at the outer edges */
     int32_t curve;          /* upward bulge of the bottom lid at x == cx, >= 0 */
     int32_t curve_rcp;      /* Q16 reciprocal of curve (valid when curve > 0) */
+    /* Rotation about (cx, cy): Q16 cos/sin of the face angle (clockwise on screen), rot = false when upright */
+    bool rot;
+    int32_t rc, rs;
+    /* Float mirror of the geometry for the rotated per-row path (set by raster_shape_finalize) */
+    float fc, fs, fa, fb, fr, fhw, fhh, ftop, fbot, fslant, fcurve, finv_hw2;
     /* Pixel bounding box, [x0, x1) x [y0, y1), already clipped to the screen */
     int px0, py0, px1, py1;
     const uint16_t *lut;    /* 256-entry coverage -> RGB565 (byte order as sent) */

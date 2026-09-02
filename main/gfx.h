@@ -39,6 +39,8 @@ void gfx_fill(const gfx_band_t *b, int x, int y, int w, int h, uint16_t color);
 /* Draw a UTF-8 string at (x, y) = top-left of the first cell. bg < 0 leaves the background alone. */
 void gfx_text(const gfx_band_t *b, const gfx_font_t *f, int x, int y, const char *utf8, uint16_t fg, int bg);
 int gfx_text_width(const gfx_font_t *f, const char *utf8);
+/* Thick anti-aliased line (round caps), drawn over the band. */
+void gfx_line(const gfx_band_t *b, int x0, int y0, int x1, int y1, int thick, uint16_t color);
 /* Anti-aliased filled disc, drawn over whatever is in the band. */
 void gfx_disc(const gfx_band_t *b, int cx, int cy, int r, uint16_t color);
 /*

@@ -12,5 +12,6 @@ typedef struct {
     uint32_t beat_count;    /* increments on each bass onset */
     uint32_t last_beat_ms;
     float bpm;              /* 0 until enough beats have been seen */
+    float regularity;       /* 0..1: how even the recent beat intervals are (1 = metronome) */
     uint32_t cpu_us;        /* analysis time of the last frame, for the stats line */
 } audio_features_t;

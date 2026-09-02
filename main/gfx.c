@@ -3,6 +3,8 @@
 #include <string.h>
 #include "raster.h"
 
+static uint32_t isqrt32(uint32_t v);
+
 uint16_t gfx_rgb(uint8_t r, uint8_t g, uint8_t b)
 {
     const uint16_t c = (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
@@ -123,6 +125,21 @@ void gfx_disc(const gfx_band_t *b, int cx, int cy, int r, uint16_t color)
     };
     raster_shape_finalize(&s, 1 << 14, 1 << 14);
     raster_shapes_over(b->dst, b->x0, b->y0, b->w, b->rows, &s, 1);
+}
+
+void gfx_line(const gfx_band_t *b, int x0, int y0, int x1, int y1, int thick, uint16_t color)
+{
+    /* quick reject on the band */
+    const int ylo = (y0 < y1 ? y0 : y1) - thick, yhi = (y0 > y1 ? y0 : y1) + thick;
+    if (yhi < b->y0 || ylo >= b->y0 + b->rows) return;
+    const int dx = x1 - x0, dy = y1 - y0;
+    int len = (int)isqrt32((uint32_t)(dx * dx + dy * dy));
+    const int r = thick / 2 > 1 ? thick / 2 : 1;
+    const int steps = len / (r > 3 ? r / 2 : 1) + 1;     /* discs overlap by half a radius: a solid stroke */
+    for (int i = 0; i <= steps; i++) {
+        const int x = x0 + dx * i / steps, y = y0 + dy * i / steps;
+        gfx_disc(b, x, y, r, color);
+    }
 }
 
 /* Integer sqrt of a 32-bit value. */

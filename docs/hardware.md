@@ -143,6 +143,12 @@ accelerometer, threshold `EYES_WOM_MG`, INT2 idles low and goes high on
 motion); normal data output is unavailable in that mode, so the chip is reset
 back to polling mode on wake.
 
+The behaviour layer consumes the calibrated, screen-frame vector: |a| - 1 g
+smoothed over ~0.3 s is the shake measure (`EYES_SHAKE_MG`), the lateral
+components give the face angle (`atan2(gx, -gy)`, engaged above 0.3 g of
+lateral gravity, slewed at 240 deg/s) and the gravity gaze, and gz < -0.6
+for 1.5 s means face down.
+
 Calibration (setup UI, first boot): three poses, 40 still samples each. In
 each pose one axis reads about +1 g and the other two read their bias; the
 bias of an axis is the mean of its readings in the two poses where it is

@@ -133,12 +133,26 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
         }
         s_last_beat_ms = now_ms;
     }
-    float bpm = 0.f;
+    float bpm = 0.f, regularity = 0.f;
     if (s_gap_n >= 4) {
         uint32_t acc = 0;
         for (int i = 0; i < s_gap_n; i++) acc += s_beat_gaps[i];
         const float gap = (float)acc / (float)s_gap_n;
-        if (gap > 0.f) bpm = 60000.f / gap;
+        if (gap > 0.f) {
+            bpm = 60000.f / gap;
+            /* accept intervals that are the mean or half/double of it (off-beats) */
+            float dev = 0.f;
+            for (int i = 0; i < s_gap_n; i++) {
+                float g = (float)s_beat_gaps[i];
+                float d = fabsf(g - gap);
+                const float d2 = fabsf(g * 2.f - gap), dh = fabsf(g * 0.5f - gap);
+                if (d2 < d) d = d2;
+                if (dh < d) d = dh;
+                dev += d / gap;
+            }
+            dev /= (float)s_gap_n;
+            regularity = dev >= 0.5f ? 0.f : 1.f - 2.f * dev;
+        }
     }
     const float tot = l_e + r_e;
     const float bal = tot > 1e-6f ? (r_e - l_e) / tot : 0.f;
@@ -154,6 +168,7 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     if (beat) s_feat.beat_count++;
     s_feat.last_beat_ms = s_last_beat_ms;
     s_feat.bpm = bpm;
+    s_feat.regularity = regularity;
     portEXIT_CRITICAL(&s_lock);
 }
 
