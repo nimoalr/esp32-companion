@@ -1,0 +1,5 @@
+# ESP-IDF build outputs and generated files
+eyes-demo/build/
+eyes-demo/managed_components/
+eyes-demo/sdkconfig
+eyes-demo/sdkconfig.old

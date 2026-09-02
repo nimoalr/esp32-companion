@@ -1,0 +1,7 @@
+## IDF Component Manager manifest for the `main` component.
+## Managed components are fetched from https://components.espressif.com on
+## the first `idf.py build` and cached under managed_components/.
+dependencies:
+  idf: ">=5.5"
+  # CO5300 AMOLED controller driver (SPI/QSPI), maintained by Espressif.
+  espressif/esp_lcd_co5300: "^2.1.0"
