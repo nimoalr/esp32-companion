@@ -16,33 +16,38 @@
 typedef struct {
     int32_t cx, cy;         /* centre */
     int32_t w, h;           /* full width / height */
-    int32_t rad[4];         /* corner radii TL, TR, BL, BR */
+    int32_t rad[4];         /* corner x radii TL, TR, BL, BR */
+    int32_t rady[4];        /* corner y radii */
     int32_t lid_top;        /* fraction of h hidden from the top, at x == cx */
-    int32_t lid_bottom;     /* fraction of h hidden from the bottom, at the outer x */
+    int32_t lid_bottom;     /* fraction of h hidden from the bottom, at x == cx */
     int32_t slant;          /* dy/dx of the top lid line (+ descends toward +x) */
+    int32_t slant_b;        /* dy/dx of the bottom lid line */
     int32_t bend;           /* top lid bend at the centre, pixels: > 0 droops into the eye, < 0 arches up */
-    int32_t curve;          /* upward bulge of the bottom lid at the centre, pixels */
+    int32_t curve;          /* bottom lid bend at the centre, pixels: > 0 bulges up into the eye, < 0 sags */
+    int32_t hot_x, hot_y;   /* hot spot centre (screen, Q16) */
     int32_t angle;          /* rotation of the eye about its centre, degrees Q16, clockwise on screen */
     uint32_t color;         /* 0xRRGGBB */
 } EyeParams;
 
 /* Animated pose, relative to the base geometry. */
-#define EYE_POSE_FIELDS 14
+#define EYE_POSE_FIELDS 19
 typedef union {
     struct {
         int32_t sx, sy;               /* width / height scale, Q16 (ONE = base) */
         int32_t lid_top, lid_bottom;  /* Q16 fractions */
         int32_t slant;                /* Q16 dy/dx */
-        int32_t curve;                /* Q16 fraction of the (scaled) height */
+        int32_t curve;                /* Q16 fraction of the (scaled) height, signed: > 0 happy arc, < 0 the lid sags */
         int32_t dx, dy;               /* Q16 px centre offset */
         int32_t angle;                /* Q16 degrees, clockwise on screen (the eye's right side drops) */
         int32_t bend;                 /* Q16 fraction of the (scaled) height, signed */
-        int32_t rad[4];               /* corner radius scale, Q16 (ONE = base radius): TL, TR, BL, BR */
+        int32_t rad[4];               /* corner x radius scale, Q16 (ONE = base radius): TL, TR, BL, BR */
+        int32_t rady[4];              /* corner y radius scale, Q16 */
+        int32_t slant_b;              /* Q16 dy/dx of the bottom lid */
     };
     int32_t v[EYE_POSE_FIELDS];
 } eye_pose_t;
 
-#define EYE_POSE_NEUTRAL { { Q16_ONE, Q16_ONE, 0, 0, 0, 0, 0, 0, 0, 0, { Q16_ONE, Q16_ONE, Q16_ONE, Q16_ONE } } }
+#define EYE_POSE_NEUTRAL { { Q16_ONE, Q16_ONE, 0, 0, 0, 0, 0, 0, 0, 0, { Q16_ONE, Q16_ONE, Q16_ONE, Q16_ONE }, { Q16_ONE, Q16_ONE, Q16_ONE, Q16_ONE }, 0 } }
 
 /*
  * Colour. The base colour is the character's identity (a user setting); an
@@ -104,14 +109,28 @@ typedef struct {
     int32_t face_cos, face_sin;        /* Q16 */
     uint32_t prev_ms;
     bool have_prev;
-    /* colour */
+    /* face-level placement: both eyes shift / scale about the screen centre */
+    int32_t face_dx, face_dy;          /* Q16 px, set by the caller */
+    int32_t face_scale;                /* Q16, ONE = base */
+    int32_t face_mod_dx, face_mod_dy, face_mod_scale;   /* per-frame additive deltas (animation modulators) */
+    /* attention (Vector's focus): the eyes settle on a point and stop wandering */
+    bool attend;
+    int32_t attend_tx, attend_ty;      /* target gaze offset, Q16 px */
+    int32_t attend_x, attend_y;        /* eased gaze offset */
+    int32_t attend_k;                  /* Q16 0..1, eased on/off */
+    /* colour, per eye */
     float base_h, base_s, base_l;      /* HSL of the base colour: degrees, 0..1, 0..1 */
-    eye_tint_t tint_cur, tint_from, tint_to;
+    eye_tint_t tint_cur[2], tint_from[2], tint_to[2];
     uint32_t tint_t0_ms, tint_dur_ms;
     int32_t tint_mod_hue, tint_mod_lum;    /* per-frame additive (Q16 degrees / Q16 lightness multiplier delta) */
     int32_t mood_lum, mood_sat;        /* Q16 multipliers from the behaviour layer */
-    uint32_t rgb;                      /* colour currently in the LUT, 0xRRGGBB */
-    uint16_t lut[256];
+    uint32_t rgb[2];                   /* colour currently in each LUT, 0xRRGGBB */
+    uint16_t lut[2][256];
+    /* hot spot (optional): lightness falloff tables and the 32 x 64 lightness x coverage LUTs */
+    bool hot;
+    uint8_t hot_gx[2][466], hot_gy[2][466];
+    uint8_t hot_g2l[RASTER_G2L_N];
+    uint16_t lut2[2][32 * 64];
 } eyes_t;
 
 void eyes_init(eyes_t *e, uint32_t now_ms);
@@ -127,12 +146,21 @@ void eyes_set_env(eyes_t *e, int eye, const eye_pose_t *delta);
 /* Rotate the whole face about the screen centre; degrees, clockwise on screen, 0 = upright. */
 void eyes_set_face_angle(eyes_t *e, float deg);
 
-/* Colour: base (identity), expression tint (eased), mood multipliers (applied directly). */
+/* Colour: base (identity), expression tint per eye (eased), mood multipliers (applied directly). */
 void eyes_set_base_color(eyes_t *e, uint32_t rgb);
-void eyes_set_tint(eyes_t *e, const eye_tint_t *t, uint32_t dur_ms, uint32_t now_ms);
+void eyes_set_tint(eyes_t *e, const eye_tint_t t[2], uint32_t dur_ms, uint32_t now_ms);
 void eyes_set_mood(eyes_t *e, int32_t lum_q16, int32_t sat_q16);
-/* The colour the eyes are drawn with right now, 0xRRGGBB. */
-uint32_t eyes_color(const eyes_t *e);
+/* The colour one eye is drawn with right now, 0xRRGGBB. */
+uint32_t eyes_color(const eyes_t *e, int eye);
+/* Hot spot shading on/off (a setting; costs about 4x the fill time while the eyes move). */
+void eyes_set_hotspot(eyes_t *e, bool on);
+
+/* Face-level placement, applied directly (callers ease). */
+void eyes_set_face_offset(eyes_t *e, int32_t dx_q16, int32_t dy_q16);
+void eyes_set_face_scale(eyes_t *e, int32_t scale_q16);
+
+/* Attention: hold the gaze on a screen point (px) and shrink the idle darts to a pixel; off = wander again. */
+void eyes_set_attention(eyes_t *e, bool on, int x_px, int y_px);
 
 /* Idle-layer tuning used by animations. */
 void eyes_set_idle_rates(eyes_t *e, int32_t blink_interval_scale, int32_t blink_speed_scale, int32_t dart_scale);

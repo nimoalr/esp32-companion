@@ -65,6 +65,17 @@ static const blink_kf_t k_blink[] = {
 #define LOOK_DOWN_GAIN  Q16(0.08)
 #define LOOK_SIDE_GAIN  Q16(0.045)
 
+/* Hot spot: Gaussian lightness falloff, sigma = HOT_SIGMA x eye height, darkest level 31 - HOT_K at zero. */
+#define HOT_SIGMA       Q16(0.50)
+#define HOT_K           14
+#define HOT_GAZE_GAIN   Q16(1.5)    /* Vector's HotSpotPositionMultiplier */
+
+/* Attention: gaze pull toward the touched point, px of eye travel per px of screen distance. */
+#define ATTEND_GAIN     Q16(0.11)
+#define ATTEND_MAX_X    24
+#define ATTEND_MAX_Y    18
+#define ATTEND_DART     Q16(0.07)   /* dart amplitude while attending (Vector: 1 px of 15) */
+
 /* Stretch along fast pose-driven moves, squash across them. */
 #define MOTION_GAIN     Q16(0.75)   /* per px/ms */
 #define MOTION_MAX      Q16(0.18)
@@ -78,6 +89,11 @@ static inline int32_t q16_mul(int32_t a, int32_t b)
 static inline int32_t q16_div(int32_t a, int32_t b)
 {
     return (int32_t)(((int64_t)a << 16) / b);
+}
+
+static inline int32_t clamp_q16(int32_t v, int32_t lo, int32_t hi)
+{
+    return v < lo ? lo : (v > hi ? hi : v);
 }
 
 int32_t ease_in_out_q16(int32_t t)
@@ -122,7 +138,7 @@ static void eye_init(EyeState *s, int32_t cx_px, uint32_t now_ms)
     s->base.cy = EYE_CY_PX << 16;
     s->base.w = EYE_W_PX << 16;
     s->base.h = EYE_H_PX << 16;
-    for (int i = 0; i < 4; i++) s->base.rad[i] = EYE_R_PX << 16;
+    for (int i = 0; i < 4; i++) s->base.rad[i] = s->base.rady[i] = EYE_R_PX << 16;
     s->base.color = EYE_COLOR;
     const eye_pose_t neutral = EYE_POSE_NEUTRAL;
     s->cur = s->from = s->to = neutral;
@@ -181,12 +197,43 @@ void eyes_set_base_color(eyes_t *e, uint32_t rgb)
     rgb_to_hsl(rgb & 0xFFFFFF, &e->base_h, &e->base_s, &e->base_l);
 }
 
-void eyes_set_tint(eyes_t *e, const eye_tint_t *t, uint32_t dur_ms, uint32_t now_ms)
+void eyes_set_tint(eyes_t *e, const eye_tint_t t[2], uint32_t dur_ms, uint32_t now_ms)
 {
-    e->tint_from = e->tint_cur;
-    e->tint_to = *t;
+    for (int i = 0; i < 2; i++) {
+        e->tint_from[i] = e->tint_cur[i];
+        e->tint_to[i] = t[i];
+    }
     e->tint_t0_ms = now_ms;
     e->tint_dur_ms = dur_ms ? dur_ms : 1;
+}
+
+void eyes_set_hotspot(eyes_t *e, bool on)
+{
+    if (e->hot == on) return;
+    e->hot = on;
+    e->rgb[0] = e->rgb[1] = 0xFFFFFFFF;   /* rebuild the LUTs (lut2 is only built while on) */
+}
+
+void eyes_set_face_offset(eyes_t *e, int32_t dx_q16, int32_t dy_q16)
+{
+    e->face_dx = dx_q16;
+    e->face_dy = dy_q16;
+}
+
+void eyes_set_face_scale(eyes_t *e, int32_t scale_q16)
+{
+    e->face_scale = clamp_q16(scale_q16, Q16(0.3), Q16(1.6));
+}
+
+void eyes_set_attention(eyes_t *e, bool on, int x_px, int y_px)
+{
+    e->attend = on;
+    if (on) {
+        e->attend_tx = clamp_q16(q16_mul((x_px - BOARD_LCD_H_RES / 2) << 16, ATTEND_GAIN), -(ATTEND_MAX_X << 16), ATTEND_MAX_X << 16);
+        e->attend_ty = clamp_q16(q16_mul((y_px - BOARD_LCD_V_RES / 2) << 16, ATTEND_GAIN), -(ATTEND_MAX_Y << 16), ATTEND_MAX_Y << 16);
+    } else {
+        e->attend_tx = e->attend_ty = 0;
+    }
 }
 
 void eyes_set_mood(eyes_t *e, int32_t lum_q16, int32_t sat_q16)
@@ -195,9 +242,62 @@ void eyes_set_mood(eyes_t *e, int32_t lum_q16, int32_t sat_q16)
     e->mood_sat = sat_q16;
 }
 
-uint32_t eyes_color(const eyes_t *e)
+uint32_t eyes_color(const eyes_t *e, int eye)
 {
-    return e->rgb;
+    return e->rgb[eye];
+}
+
+/* 32 lightness levels x 64 coverage levels of one colour, panel byte order. */
+static void build_lut2(uint16_t *lut2, uint32_t rgb)
+{
+    const uint32_t r = (rgb >> 16) & 0xFF, g = (rgb >> 8) & 0xFF, b = rgb & 0xFF;
+    for (int l = 0; l < 32; l++) {
+        for (int c = 0; c < 64; c++) {
+            const uint32_t k = (uint32_t)l * (uint32_t)(c * 255 / 63);      /* 0 .. 31*255 */
+            const uint32_t rr = (r * k + 31 * 127) / (31 * 255);
+            const uint32_t gg = (g * k + 31 * 127) / (31 * 255);
+            const uint32_t bb = (b * k + 31 * 127) / (31 * 255);
+            const uint16_t v = (uint16_t)(((rr & 0xF8) << 8) | ((gg & 0xFC) << 3) | (bb >> 3));
+            lut2[l * 64 + c] = (uint16_t)((v >> 8) | (v << 8));
+        }
+    }
+}
+
+/* gauss[i] = 255 exp(-(i/64)^2 / 2): i is the distance in 1/64 sigma. */
+static uint8_t s_gauss[256];
+static bool s_gauss_ready;
+
+static void hot_tables_init(eyes_t *e)
+{
+    if (!s_gauss_ready) {
+        for (int i = 0; i < 256; i++) {
+            const float t = (float)i / 64.f;
+            s_gauss[i] = (uint8_t)(255.f * expf(-0.5f * t * t) + 0.5f);
+        }
+        s_gauss_ready = true;
+    }
+    for (int g = 0; g < RASTER_G2L_N; g++) {
+        const int gg = g > 255 ? 255 : g;
+        e->hot_g2l[g] = (uint8_t)(31 - (((255 - gg) * HOT_K) >> 8));
+    }
+}
+
+/* Fill one eye's per-axis falloff tables for a hot spot at (hx, hy) px with sigma px (Q16). */
+static void hot_fill(uint8_t *gx, uint8_t *gy, int32_t hx, int32_t hy, int32_t sigma)
+{
+    if (sigma < Q16(4.0)) sigma = Q16(4.0);
+    const int32_t k = (int32_t)(((int64_t)64 << 32) / sigma);     /* Q16: table index per pixel */
+    const int cx = hx >> 16, cy = hy >> 16;
+    for (int x = 0; x < BOARD_LCD_H_RES; x++) {
+        int d = x - cx; if (d < 0) d = -d;
+        const int32_t idx = (int32_t)(((int64_t)d * k) >> 16);
+        gx[x] = s_gauss[idx > 255 ? 255 : idx];
+    }
+    for (int y = 0; y < BOARD_LCD_V_RES; y++) {
+        int d = y - cy; if (d < 0) d = -d;
+        const int32_t idx = (int32_t)(((int64_t)d * k) >> 16);
+        gy[y] = s_gauss[idx > 255 ? 255 : idx];
+    }
 }
 
 static uint32_t rgb_lerp(uint32_t a, uint32_t b, int32_t w_q16)
@@ -212,33 +312,40 @@ static uint32_t rgb_lerp(uint32_t a, uint32_t b, int32_t w_q16)
     return out;
 }
 
-/* Ease the tint, derive the frame's colour and rebuild the LUT when it changed (quantised to 8 bits). */
+/* Ease the tints, derive each eye's colour and rebuild its LUTs when it changed (quantised to 8 bits). */
 static void update_color(eyes_t *e, uint32_t now_ms)
 {
     const uint32_t el = now_ms - e->tint_t0_ms;
     int32_t k = Q16_ONE;
-    if (el >= e->tint_dur_ms) {
-        e->tint_cur = e->tint_to;
-    } else {
+    if (el < e->tint_dur_ms) {
         k = ease_in_out_q16((int32_t)(((uint64_t)el << 16) / e->tint_dur_ms));
-        int32_t *c = (int32_t *)&e->tint_cur;
-        const int32_t *a = (const int32_t *)&e->tint_from, *b = (const int32_t *)&e->tint_to;
-        for (int i = 0; i < EYE_TINT_FIELDS; i++) {
-            c[i] = a[i] + q16_mul(b[i] - a[i], k);
-        }
     }
-    const eye_tint_t *t = &e->tint_cur;
     const float f = 1.f / 65536.f;
-    const float h = e->base_h + (float)(t->hue_shift + e->tint_mod_hue) * f;
-    const float sat = e->base_s * (float)t->sat * f * (float)e->mood_sat * f;
-    const float lum = e->base_l * ((float)t->lum * f * (float)e->mood_lum * f + (float)e->tint_mod_lum * f);
-    uint32_t rgb = hsl_to_rgb(h, sat, lum);
-    /* the outgoing pull fades out while the incoming one fades in */
-    rgb = rgb_lerp(rgb, e->tint_from.pull_rgb, q16_mul(e->tint_from.pull, Q16_ONE - k));
-    rgb = rgb_lerp(rgb, e->tint_to.pull_rgb, q16_mul(e->tint_to.pull, k));
-    if (rgb != e->rgb) {
-        e->rgb = rgb;
-        raster_build_lut(e->lut, (rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+    for (int i = 0; i < 2; i++) {
+        if (k >= Q16_ONE) {
+            e->tint_cur[i] = e->tint_to[i];
+        } else {
+            int32_t *c = (int32_t *)&e->tint_cur[i];
+            const int32_t *a = (const int32_t *)&e->tint_from[i], *b = (const int32_t *)&e->tint_to[i];
+            for (int j = 0; j < EYE_TINT_FIELDS; j++) {
+                c[j] = a[j] + q16_mul(b[j] - a[j], k);
+            }
+        }
+        const eye_tint_t *t = &e->tint_cur[i];
+        const float h = e->base_h + (float)(t->hue_shift + e->tint_mod_hue) * f;
+        const float sat = e->base_s * (float)t->sat * f * (float)e->mood_sat * f;
+        const float lum = e->base_l * ((float)t->lum * f * (float)e->mood_lum * f + (float)e->tint_mod_lum * f);
+        uint32_t rgb = hsl_to_rgb(h, sat, lum);
+        /* the outgoing pull fades out while the incoming one fades in */
+        rgb = rgb_lerp(rgb, e->tint_from[i].pull_rgb, q16_mul(e->tint_from[i].pull, Q16_ONE - k));
+        rgb = rgb_lerp(rgb, e->tint_to[i].pull_rgb, q16_mul(e->tint_to[i].pull, k));
+        if (rgb != e->rgb[i]) {
+            e->rgb[i] = rgb;
+            raster_build_lut(e->lut[i], (rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+            if (e->hot) {
+                build_lut2(e->lut2[i], rgb);
+            }
+        }
     }
 }
 
@@ -250,11 +357,15 @@ void eyes_init(eyes_t *e, uint32_t now_ms)
 
     e->face_cos = Q16_ONE;
     const eye_tint_t neutral_tint = EYE_TINT_NEUTRAL;
-    e->tint_cur = e->tint_from = e->tint_to = neutral_tint;
+    for (int i = 0; i < 2; i++) {
+        e->tint_cur[i] = e->tint_from[i] = e->tint_to[i] = neutral_tint;
+        e->rgb[i] = 0xFFFFFFFF;          /* force the first LUT build */
+    }
     e->tint_dur_ms = 1;
     e->mood_lum = e->mood_sat = Q16_ONE;
+    e->face_scale = Q16_ONE;
     eyes_set_base_color(e, EYE_COLOR);
-    e->rgb = 0xFFFFFFFF;                 /* force the first LUT build */
+    hot_tables_init(e);
     update_color(e, now_ms);
     e->idle.rng = esp_random() | 1u;
     e->idle.blink_interval_scale = Q16_ONE;
@@ -291,6 +402,7 @@ void eyes_clear_mod(eyes_t *e)
     memset(e->mod, 0, sizeof(e->mod));
     e->tint_mod_hue = 0;
     e->tint_mod_lum = 0;
+    e->face_mod_dx = e->face_mod_dy = e->face_mod_scale = 0;
 }
 
 void eyes_set_env(eyes_t *e, int eye, const eye_pose_t *delta)
@@ -431,20 +543,18 @@ static void idle_dart(eyes_idle_t *idle, uint32_t now_ms, int32_t *ox, int32_t *
     }
 }
 
-static inline int32_t clamp_q16(int32_t v, int32_t lo, int32_t hi)
-{
-    return v < lo ? lo : (v > hi ? hi : v);
-}
-
 static inline int32_t abs32(int32_t v)
 {
     return v < 0 ? -v : v;
 }
 
 typedef struct {
-    int32_t dart_x, dart_y;     /* Q16 px */
+    int32_t dart_x, dart_y;     /* Q16 px, idle darts plus the attention offset */
     int32_t dart_squash;        /* Q16 */
     int32_t bh, bw;             /* blink scales */
+    int32_t attend_k;           /* Q16, how much the eyes are attending */
+    int32_t fscale;             /* face scale, Q16 */
+    int32_t fdx, fdy;           /* face offset, Q16 px */
     uint32_t dt_ms;             /* since the previous frame, 0 = unknown */
 } frame_ctx_t;
 
@@ -458,11 +568,19 @@ static void eye_effective_params(int which, EyeState *s, const eye_pose_t *mod, 
     c.sy = clamp_q16(c.sy, Q16(0.02), Q16(2.0));
     c.lid_top = clamp_q16(c.lid_top, 0, Q16_ONE);
     c.lid_bottom = clamp_q16(c.lid_bottom, 0, Q16_ONE);
-    c.curve = clamp_q16(c.curve, 0, Q16_ONE);
+    c.curve = clamp_q16(c.curve, -Q16_ONE, Q16_ONE);
     c.bend = clamp_q16(c.bend, -Q16_ONE, Q16_ONE);
+    /* attending: a touch more open */
+    c.sy += q16_mul(f->attend_k, Q16(0.04));
+    c.lid_top -= q16_mul(f->attend_k, q16_mul(c.lid_top, Q16(0.3)));
+
+    /* face-level placement: the base geometry scaled about the screen centre and shifted */
+    const int32_t scx = BOARD_LCD_H_RES / 2 << 16, scy = BOARD_LCD_V_RES / 2 << 16;
+    const int32_t bcx = scx + q16_mul(s->base.cx - scx, f->fscale) + f->fdx;
+    const int32_t bcy = scy + q16_mul(s->base.cy - scy, f->fscale) + f->fdy;
 
     /* pose-driven centre (no dart): its velocity drives the stretch */
-    const int32_t pcx = s->base.cx + c.dx, pcy = s->base.cy + c.dy;
+    const int32_t pcx = bcx + c.dx, pcy = bcy + c.dy;
     int32_t motion_target = 0, ax = Q16(0.5);
     if (f->dt_ms >= 4 && f->dt_ms <= 250) {
         const int32_t vx = (pcx - s->prev_cx) / (int32_t)f->dt_ms;    /* Q16 px/ms */
@@ -479,8 +597,8 @@ static void eye_effective_params(int which, EyeState *s, const eye_pose_t *mod, 
     /* fast attack, slower release */
     s->motion_k += (motion_target - s->motion_k) * (motion_target > s->motion_k ? 3 : 1) / 4;
 
-    int32_t w = q16_mul(s->base.w, c.sx);
-    int32_t h = q16_mul(s->base.h, c.sy);
+    int32_t w = q16_mul(q16_mul(s->base.w, f->fscale), c.sx);
+    int32_t h = q16_mul(q16_mul(s->base.h, f->fscale), c.sy);
 
     /* gaze-dependent size */
     const int32_t gx = c.dx + f->dart_x, gy = c.dy + f->dart_y;
@@ -506,7 +624,7 @@ static void eye_effective_params(int which, EyeState *s, const eye_pose_t *mod, 
     }
 
     /* blink: the eye thins and widens; the lids fade out and the sliver sits where the visible part was */
-    int32_t cy = s->base.cy + c.dy + f->dart_y;
+    int32_t cy = bcy + c.dy + f->dart_y;
     if (f->bh < Q16_ONE) {
         const int32_t band_c = cy + q16_mul(h, c.lid_top - c.lid_bottom) / 2;
         cy += q16_mul(Q16_ONE - f->bh, band_c - cy);
@@ -521,7 +639,7 @@ static void eye_effective_params(int which, EyeState *s, const eye_pose_t *mod, 
         h = EYE_MIN_H_PX << 16;
     }
 
-    p->cx = s->base.cx + c.dx + f->dart_x;
+    p->cx = bcx + c.dx + f->dart_x;
     p->cy = cy;
     p->w = w;
     p->h = h;
@@ -530,22 +648,34 @@ static void eye_effective_params(int which, EyeState *s, const eye_pose_t *mod, 
     const int32_t es = esx < esy ? esx : esy;
     for (int i = 0; i < 4; i++) {
         p->rad[i] = q16_mul(q16_mul(s->base.rad[i], es), c.rad[i] < 0 ? 0 : c.rad[i]);
+        p->rady[i] = q16_mul(q16_mul(s->base.rady[i], es), c.rady[i] < 0 ? 0 : c.rady[i]);
     }
     p->lid_top = c.lid_top;
     p->lid_bottom = c.lid_bottom;
     p->slant = c.slant;
+    p->slant_b = c.slant_b;
     p->curve = q16_mul(h, c.curve);
     p->bend = q16_mul(h, c.bend);
     p->angle = c.angle;
+    /* hot spot: ahead of the gaze, kept inside the eye */
+    p->hot_x = p->cx + clamp_q16(q16_mul(gx, HOT_GAZE_GAIN), -w / 4, w / 4);
+    p->hot_y = p->cy + clamp_q16(q16_mul(gy, HOT_GAZE_GAIN), -h / 4, h / 4);
 }
 
-static void params_to_shape(const eyes_t *e, const EyeParams *p, raster_shape_t *s)
+static void rotate_about_centre(const eyes_t *e, int32_t x, int32_t y, int32_t *ox, int32_t *oy)
 {
+    const int32_t rx = x - (BOARD_LCD_H_RES / 2 << 16), ry = y - (BOARD_LCD_V_RES / 2 << 16);
+    *ox = (BOARD_LCD_H_RES / 2 << 16) + (int32_t)(((int64_t)rx * e->face_cos - (int64_t)ry * e->face_sin) >> 16);
+    *oy = (BOARD_LCD_V_RES / 2 << 16) + (int32_t)(((int64_t)rx * e->face_sin + (int64_t)ry * e->face_cos) >> 16);
+}
+
+static void params_to_shape(eyes_t *e, int which, const EyeParams *p, raster_shape_t *s)
+{
+    int32_t hx = p->hot_x, hy = p->hot_y;
     if (e->face_rot) {
         /* the eye's centre swings around the screen centre with the face */
-        const int32_t ox = p->cx - (BOARD_LCD_H_RES / 2 << 16), oy = p->cy - (BOARD_LCD_V_RES / 2 << 16);
-        s->cx = (BOARD_LCD_H_RES / 2 << 16) + (int32_t)(((int64_t)ox * e->face_cos - (int64_t)oy * e->face_sin) >> 16);
-        s->cy = (BOARD_LCD_V_RES / 2 << 16) + (int32_t)(((int64_t)ox * e->face_sin + (int64_t)oy * e->face_cos) >> 16);
+        rotate_about_centre(e, p->cx, p->cy, &s->cx, &s->cy);
+        rotate_about_centre(e, hx, hy, &hx, &hy);
     } else {
         s->cx = p->cx;
         s->cy = p->cy;
@@ -563,13 +693,25 @@ static void params_to_shape(const eyes_t *e, const EyeParams *p, raster_shape_t 
     }
     s->hw = p->w / 2;
     s->hh = p->h / 2;
-    for (int i = 0; i < 4; i++) s->rad[i] = p->rad[i];
+    for (int i = 0; i < 4; i++) {
+        s->rad[i] = p->rad[i];
+        s->rady[i] = p->rady[i];
+    }
     s->top_base = (s->cy - s->hh) + q16_mul(p->h, p->lid_top);
     s->slant = p->slant;
     s->bend = p->bend;
     s->bot_base = (s->cy + s->hh) - q16_mul(p->h, p->lid_bottom);
+    s->bot_slant = p->slant_b;
     s->curve = p->curve;
-    s->lut = e->lut;
+    s->lut = e->lut[which];
+    s->hot = e->hot;
+    if (e->hot) {
+        hot_fill(e->hot_gx[which], e->hot_gy[which], hx, hy, q16_mul(p->h, HOT_SIGMA));
+        s->hot_gx = e->hot_gx[which];
+        s->hot_gy = e->hot_gy[which];
+        s->hot_g2l = e->hot_g2l;
+        s->lut2 = e->lut2[which];
+    }
     raster_shape_finalize(s, BOARD_LCD_H_RES, BOARD_LCD_V_RES);
 }
 
@@ -577,7 +719,20 @@ void eyes_update(eyes_t *e, uint32_t now_ms, raster_shape_t out[2])
 {
     frame_ctx_t f;
     idle_blink(&e->idle, now_ms, &f.bh, &f.bw);
+    /* attention eases in and out; while attending the darts shrink to about a pixel */
+    e->attend_k += ((e->attend ? Q16_ONE : 0) - e->attend_k) / 6;
+    e->attend_x += (e->attend_tx - e->attend_x) / 5;
+    e->attend_y += (e->attend_ty - e->attend_y) / 5;
+    const int32_t saved_dart_scale = e->idle.dart_scale;
+    e->idle.dart_scale = saved_dart_scale + q16_mul(e->attend_k, ATTEND_DART - saved_dart_scale);
     idle_dart(&e->idle, now_ms, &f.dart_x, &f.dart_y, &f.dart_squash);
+    e->idle.dart_scale = saved_dart_scale;
+    f.dart_x += e->attend_x;
+    f.dart_y += e->attend_y;
+    f.attend_k = e->attend_k;
+    f.fscale = clamp_q16(e->face_scale + e->face_mod_scale, Q16(0.3), Q16(1.6));
+    f.fdx = e->face_dx + e->face_mod_dx;
+    f.fdy = e->face_dy + e->face_mod_dy;
     f.dt_ms = e->have_prev ? now_ms - e->prev_ms : 0;
     e->prev_ms = now_ms;
     e->have_prev = true;
@@ -597,6 +752,6 @@ void eyes_update(eyes_t *e, uint32_t now_ms, raster_shape_t out[2])
     }
     update_color(e, now_ms);
     for (int i = 0; i < 2; i++) {
-        params_to_shape(e, &p[i], &out[i]);
+        params_to_shape(e, i, &p[i], &out[i]);
     }
 }

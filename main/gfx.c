@@ -128,7 +128,7 @@ void gfx_rrect(const gfx_band_t *b, int x, int y, int w, int h, int r, uint16_t 
     const int32_t hw = (w << 16) / 2, hh = (h << 16) / 2;
     raster_shape_t s = {
         .cx = (x << 16) + hw, .cy = (y << 16) + hh,
-        .hw = hw, .hh = hh, .rad = { r << 16, r << 16, r << 16, r << 16 },
+        .hw = hw, .hh = hh, .rad = { r << 16, r << 16, r << 16, r << 16 }, .rady = { r << 16, r << 16, r << 16, r << 16 },
         .top_base = (y - 1) << 16, .slant = 0,
         .bot_base = (y + h + 1) << 16, .curve = 0,
         .lut = shape_lut(color),
@@ -143,7 +143,7 @@ void gfx_disc(const gfx_band_t *b, int cx, int cy, int r, uint16_t color)
     if (cy + r < b->y0 || cy - r > b->y0 + b->rows) return;
     raster_shape_t s = {
         .cx = cx << 16, .cy = cy << 16,
-        .hw = r << 16, .hh = r << 16, .rad = { r << 16, r << 16, r << 16, r << 16 },
+        .hw = r << 16, .hh = r << 16, .rad = { r << 16, r << 16, r << 16, r << 16 }, .rady = { r << 16, r << 16, r << 16, r << 16 },
         .top_base = (cy - r - 1) << 16, .slant = 0,
         .bot_base = (cy + r + 1) << 16, .curve = 0,
         .lut = shape_lut(color),

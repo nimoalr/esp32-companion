@@ -114,7 +114,33 @@ Colour (`eyes.c`, `anim.c`, `settings.c`):
 * The colour is one HSL to RGB conversion per frame and a 256-entry LUT
   rebuild only when the 8-bit result changes; the rasteriser is untouched.
 
-Not taken from Vector: the hot spot / glow shading (a radial gradient per
-eye would cost a per-pixel multiply on the whole eye; the flat colour keeps
-the fill a 32-bit store and stays crisp on the AMOLED), saturation and
-lightness modulation, scanline opacity.
+Second round, after the first pass proved cheap (`raster.c`, `eyes.c`):
+
+* **Hot spot** (setting, default off): a Gaussian lightness falloff with
+  sigma = 0.5 x eye height, centred 1.5 x the gaze offset ahead of the eye
+  centre (Vector's `HotSpotPositionMultiplier`), darkest level 0.55 at
+  infinity, so the eye edge sits near 0.87. Separable, so it is two per-axis
+  tables per eye and one multiply per pixel; a 2x2 ordered dither hides the
+  8-bit steps in RGB565. No outer glow.
+* **Elliptical corners**: independent x and y radius per corner, so LOVE and
+  CURIOUS get tall soft ellipses and SLEEPY gets wide shallow bottoms.
+  Circular corners keep the cheaper unit quadratic in the rotated path.
+* **Lower lid slant and bend**: the bottom lid has the same controls as the
+  top one; a negative bend lets the lid sag in the middle (SAD and SHY pout),
+  ANGRY pinches from below as well as above.
+* **Saturation and lightness per eye**: WINK dims the closed eye, CURIOUS and
+  SKEPTICAL brighten the open eye and dim the squinting one.
+* **Face-level centre and scale**: both eyes placed and scaled about the
+  screen centre; the dance pulses the whole face with the bass, SLEEPING
+  breathes with it, EXCITED bounces it.
+* **Focus mode**: a finger resting on the screen. The gaze eases toward the
+  touched point (0.11 px of eye travel per px of screen distance, capped at
+  24 x 18 px), the eyes open 4 % and the idle darts shrink to 7 % of their
+  amplitude, Vector's 15 px to 1 px. Everything else (blinks, dart timing,
+  squash, gaze scaling) keeps running, which is what makes it read as
+  attention rather than a freeze.
+* **Squint** as a selectable expression.
+
+Still not taken: the outer glow, scanline opacity and noise (CRT mimicry
+that would read as a defect on the AMOLED), and the vision-driven parts
+(look-at targets, eye contact).

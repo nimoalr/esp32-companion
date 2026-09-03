@@ -53,6 +53,19 @@ static void emit(touch_event_type_t type, uint16_t x, uint16_t y, int dx, int dy
     }
 }
 
+static volatile bool s_pressed;
+static volatile uint16_t s_cur_x, s_cur_y;
+
+bool touch_pressed(uint16_t *x, uint16_t *y)
+{
+    if (!s_pressed) {
+        return false;
+    }
+    *x = s_cur_x;
+    *y = s_cur_y;
+    return true;
+}
+
 static void touch_task(void *arg)
 {
     bool touched = false, moved = false, long_sent = false;
@@ -76,7 +89,10 @@ static void touch_task(void *arg)
         const uint32_t t = now_ms();
         if (pressed) {
             s_last_activity_ms = t;
+            s_cur_x = x;
+            s_cur_y = y;
         }
+        s_pressed = pressed;
 
         if (pressed && !touched) {
             if (t - release_ms < BOUNCE_MS) {

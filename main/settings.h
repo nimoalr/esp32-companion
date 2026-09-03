@@ -10,6 +10,7 @@ typedef struct {
     uint8_t brightness_active;   /* percent, ACTIVE state */
     uint8_t brightness_aod;      /* percent, DROWSY (always-on) state */
     uint8_t eye_color;           /* index into k_eye_palette */
+    bool hotspot;                /* shaded eyes (Vector's hot spot) */
     imu_cal_t cal;               /* cal.valid == false until the wizard has run */
 } settings_t;
 
