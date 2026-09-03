@@ -182,6 +182,11 @@ static const anim_kf_t kf_annoyed[] = {
 static const anim_kf_t kf_sleeping[] = {
     { 0, 600, P(1.00, 0.06, 0.00, 0.00, 0.00, 0.00, 0, 6), P(1.00, 0.06, 0.00, 0.00, 0.00, 0.00, 0, 6), 0 },
 };
+/* Squint (Vector's squint primitive): flattened, a touch wider, lids pressed down at the outer corners. */
+#define SQUINT_POSE PX(1.05, 0.40, 0.10, 0.06, 0.00, 0.00, 0, 2, 0, 0.10, 0.6, 0.6, 0.6, 0.6)
+static const anim_kf_t kf_squint[] = {
+    { 0, 250, SQUINT_POSE, SQUINT_POSE, 0 },
+};
 /* Dance: the pose is neutral, everything happens in the modulation layer. */
 static const anim_kf_t kf_dance[] = {
     { 0, 250, NEUTRAL_POSE, NEUTRAL_POSE, 0 },
@@ -234,6 +239,7 @@ static const anim_def_t k_anims[ANIM_COUNT] = {
     [ANIM_ANNOYED]     = DEF("ANNOYED",     kf_annoyed,     4500, 1.0, 1.0, 0.5, T(0, RED, 0.12, 1.00, 0.90), NOMOD),
     [ANIM_SLEEPING]    = DEF("SLEEPING",    kf_sleeping,    0,    20.0, 3.0, 0.0, T(0, 0, 0, 0.80, 0.45),
                              SINE(F_DY, BOTH, 2.0, 3200, 0, 0), SINE(F_SX, BOTH, 0.02, 3200, 0, 0)),
+    [ANIM_SQUINT]      = DEF("SQUINT",      kf_squint,      0,    1.4, 1.2, 0.4, T(0, 0, 0, 0.95, 0.92), NOMOD),
     [ANIM_DANCE]       = DEF("DANCE",       kf_dance,       0,    1.0, 1.0, 0.5, TNONE, NOMOD),
 };
 

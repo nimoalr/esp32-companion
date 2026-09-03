@@ -26,6 +26,7 @@ typedef enum {
     ANIM_SHY,
     ANIM_ANNOYED,
     ANIM_SLEEPING,
+    ANIM_SQUINT,
     ANIM_DANCE,             /* procedural, driven by audio_features_t */
     ANIM_COUNT
 } anim_id_t;

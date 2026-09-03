@@ -39,12 +39,12 @@ grow when looking up and shrink when looking down, stretch along fast moves
 and overshoot a little on expressive changes. The timing and proportions
 follow Anki Vector's procedural face; see `docs/animation.md` for the sources
 and what was taken from them. A tap (or a left swipe; right swipe goes back)
-cycles through 22 expressions, easing over 120..300 ms; a tap mid-transition
+cycles through 23 expressions, easing over 120..300 ms; a tap mid-transition
 retargets from the current shape:
 
 NEUTRAL, HAPPY, SAD, ANGRY, SURPRISED, SLEEPY, LOOK_AROUND, WINK, CURIOUS,
 CONFUSED, LOVE, DIZZY, LAUGHING, SCARED, SKEPTICAL, THINKING, BORED, EXCITED,
-SHY, ANNOYED, SLEEPING, DANCE.
+SHY, ANNOYED, SLEEPING, SQUINT, DANCE.
 
 Each expression is a keyframe pose per eye (size, position, lids, slant,
 lid bend, angle, four corner radii) plus up to three modulators (a sine or a
@@ -155,7 +155,7 @@ main/
   touch.c/.h              CST9217 via esp_lcd_touch, ISR -> task (core 0) -> gesture queue (tap, hold, swipes)
   raster.c/.h             Q16.16 scanline rasteriser, 4x vertical sampling, coverage LUT
   eyes.c/.h               EyeParams / EyeState, per-field easing, blink + dart layer, squash/stretch, gaze scaling
-  anim.c/.h               keyframe + modulator table for 22 expressions, dance choreography
+  anim.c/.h               keyframe + modulator table for 23 expressions, dance choreography
   audio.c/.h              ES7210 microphones over I2S via esp_codec_dev; 256-point FFT, bands, onsets, balance
   behavior.c/.h           environment reactions: shake/knock-out, face-down, music sniffing, mood, gravity face; pure C
   accessories.c/.h        headphones, stars, X eyes, z's; rotate with the face; pure C
@@ -215,7 +215,7 @@ docs/hardware.md          pin sources, TE, QSPI clock, power rails, battery budg
 Host build of the rasteriser (`raster.c`, `eyes.c`, `anim.c` compile unchanged
 with gcc): neutral eyes are 2 x 31 302 px per frame, about 62.6 kB pushed per
 frame, 14 % of a full frame. Bus time at 40 MHz QSPI is 3.1 ms per frame
-(1.6 ms at 80 MHz). A sweep through all 22 expressions at 60 Hz, once
+(1.6 ms at 80 MHz). A sweep through all 23 expressions at 60 Hz, once
 upright and once with the face turning, with blinks and darts live, averages
 78.7 kB per frame and peaks at 231 kB (SURPRISED while rotated), with no
 writes outside the dirty rectangles under AddressSanitizer/UBSan. Overlaid
