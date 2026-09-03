@@ -234,6 +234,9 @@ static void run_ui_actions(render_ctx_t *c, uint32_t now_ms)
         case UI_ACT_BRIGHTNESS:
             brightness_set_now(g_settings.brightness_active);
             break;
+        case UI_ACT_COLOR:
+            eyes_set_base_color(&c->eyes, settings_eye_rgb());
+            break;
         case UI_ACT_EXIT:
             leave_ui(c, now_ms);
             break;
@@ -334,6 +337,7 @@ static void render_task(void *arg)
     static render_ctx_t c;
     uint32_t now_ms = ms_now();
     eyes_init(&c.eyes, now_ms);
+    eyes_set_base_color(&c.eyes, settings_eye_rgb());
     anim_init(&c.sm, &c.eyes, now_ms);
     c.prev[0] = c.prev[1] = rect_empty();
     c.saved_anim = ANIM_NEUTRAL;
@@ -403,6 +407,9 @@ static void render_task(void *arg)
             }
             eyes_set_env(&c.eyes, 0, &bo.env[0]);
             eyes_set_env(&c.eyes, 1, &bo.env[1]);
+            /* mood: a tired character is dimmer and paler, an energetic one glows */
+            const float energy = behavior_energy(&c.beh);
+            eyes_set_mood(&c.eyes, (int32_t)((0.85f + 0.15f * energy) * 65536.f), (int32_t)((0.90f + 0.10f * energy) * 65536.f));
             eyes_set_face_angle(&c.eyes, bo.face_angle_deg);
             acc_set_angle(&c.acc, bo.face_angle_deg);
             acc_set_headphones(&c.acc, bo.headphones, now_ms);

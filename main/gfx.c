@@ -106,9 +106,8 @@ int gfx_text_width(const gfx_font_t *f, const char *utf8)
     return n * f->w;
 }
 
-void gfx_disc(const gfx_band_t *b, int cx, int cy, int r, uint16_t color)
+static const uint16_t *shape_lut(uint16_t color)
 {
-    if (r <= 0) return;
     static uint16_t lut[256];
     static uint16_t lut_color = 0xFFFF;
     if (lut_color != color) {
@@ -116,12 +115,38 @@ void gfx_disc(const gfx_band_t *b, int cx, int cy, int r, uint16_t color)
         raster_build_lut(lut, (uint8_t)((c >> 8) & 0xF8), (uint8_t)((c >> 3) & 0xFC), (uint8_t)((c << 3) & 0xF8));
         lut_color = color;
     }
+    return lut;
+}
+
+void gfx_rrect(const gfx_band_t *b, int x, int y, int w, int h, int r, uint16_t color)
+{
+    if (w <= 0 || h <= 0) return;
+    if (y + h <= b->y0 || y >= b->y0 + b->rows) return;
+    const int rmax = (w < h ? w : h) / 2;
+    if (r > rmax) r = rmax;
+    if (r < 0) r = 0;
+    const int32_t hw = (w << 16) / 2, hh = (h << 16) / 2;
+    raster_shape_t s = {
+        .cx = (x << 16) + hw, .cy = (y << 16) + hh,
+        .hw = hw, .hh = hh, .rad = { r << 16, r << 16, r << 16, r << 16 },
+        .top_base = (y - 1) << 16, .slant = 0,
+        .bot_base = (y + h + 1) << 16, .curve = 0,
+        .lut = shape_lut(color),
+    };
+    raster_shape_finalize(&s, 1 << 14, 1 << 14);
+    raster_shapes_over(b->dst, b->x0, b->y0, b->w, b->rows, &s, 1);
+}
+
+void gfx_disc(const gfx_band_t *b, int cx, int cy, int r, uint16_t color)
+{
+    if (r <= 0) return;
+    if (cy + r < b->y0 || cy - r > b->y0 + b->rows) return;
     raster_shape_t s = {
         .cx = cx << 16, .cy = cy << 16,
         .hw = r << 16, .hh = r << 16, .rad = { r << 16, r << 16, r << 16, r << 16 },
         .top_base = (cy - r - 1) << 16, .slant = 0,
         .bot_base = (cy + r + 1) << 16, .curve = 0,
-        .lut = lut,
+        .lut = shape_lut(color),
     };
     raster_shape_finalize(&s, 1 << 14, 1 << 14);
     raster_shapes_over(b->dst, b->x0, b->y0, b->w, b->rows, &s, 1);

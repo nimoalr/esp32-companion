@@ -29,6 +29,7 @@ typedef enum {
     UI_SCREEN_LEVEL,
     UI_SCREEN_BRIGHTNESS,
     UI_SCREEN_BATTERY,
+    UI_SCREEN_COLOR,
 } ui_screen_t;
 
 typedef enum {
@@ -37,6 +38,7 @@ typedef enum {
     UI_ACT_SAVE,            /* settings changed, persist them */
     UI_ACT_BRIGHTNESS,      /* apply g_settings.brightness_active now */
     UI_ACT_DANCE,           /* leave the UI into the dance mode */
+    UI_ACT_COLOR,           /* apply g_settings.eye_color now */
 } ui_action_t;
 
 typedef struct {
@@ -89,6 +91,8 @@ typedef struct {
 } ui_t;
 
 void ui_init(ui_t *u, settings_t *s, bool first_boot, uint32_t now_ms);
+/* The UI's accent colour follows the eye colour; called by ui_init and when the setting changes. */
+void ui_set_accent(uint32_t rgb);
 void ui_input(ui_t *u, ui_input_t in, uint32_t now_ms);
 
 /* Advance state with fresh sensor data; fills dirty rectangles; returns their count. */

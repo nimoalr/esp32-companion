@@ -132,7 +132,114 @@ static void eye_init(EyeState *s, int32_t cx_px, uint32_t now_ms)
     }
     s->prev_cx = s->base.cx;
     s->prev_cy = s->base.cy;
-    raster_build_lut(s->lut, (EYE_COLOR >> 16) & 0xFF, (EYE_COLOR >> 8) & 0xFF, EYE_COLOR & 0xFF);
+}
+
+/* ---- colour ------------------------------------------------------------------ */
+
+static void rgb_to_hsl(uint32_t rgb, float *h, float *s, float *l)
+{
+    const float r = (float)((rgb >> 16) & 0xFF) / 255.f, g = (float)((rgb >> 8) & 0xFF) / 255.f, b = (float)(rgb & 0xFF) / 255.f;
+    const float mx = fmaxf(r, fmaxf(g, b)), mn = fminf(r, fminf(g, b)), d = mx - mn;
+    *l = 0.5f * (mx + mn);
+    if (d < 1e-4f) {
+        *h = 0.f;
+        *s = 0.f;
+        return;
+    }
+    *s = d / (1.f - fabsf(2.f * *l - 1.f));
+    float hh;
+    if (mx == r) hh = fmodf((g - b) / d, 6.f);
+    else if (mx == g) hh = (b - r) / d + 2.f;
+    else hh = (r - g) / d + 4.f;
+    hh *= 60.f;
+    if (hh < 0.f) hh += 360.f;
+    *h = hh;
+}
+
+static uint32_t hsl_to_rgb(float h, float s, float l)
+{
+    h = fmodf(h, 360.f);
+    if (h < 0.f) h += 360.f;
+    s = fminf(fmaxf(s, 0.f), 1.f);
+    l = fminf(fmaxf(l, 0.f), 1.f);
+    const float c = (1.f - fabsf(2.f * l - 1.f)) * s;
+    const float x = c * (1.f - fabsf(fmodf(h / 60.f, 2.f) - 1.f));
+    const float m = l - c / 2.f;
+    float r, g, b;
+    if (h < 60.f)       { r = c; g = x; b = 0; }
+    else if (h < 120.f) { r = x; g = c; b = 0; }
+    else if (h < 180.f) { r = 0; g = c; b = x; }
+    else if (h < 240.f) { r = 0; g = x; b = c; }
+    else if (h < 300.f) { r = x; g = 0; b = c; }
+    else                { r = c; g = 0; b = x; }
+    const uint32_t R = (uint32_t)((r + m) * 255.f + 0.5f), G = (uint32_t)((g + m) * 255.f + 0.5f), B = (uint32_t)((b + m) * 255.f + 0.5f);
+    return (R << 16) | (G << 8) | B;
+}
+
+void eyes_set_base_color(eyes_t *e, uint32_t rgb)
+{
+    rgb_to_hsl(rgb & 0xFFFFFF, &e->base_h, &e->base_s, &e->base_l);
+}
+
+void eyes_set_tint(eyes_t *e, const eye_tint_t *t, uint32_t dur_ms, uint32_t now_ms)
+{
+    e->tint_from = e->tint_cur;
+    e->tint_to = *t;
+    e->tint_t0_ms = now_ms;
+    e->tint_dur_ms = dur_ms ? dur_ms : 1;
+}
+
+void eyes_set_mood(eyes_t *e, int32_t lum_q16, int32_t sat_q16)
+{
+    e->mood_lum = lum_q16;
+    e->mood_sat = sat_q16;
+}
+
+uint32_t eyes_color(const eyes_t *e)
+{
+    return e->rgb;
+}
+
+static uint32_t rgb_lerp(uint32_t a, uint32_t b, int32_t w_q16)
+{
+    if (w_q16 <= 0) return a;
+    if (w_q16 > Q16_ONE) w_q16 = Q16_ONE;
+    uint32_t out = 0;
+    for (int sh = 0; sh <= 16; sh += 8) {
+        const int32_t ca = (int32_t)((a >> sh) & 0xFF), cb = (int32_t)((b >> sh) & 0xFF);
+        out |= (uint32_t)(ca + q16_mul(cb - ca, w_q16)) << sh;
+    }
+    return out;
+}
+
+/* Ease the tint, derive the frame's colour and rebuild the LUT when it changed (quantised to 8 bits). */
+static void update_color(eyes_t *e, uint32_t now_ms)
+{
+    const uint32_t el = now_ms - e->tint_t0_ms;
+    int32_t k = Q16_ONE;
+    if (el >= e->tint_dur_ms) {
+        e->tint_cur = e->tint_to;
+    } else {
+        k = ease_in_out_q16((int32_t)(((uint64_t)el << 16) / e->tint_dur_ms));
+        int32_t *c = (int32_t *)&e->tint_cur;
+        const int32_t *a = (const int32_t *)&e->tint_from, *b = (const int32_t *)&e->tint_to;
+        for (int i = 0; i < EYE_TINT_FIELDS; i++) {
+            c[i] = a[i] + q16_mul(b[i] - a[i], k);
+        }
+    }
+    const eye_tint_t *t = &e->tint_cur;
+    const float f = 1.f / 65536.f;
+    const float h = e->base_h + (float)(t->hue_shift + e->tint_mod_hue) * f;
+    const float sat = e->base_s * (float)t->sat * f * (float)e->mood_sat * f;
+    const float lum = e->base_l * ((float)t->lum * f * (float)e->mood_lum * f + (float)e->tint_mod_lum * f);
+    uint32_t rgb = hsl_to_rgb(h, sat, lum);
+    /* the outgoing pull fades out while the incoming one fades in */
+    rgb = rgb_lerp(rgb, e->tint_from.pull_rgb, q16_mul(e->tint_from.pull, Q16_ONE - k));
+    rgb = rgb_lerp(rgb, e->tint_to.pull_rgb, q16_mul(e->tint_to.pull, k));
+    if (rgb != e->rgb) {
+        e->rgb = rgb;
+        raster_build_lut(e->lut, (rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+    }
 }
 
 void eyes_init(eyes_t *e, uint32_t now_ms)
@@ -142,6 +249,13 @@ void eyes_init(eyes_t *e, uint32_t now_ms)
     eye_init(&e->eye[1], BOARD_LCD_H_RES / 2 + EYE_SEP_PX, now_ms);
 
     e->face_cos = Q16_ONE;
+    const eye_tint_t neutral_tint = EYE_TINT_NEUTRAL;
+    e->tint_cur = e->tint_from = e->tint_to = neutral_tint;
+    e->tint_dur_ms = 1;
+    e->mood_lum = e->mood_sat = Q16_ONE;
+    eyes_set_base_color(e, EYE_COLOR);
+    e->rgb = 0xFFFFFFFF;                 /* force the first LUT build */
+    update_color(e, now_ms);
     e->idle.rng = esp_random() | 1u;
     e->idle.blink_interval_scale = Q16_ONE;
     e->idle.blink_speed_scale = Q16_ONE;
@@ -175,6 +289,8 @@ void eyes_set_target(eyes_t *e, int eye, const eye_pose_t *pose, uint32_t dur_ms
 void eyes_clear_mod(eyes_t *e)
 {
     memset(e->mod, 0, sizeof(e->mod));
+    e->tint_mod_hue = 0;
+    e->tint_mod_lum = 0;
 }
 
 void eyes_set_env(eyes_t *e, int eye, const eye_pose_t *delta)
@@ -405,7 +521,6 @@ static void eye_effective_params(int which, EyeState *s, const eye_pose_t *mod, 
         h = EYE_MIN_H_PX << 16;
     }
 
-    p->color = s->base.color;
     p->cx = s->base.cx + c.dx + f->dart_x;
     p->cy = cy;
     p->w = w;
@@ -424,7 +539,7 @@ static void eye_effective_params(int which, EyeState *s, const eye_pose_t *mod, 
     p->angle = c.angle;
 }
 
-static void params_to_shape(const eyes_t *e, const EyeParams *p, const uint16_t *lut, raster_shape_t *s)
+static void params_to_shape(const eyes_t *e, const EyeParams *p, raster_shape_t *s)
 {
     if (e->face_rot) {
         /* the eye's centre swings around the screen centre with the face */
@@ -454,7 +569,7 @@ static void params_to_shape(const eyes_t *e, const EyeParams *p, const uint16_t 
     s->bend = p->bend;
     s->bot_base = (s->cy + s->hh) - q16_mul(p->h, p->lid_bottom);
     s->curve = p->curve;
-    s->lut = lut;
+    s->lut = e->lut;
     raster_shape_finalize(s, BOARD_LCD_H_RES, BOARD_LCD_V_RES);
 }
 
@@ -480,7 +595,8 @@ void eyes_update(eyes_t *e, uint32_t now_ms, raster_shape_t out[2])
             p[i].cy += q16_mul(Q16_ONE - f.bh, mid - p[i].cy);
         }
     }
+    update_color(e, now_ms);
     for (int i = 0; i < 2; i++) {
-        params_to_shape(e, &p[i], e->eye[i].lut, &out[i]);
+        params_to_shape(e, &p[i], &out[i]);
     }
 }
