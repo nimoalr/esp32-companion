@@ -28,3 +28,6 @@ esp_err_t touch_init(QueueHandle_t queue);
 
 /* Timestamp (ms) of the most recent sample with a finger on the panel; 0 if never. */
 uint32_t touch_last_activity_ms(void);
+
+/* Is a finger on the panel right now? Fills its latest position. */
+bool touch_pressed(uint16_t *x, uint16_t *y);

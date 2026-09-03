@@ -39,6 +39,7 @@ typedef enum {
     UI_ACT_BRIGHTNESS,      /* apply g_settings.brightness_active now */
     UI_ACT_DANCE,           /* leave the UI into the dance mode */
     UI_ACT_COLOR,           /* apply g_settings.eye_color now */
+    UI_ACT_HOTSPOT,         /* apply g_settings.hotspot now */
 } ui_action_t;
 
 typedef struct {

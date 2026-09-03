@@ -40,16 +40,20 @@ and overshoot a little on expressive changes. The timing and proportions
 follow Anki Vector's procedural face; see `docs/animation.md` for the sources
 and what was taken from them. A tap (or a left swipe; right swipe goes back)
 cycles through 23 expressions, easing over 120..300 ms; a tap mid-transition
-retargets from the current shape:
+retargets from the current shape. A finger resting on the screen is
+attention: the eyes settle on it, open a touch wider and stop wandering
+until it lifts (Vector's focus mode). Expressions can also place and scale
+the whole face, and the eyes can be shaded by a soft hot spot that follows
+the gaze (off by default, toggled in the setup menu):
 
 NEUTRAL, HAPPY, SAD, ANGRY, SURPRISED, SLEEPY, LOOK_AROUND, WINK, CURIOUS,
 CONFUSED, LOVE, DIZZY, LAUGHING, SCARED, SKEPTICAL, THINKING, BORED, EXCITED,
 SHY, ANNOYED, SLEEPING, SQUINT, DANCE.
 
-Each expression is a keyframe pose per eye (size, position, lids, slant,
-lid bend, angle, four corner radii) plus up to three modulators (a sine or a
-random jitter on one pose field) applied every frame on top of the eased
-pose: the heartbeat in LOVE, the circling gaze in DIZZY, the
+Each expression is a keyframe pose per eye (size, position, both lids with
+slant and bend, angle, four elliptical corner radii) plus up to three
+modulators (a sine or a random jitter on one pose field, or on the face-level
+scale and offset) applied every frame on top of the eased pose: the heartbeat in LOVE, the circling gaze in DIZZY, the
 bounce in LAUGHING and EXCITED, the tremble in SCARED, the breathing in
 SLEEPING. Adding an expression is one table entry in `main/anim.c`.
 
@@ -106,7 +110,7 @@ used as a wake button. Holding PWR for 6 s forces the PMIC off at any time
 (AXP2101 hardware default). The state machine can be disabled entirely
 (`EYES_POWER_ENABLE=n`) for benchmarking.
 
-**Setup UI.** Hold a finger on the eyes for 0.7 s to open a small setup menu
+**Setup UI.** Swipe down over the eyes to open a small setup menu
 styled like a terminal UI and laid out for the disc: title with a rule, a list
 with an inverted selection bar, bracketed progress bars, a thin ring at the
 edge, hints along the bottom. Navigation is single-touch: swipe up/down to
@@ -152,7 +156,7 @@ main/
   main.c                  render task (core 1): state transitions, dirty rects, stats
   board.h                 pin map, I2C addresses, panel constants, each with its source
   display.c/.h            QSPI + CO5300 via esp_lcd, band buffers, TE sync, brightness, sleep
-  touch.c/.h              CST9217 via esp_lcd_touch, ISR -> task (core 0) -> gesture queue (tap, hold, swipes)
+  touch.c/.h              CST9217 via esp_lcd_touch, ISR -> task (core 0) -> gesture queue (tap, swipes) + finger position
   raster.c/.h             Q16.16 scanline rasteriser, 4x vertical sampling, coverage LUT
   eyes.c/.h               EyeParams / EyeState, per-field easing, blink + dart layer, squash/stretch, gaze scaling
   anim.c/.h               keyframe + modulator table for 23 expressions, dance choreography
@@ -184,9 +188,9 @@ docs/hardware.md          pin sources, TE, QSPI clock, power rails, battery budg
   pushed as a partial window (CASET/RASET/RAMWR per band via
   `esp_lcd_panel_draw_bitmap`). The black background is drawn once at boot and
   after every wake from SLEEP.
-* **Analytic rasteriser.** An eye is a rounded rectangle with an independent
-  radius per corner, a top lid that can be slanted and bent, and a bottom lid
-  that can bulge upward (the happy arc). Each pixel row is sampled on four sub-scanlines; edge pixels
+* **Analytic rasteriser.** An eye is a rounded rectangle with an independent,
+  optionally elliptical radius per corner, and two lids that can each be
+  slanted and bent (the happy arc is a bent bottom lid). Each pixel row is sampled on four sub-scanlines; edge pixels
   get exact horizontal coverage, the covered core is written with 32-bit
   stores, and coverage indexes a 256-entry RGB565 LUT pre-swapped to panel
   byte order. Everything per row and per pixel is integer Q16.16; the band
@@ -199,6 +203,12 @@ docs/hardware.md          pin sources, TE, QSPI clock, power rails, battery budg
   eye's local axes so each quadrant uses its own radius. On the host a
   rotated frame costs about 2.2x an upright one, mostly because the rotated
   bounding box is larger; a bent lid on an upright eye costs about 10 %.
+* **Hot spot (optional).** A separable Gaussian lightness falloff in screen
+  space: two 466-entry per-axis tables per eye are refilled each frame, and
+  every covered pixel does one multiply, a 2x2 ordered dither and two table
+  lookups into a 32 lightness x 64 coverage RGB565 LUT (4 KB per eye,
+  rebuilt only when the colour changes). About 1.7x the neutral frame on the
+  host while the eyes move, nothing when the frame is unchanged.
 * **Frame pacing.** TE is wired to GPIO13, so each frame's panel write starts
   on the rising TE edge. In DROWSY the task sleeps until ~2.5 ms before the
   Nth predicted edge, then locks onto the real edge. If TE never pulses, a

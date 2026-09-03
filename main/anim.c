@@ -40,12 +40,14 @@ typedef struct {
     int32_t blink_interval_scale;   /* Q16 */
     int32_t blink_speed_scale;      /* Q16 */
     int32_t dart_scale;             /* Q16 amplitude of the idle gaze darts */
-    eye_tint_t tint;                /* colour tint of the expression */
+    eye_tint_t tint[2];             /* colour tint of the expression, per eye */
     anim_mod_t mods[3];
 } anim_def_t;
 
-/* pose fields */
-enum { F_SX, F_SY, F_LT, F_LB, F_SL, F_CV, F_DX, F_DY, F_ANG, F_BEND, F_RTL, F_RTR, F_RBL, F_RBR };
+/* pose fields, then the face-level fields a modulator may target */
+enum { F_SX, F_SY, F_LT, F_LB, F_SL, F_CV, F_DX, F_DY, F_ANG, F_BEND, F_RTL, F_RTR, F_RBL, F_RBR,
+       F_YTL, F_YTR, F_YBL, F_YBR, F_SLB };
+enum { F_FACE_SCALE = 100, F_FACE_DX, F_FACE_DY };
 #define BOTH 3
 #define LEFT 1
 #define RIGHT 2
@@ -55,9 +57,12 @@ enum { F_SX, F_SY, F_LT, F_LB, F_SL, F_CV, F_DX, F_DY, F_ANG, F_BEND, F_RTL, F_R
  * eye angle in degrees, the top lid bend and the four corner radius scales
  * TL, TR, BL, BR (floats -> Q16 at compile time)
  */
-#define PX(sx, sy, lt, lb, sl, cv, dx, dy, ang, bend, rtl, rtr, rbl, rbr) \
+#define PXE(sx, sy, lt, lb, sl, cv, dx, dy, ang, bend, rtl, rtr, rbl, rbr, ytl, ytr, ybl, ybr, slb) \
     { { Q16(sx), Q16(sy), Q16(lt), Q16(lb), Q16(sl), Q16(cv), Q16(dx), Q16(dy), Q16(ang), Q16(bend), \
-        { Q16(rtl), Q16(rtr), Q16(rbl), Q16(rbr) } } }
+        { Q16(rtl), Q16(rtr), Q16(rbl), Q16(rbr) }, { Q16(ytl), Q16(ytr), Q16(ybl), Q16(ybr) }, Q16(slb) } }
+/* PX: circular corners (y radius = x radius), straight bottom lid */
+#define PX(sx, sy, lt, lb, sl, cv, dx, dy, ang, bend, rtl, rtr, rbl, rbr) \
+    PXE(sx, sy, lt, lb, sl, cv, dx, dy, ang, bend, rtl, rtr, rbl, rbr, rtl, rtr, rbl, rbr, 0)
 #define P(sx, sy, lt, lb, sl, cv, dx, dy) PX(sx, sy, lt, lb, sl, cv, dx, dy, 0, 0, 1, 1, 1, 1)
 #define SNAP EYE_EASE_SNAP
 #define NEUTRAL_POSE P(1.00, 1.00, 0.00, 0.00, 0.00, 0.00, 0, 0)
@@ -74,22 +79,22 @@ static const anim_kf_t kf_neutral[] = {
 static const anim_kf_t kf_happy[] = {
     { 0, 250, HAPPY_POSE, HAPPY_POSE, SNAP },
 };
-#define SAD_L(dy) PX(1.00, 0.95, 0.12, 0.00, -0.30, 0.00, 0, dy, -9, 0.10, 1.2, 1.2, 1.0, 1.0)
-#define SAD_R(dy) PX(1.00, 0.95, 0.12, 0.00, 0.30, 0.00, 0, dy, 9, 0.10, 1.2, 1.2, 1.0, 1.0)
+#define SAD_L(dy) PXE(1.00, 0.95, 0.12, 0.10, -0.30, -0.08, 0, dy, -9, 0.10, 1.2, 1.2, 1.0, 1.0, 1.2, 1.2, 1.3, 1.3, 0.12)
+#define SAD_R(dy) PXE(1.00, 0.95, 0.12, 0.10, 0.30, -0.08, 0, dy, 9, 0.10, 1.2, 1.2, 1.0, 1.0, 1.2, 1.2, 1.3, 1.3, -0.12)
 static const anim_kf_t kf_sad[] = {
     { 0,   250, SAD_L(2),  SAD_R(2), 0 },
     { 250, 900, SAD_L(10), SAD_R(10), 0 },
 };
 static const anim_kf_t kf_angry[] = {
-    { 0, 220, PX(1.00, 0.74, 0.18, 0.04, 0.34, 0.00, 2, 0, 7, -0.06, 1.0, 0.25, 1.0, 0.7),
-              PX(1.00, 0.74, 0.18, 0.04, -0.34, 0.00, -2, 0, -7, -0.06, 0.25, 1.0, 0.7, 1.0), SNAP },
+    { 0, 220, PXE(1.00, 0.74, 0.18, 0.06, 0.34, 0.00, 2, 0, 7, -0.06, 1.0, 0.25, 1.0, 0.7, 1.0, 0.5, 1.0, 0.7, -0.10),
+              PXE(1.00, 0.74, 0.18, 0.06, -0.34, 0.00, -2, 0, -7, -0.06, 0.25, 1.0, 0.7, 1.0, 0.5, 1.0, 0.7, 1.0, 0.10), SNAP },
 };
 #define SURPRISED_POSE PX(1.30, 1.30, 0.00, 0.00, 0.00, 0.00, 0, -2, 0, 0, 1.3, 1.3, 1.3, 1.3)
 static const anim_kf_t kf_surprised[] = {
     { 0,  60,  P(0.96, 0.92, 0.00, 0.00, 0.00, 0.00, 0, 2), P(0.96, 0.92, 0.00, 0.00, 0.00, 0.00, 0, 2), 0 },
     { 60, 150, SURPRISED_POSE, SURPRISED_POSE, SNAP },
 };
-#define SLEEPY(dy) PX(1.00, 1.00, 0.50, 0.15, 0.00, 0.00, 0, dy, 0, 0.16, 1, 1, 1, 1)
+#define SLEEPY(dy) PXE(1.00, 1.00, 0.50, 0.15, 0.00, 0.00, 0, dy, 0, 0.16, 1, 1, 1.15, 1.15, 1, 1, 0.6, 0.6, 0)
 static const anim_kf_t kf_sleepy[] = {
     { 0,    300,  SLEEPY(2), SLEEPY(2), 0 },
     { 300,  2500, SLEEPY(6), SLEEPY(6), 0 },
@@ -113,7 +118,7 @@ static const anim_kf_t kf_wink[] = {
 
 /* One eye wide and lifted, the other squinting: "hm?" */
 static const anim_kf_t kf_curious[] = {
-    { 0, 280, PX(1.10, 1.16, 0.00, 0.00, 0.00, 0.00, -3, -8, -6, 0, 1.25, 1.25, 1.25, 1.25),
+    { 0, 280, PXE(1.10, 1.16, 0.00, 0.00, 0.00, 0.00, -3, -8, -6, 0, 1.15, 1.15, 1.15, 1.15, 1.4, 1.4, 1.4, 1.4, 0),
               PX(0.98, 0.70, 0.26, 0.04, -0.30, 0.00, -3, 4, 0, 0.08, 1, 1, 0.8, 0.8), SNAP },
 };
 /* Lids at odds, gaze drifting side to side. */
@@ -122,7 +127,7 @@ static const anim_kf_t kf_confused[] = {
               PX(1.00, 1.05, 0.00, 0.00, 0.00, 0.00, 0, 0, 12, 0, 1.15, 1.15, 1.15, 1.15), 0 },
 };
 /* Tall, soft eyes with a heartbeat. */
-#define LOVE_POSE PX(1.05, 1.15, 0.00, 0.00, 0.00, 0.12, 0, -2, 0, -0.05, 1.3, 1.3, 1.3, 1.3)
+#define LOVE_POSE PXE(1.05, 1.15, 0.00, 0.00, 0.00, 0.12, 0, -2, 0, -0.05, 1.15, 1.15, 1.15, 1.15, 1.45, 1.45, 1.45, 1.45, 0)
 static const anim_kf_t kf_love[] = {
     { 0, 300, LOVE_POSE, LOVE_POSE, SNAP },
 };
@@ -162,7 +167,7 @@ static const anim_kf_t kf_excited[] = {
     { 0, 160, EXCITED_POSE, EXCITED_POSE, SNAP },
 };
 /* Looking down, occasional glance up. */
-#define SHY(dy) P(1.00, 0.86, 0.14, 0.00, 0.00, 0.00, 6, dy)
+#define SHY(dy) PXE(1.00, 0.86, 0.14, 0.08, 0.00, -0.06, 6, dy, 0, 0, 1, 1, 1, 1, 1, 1, 1.2, 1.2, 0)
 static const anim_kf_t kf_shy[] = {
     { 0,    300, SHY(14), SHY(14), 0 },
     { 2500, 300, SHY(-2), SHY(-2), 0 },
@@ -196,7 +201,9 @@ static const anim_kf_t kf_dance[] = {
  * tint: hue shift (deg), blend toward a colour (0xRRGGBB, weight 0..1), saturation and lightness
  * multipliers. The base hue stays the character's identity; expressions only lean on it.
  */
-#define T(shift, prgb, pw, sat, lum)  { Q16(shift), Q16(pw), Q16(sat), Q16(lum), prgb }
+#define TT(shift, prgb, pw, sat, lum) { Q16(shift), Q16(pw), Q16(sat), Q16(lum), prgb }
+#define T(shift, prgb, pw, sat, lum)  { TT(shift, prgb, pw, sat, lum), TT(shift, prgb, pw, sat, lum) }
+#define T2(l, r)                      { l, r }
 #define TNONE                         T(0, 0, 0, 1.0, 1.0)
 #define RED   0xFF3020
 #define PINK  0xFF5AAA
@@ -214,8 +221,8 @@ static const anim_def_t k_anims[ANIM_COUNT] = {
     [ANIM_SURPRISED]   = DEF("SURPRISED",   kf_surprised,   0,    1.6, 1.0, 0.3, T(0, 0, 0, 1.00, 1.15), NOMOD),
     [ANIM_SLEEPY]      = DEF("SLEEPY",      kf_sleepy,      5300, 2.5, 2.2, 0.4, T(0, 0, 0, 0.85, 0.70), NOMOD),
     [ANIM_LOOK_AROUND] = DEF("LOOK_AROUND", kf_look_around, 3600, 1.0, 1.0, 0.5, TNONE, NOMOD),
-    [ANIM_WINK]        = DEF("WINK",        kf_wink,        3500, 1.0, 1.0, 0.8, T(0, 0, 0, 1.00, 1.04), NOMOD),
-    [ANIM_CURIOUS]     = DEF("CURIOUS",     kf_curious,     0,    1.2, 1.0, 0.7, T(0, 0, 0, 1.00, 1.05),
+    [ANIM_WINK]        = DEF("WINK",        kf_wink,        3500, 1.0, 1.0, 0.8, T2(TT(0, 0, 0, 1.00, 1.04), TT(0, 0, 0, 0.95, 0.90)), NOMOD),
+    [ANIM_CURIOUS]     = DEF("CURIOUS",     kf_curious,     0,    1.2, 1.0, 0.7, T2(TT(0, 0, 0, 1.00, 1.10), TT(0, 0, 0, 0.92, 0.92)),
                              SINE(F_DY, LEFT, 3.0, 1500, 0, 0)),
     [ANIM_CONFUSED]    = DEF("CONFUSED",    kf_confused,    0,    1.0, 1.0, 0.8, T(0, 0, 0, 0.90, 0.98),
                              SINE(F_DX, BOTH, 8.0, 1600, 0, 0), SINE(F_DY, RIGHT, 4.0, 900, 0, 90),
@@ -229,16 +236,16 @@ static const anim_def_t k_anims[ANIM_COUNT] = {
                              SINE(F_DY, BOTH, 5.0, 260, 0, 0), SINE(F_SY, BOTH, 0.05, 260, 90, 90)),
     [ANIM_SCARED]      = DEF("SCARED",      kf_scared,      0,    3.0, 0.6, 1.4, T(0, 0, 0, 0.55, 1.12),
                              JITTER(F_DX, BOTH, 3.0, 50), JITTER(F_DY, BOTH, 3.0, 50)),
-    [ANIM_SKEPTICAL]   = DEF("SKEPTICAL",   kf_skeptical,   0,    1.0, 1.0, 0.6, T(0, 0, 0, 0.92, 1.00), NOMOD),
+    [ANIM_SKEPTICAL]   = DEF("SKEPTICAL",   kf_skeptical,   0,    1.0, 1.0, 0.6, T2(TT(0, 0, 0, 0.85, 0.92), TT(0, 0, 0, 1.00, 1.06)), NOMOD),
     [ANIM_THINKING]    = DEF("THINKING",    kf_thinking,    5200, 1.3, 1.3, 0.6, T(0, 0, 0, 0.95, 0.92),
                              SINE(F_DX, BOTH, 2.0, 2500, 0, 0)),
     [ANIM_BORED]       = DEF("BORED",       kf_bored,       6000, 1.6, 1.8, 0.5, T(0, 0, 0, 0.85, 0.85), NOMOD),
     [ANIM_EXCITED]     = DEF("EXCITED",     kf_excited,     0,    0.7, 0.8, 1.2, T(0, 0, 0, 1.10, 1.12),
-                             SINE(F_DY, BOTH, 8.0, 320, 0, 0), SINE(F_SX, BOTH, 0.04, 320, 90, 90)),
+                             SINE(F_FACE_DY, LEFT, 8.0, 320, 0, 0), SINE(F_FACE_SCALE, LEFT, 0.03, 320, 90, 0)),
     [ANIM_SHY]         = DEF("SHY",         kf_shy,         5000, 1.0, 1.0, 0.6, T(0, PINK, 0.20, 1.00, 0.95), NOMOD),
     [ANIM_ANNOYED]     = DEF("ANNOYED",     kf_annoyed,     4500, 1.0, 1.0, 0.5, T(0, RED, 0.12, 1.00, 0.90), NOMOD),
     [ANIM_SLEEPING]    = DEF("SLEEPING",    kf_sleeping,    0,    20.0, 3.0, 0.0, T(0, 0, 0, 0.80, 0.45),
-                             SINE(F_DY, BOTH, 2.0, 3200, 0, 0), SINE(F_SX, BOTH, 0.02, 3200, 0, 0)),
+                             SINE(F_DY, BOTH, 2.0, 3200, 0, 0), SINE(F_FACE_SCALE, LEFT, 0.015, 3200, 270, 0)),
     [ANIM_SQUINT]      = DEF("SQUINT",      kf_squint,      0,    1.4, 1.2, 0.4, T(0, 0, 0, 0.95, 0.92), NOMOD),
     [ANIM_DANCE]       = DEF("DANCE",       kf_dance,       0,    1.0, 1.0, 0.5, TNONE, NOMOD),
 };
@@ -274,7 +281,7 @@ static void anim_enter(anim_sm_t *sm, eyes_t *eyes, anim_id_t id, uint32_t now_m
     sm->dance_last_sound_ms = now_ms;
     eyes_clear_mod(eyes);
     eyes_set_idle_rates(eyes, d->blink_interval_scale, d->blink_speed_scale, d->dart_scale);
-    eyes_set_tint(eyes, &d->tint, 450, now_ms);
+    eyes_set_tint(eyes, d->tint, 450, now_ms);
     ESP_LOGI(TAG, "-> %s", d->name);
 }
 
@@ -348,7 +355,15 @@ static void apply_modulators(anim_sm_t *sm, eyes_t *eyes, const anim_def_t *d, u
                 const int f = md->field;
                 delta = sm->jit_from[e][f] + (int32_t)(((int64_t)(sm->jit_to[e][f] - sm->jit_from[e][f]) * k) >> 16);
             }
-            eyes->mod[e].v[md->field] += delta;
+            if (md->field >= F_FACE_SCALE) {
+                if (e == 0) {   /* face-level fields are applied once */
+                    if (md->field == F_FACE_SCALE) eyes->face_mod_scale += delta;
+                    else if (md->field == F_FACE_DX) eyes->face_mod_dx += delta;
+                    else eyes->face_mod_dy += delta;
+                }
+            } else {
+                eyes->mod[e].v[md->field] += delta;
+            }
         }
     }
 }
@@ -416,6 +431,8 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
             m->dy += (int32_t)(4.f * sag * 65536.f);
         }
     }
+    /* the whole face pulses with the bass */
+    eyes->face_mod_scale = (int32_t)((0.06f * bass) * 65536.f);
     /* the colour flashes a little brighter on the hit and shimmers with the bass */
     eyes->tint_mod_lum = (int32_t)((0.22f * kick) * 65536.f);
     eyes->tint_mod_hue = (int32_t)((8.f * bass * side) * 65536.f);
