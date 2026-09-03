@@ -43,6 +43,8 @@ int gfx_text_width(const gfx_font_t *f, const char *utf8);
 void gfx_line(const gfx_band_t *b, int x0, int y0, int x1, int y1, int thick, uint16_t color);
 /* Anti-aliased filled disc, drawn over whatever is in the band. */
 void gfx_disc(const gfx_band_t *b, int cx, int cy, int r, uint16_t color);
+/* Anti-aliased filled rounded rectangle (corner radius r), drawn over whatever is in the band. */
+void gfx_rrect(const gfx_band_t *b, int x, int y, int w, int h, int r, uint16_t color);
 /*
  * Anti-aliased ring (annulus) between r_out - thick and r_out, limited to the
  * angular sector [a0, a1] in degrees clockwise from 12 o'clock. a1 - a0 >= 360

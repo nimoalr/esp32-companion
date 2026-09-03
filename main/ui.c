@@ -36,10 +36,17 @@ static struct {
     uint16_t fg, dim, grey, white, bad, good, sel_bg;
 } C;
 
+void ui_set_accent(uint32_t rgb)
+{
+    const uint8_t r = (rgb >> 16) & 0xFF, g = (rgb >> 8) & 0xFF, b = rgb & 0xFF;
+    C.fg = gfx_rgb(r, g, b);
+    C.dim = gfx_rgb(r * 110 / 255, g * 110 / 255, b * 110 / 255);
+    C.sel_bg = C.fg;
+}
+
 static void colours_init(void)
 {
-    C.fg = gfx_rgb(255, 140, 0);
-    C.dim = gfx_rgb(110, 60, 0);
+    ui_set_accent(settings_eye_rgb());
     C.grey = gfx_rgb(120, 120, 120);
     C.white = gfx_rgb(230, 230, 230);
     C.bad = gfx_rgb(230, 70, 50);
@@ -106,13 +113,13 @@ static void goto_screen(ui_t *u, ui_screen_t s, uint32_t now_ms)
 
 const char *ui_screen_name(ui_screen_t s)
 {
-    static const char *n[] = { "MENU", "CALIBRATE", "LEVEL", "BRIGHTNESS", "BATTERY" };
-    return (s <= UI_SCREEN_BATTERY) ? n[s] : "?";
+    static const char *n[] = { "MENU", "CALIBRATE", "LEVEL", "BRIGHTNESS", "BATTERY", "COLOR" };
+    return (s <= UI_SCREEN_COLOR) ? n[s] : "?";
 }
 
 /* ---- menu ------------------------------------------------------------------ */
 
-enum { MENU_CALIBRATE, MENU_LEVEL, MENU_BRIGHTNESS, MENU_BATTERY, MENU_DANCE, MENU_EYES, MENU_COUNT };
+enum { MENU_CALIBRATE, MENU_LEVEL, MENU_BRIGHTNESS, MENU_COLOR, MENU_BATTERY, MENU_DANCE, MENU_EYES, MENU_COUNT };
 
 static const char *menu_label(const ui_t *u, int i, char *buf, int len)
 {
@@ -120,6 +127,7 @@ static const char *menu_label(const ui_t *u, int i, char *buf, int len)
     case MENU_CALIBRATE:  return u->settings->cal.valid ? "Calibrate accel" : "Calibrate accel  !";
     case MENU_LEVEL:      return "Level";
     case MENU_BRIGHTNESS: snprintf(buf, (size_t)len, "Brightness   %3u%%", u->settings->brightness_active); return buf;
+    case MENU_COLOR:      snprintf(buf, (size_t)len, "Eye colour %s", k_eye_palette[u->settings->eye_color % EYE_PALETTE_N].name); return buf;
     case MENU_BATTERY:    return "Battery";
     case MENU_DANCE:      return "Dance mode";
     default:              return "Back to eyes";
@@ -168,6 +176,9 @@ static void menu_input(ui_t *u, ui_input_t in, uint32_t now_ms)
             break;
         case MENU_BRIGHTNESS:
             goto_screen(u, UI_SCREEN_BRIGHTNESS, now_ms);
+            break;
+        case MENU_COLOR:
+            goto_screen(u, UI_SCREEN_COLOR, now_ms);
             break;
         case MENU_BATTERY:
             goto_screen(u, UI_SCREEN_BATTERY, now_ms);
@@ -435,6 +446,37 @@ static void brightness_input(ui_t *u, ui_input_t in, uint32_t now_ms)
     }
 }
 
+/* ---- eye colour ------------------------------------------------------------ */
+
+#define COL_EYE_Y  205
+
+static void paint_color(const ui_t *u, const gfx_band_t *b)
+{
+    chrome(b, "EYE COLOUR", "tap=next  hold=back");
+    const eye_palette_t *pal = &k_eye_palette[u->settings->eye_color % EYE_PALETTE_N];
+    const uint16_t c = gfx_rgb((pal->rgb >> 16) & 0xFF, (pal->rgb >> 8) & 0xFF, pal->rgb & 0xFF);
+    /* a pair of resting eyes in the candidate colour */
+    gfx_rrect(b, CX - 95 - 40, COL_EYE_Y - 52, 80, 104, 36, c);
+    gfx_rrect(b, CX + 95 - 40, COL_EYE_Y - 52, 80, 104, 36, c);
+    char line[40];
+    snprintf(line, sizeof line, "%d/%d  %s", u->settings->eye_color % EYE_PALETTE_N + 1, EYE_PALETTE_N, pal->name);
+    text_center(b, &font_spleen_16x32, 296, line, C.white);
+}
+
+static void color_input(ui_t *u, ui_input_t in, uint32_t now_ms)
+{
+    if (in == UI_IN_TAP || in == UI_IN_UP || in == UI_IN_DOWN) {
+        const int n = EYE_PALETTE_N;
+        u->settings->eye_color = (uint8_t)((u->settings->eye_color + (in == UI_IN_DOWN ? n - 1 : 1)) % n);
+        ui_set_accent(k_eye_palette[u->settings->eye_color].rgb);
+        action(u, UI_ACT_COLOR);
+        dirty_all(u);                     /* the accent changed too */
+    } else if (in == UI_IN_LONG || in == UI_IN_RIGHT) {
+        action(u, UI_ACT_SAVE);
+        goto_screen(u, UI_SCREEN_MENU, now_ms);
+    }
+}
+
 /* ---- battery --------------------------------------------------------------- */
 
 static void paint_battery(const ui_t *u, const gfx_band_t *b)
@@ -495,6 +537,7 @@ void ui_input(ui_t *u, ui_input_t in, uint32_t now_ms)
     case UI_SCREEN_MENU:       menu_input(u, in, now_ms); break;
     case UI_SCREEN_CALIBRATE:  calibrate_input(u, in, now_ms); break;
     case UI_SCREEN_BRIGHTNESS: brightness_input(u, in, now_ms); break;
+    case UI_SCREEN_COLOR:      color_input(u, in, now_ms); break;
     case UI_SCREEN_LEVEL:
     case UI_SCREEN_BATTERY:
         if (in == UI_IN_LONG || in == UI_IN_RIGHT) goto_screen(u, UI_SCREEN_MENU, now_ms);
@@ -523,6 +566,7 @@ void ui_paint(const ui_t *u, const gfx_band_t *band)
     case UI_SCREEN_CALIBRATE:  paint_calibrate(u, band); break;
     case UI_SCREEN_LEVEL:      paint_level(u, band); break;
     case UI_SCREEN_BRIGHTNESS: paint_brightness(u, band); break;
+    case UI_SCREEN_COLOR:      paint_color(u, band); break;
     case UI_SCREEN_BATTERY:    paint_battery(u, band); break;
     }
 }

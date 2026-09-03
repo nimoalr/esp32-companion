@@ -90,6 +90,30 @@ Secondary motion (`eyes.c`):
   SURPRISED first squashes to 0.96 x 0.92 for 60 ms (anticipation), then
   pops.
 
+Colour (`eyes.c`, `anim.c`, `settings.c`):
+
+* Vector's eye colour is a user preference (seven named hue/saturation
+  pairs in `eye_color_config.json`; the TRM lists them) and stays the
+  robot's identity: animations never change the hue, they only scale a
+  per-eye Lightness (and, behind a compile flag, Saturation), and the whole
+  face is rendered as a value image converted to RGB565 through the chosen
+  hue and saturation. Dim eyes mean low power or sleep, bright eyes mean
+  attention.
+* Here the base colour is a setting (eight named colours in the setup UI,
+  stored in NVS; the UI's accent follows it). Each expression carries a tint:
+  a small relative hue shift, a blend toward a fixed colour in RGB space
+  (anger 30 % toward red, love 35 % toward pink, dizzy 30 % toward a sickly
+  green; RGB rather than hue so "toward red" means the same on a teal base as
+  on an orange one), and saturation and lightness multipliers (sad 0.70 x
+  0.78, scared pale at 0.55 saturation, sleeping 0.45 lightness, happy and
+  excited a little brighter). Tints cross-fade over 450 ms with the pose.
+* Mood scales lightness (0.85 to 1.0) and saturation (0.90 to 1.0) with the
+  character's energy, so a tired character is dimmer and paler. The dance
+  choreography flashes the lightness 22 % on each beat and shimmers the hue
+  by 8 deg with the bass.
+* The colour is one HSL to RGB conversion per frame and a 256-entry LUT
+  rebuild only when the 8-bit result changes; the rasteriser is untouched.
+
 Not taken from Vector: the hot spot / glow shading (a radial gradient per
 eye would cost a per-pixel multiply on the whole eye; the flat colour keeps
 the fill a 32-bit store and stays crisp on the AMOLED), saturation and

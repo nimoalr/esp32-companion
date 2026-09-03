@@ -40,6 +40,7 @@ typedef struct {
     int32_t blink_interval_scale;   /* Q16 */
     int32_t blink_speed_scale;      /* Q16 */
     int32_t dart_scale;             /* Q16 amplitude of the idle gaze darts */
+    eye_tint_t tint;                /* colour tint of the expression */
     anim_mod_t mods[3];
 } anim_def_t;
 
@@ -186,44 +187,54 @@ static const anim_kf_t kf_dance[] = {
     { 0, 250, NEUTRAL_POSE, NEUTRAL_POSE, 0 },
 };
 
-/* name, keyframes, loop ms, blink interval scale, blink speed scale, dart amplitude scale, modulators */
-#define DEF(nm, arr, loop, bi, bs, ds, ...) \
-    { nm, arr, (int)(sizeof(arr) / sizeof(arr[0])), loop, Q16(bi), Q16(bs), Q16(ds), { __VA_ARGS__ } }
+/*
+ * tint: hue shift (deg), blend toward a colour (0xRRGGBB, weight 0..1), saturation and lightness
+ * multipliers. The base hue stays the character's identity; expressions only lean on it.
+ */
+#define T(shift, prgb, pw, sat, lum)  { Q16(shift), Q16(pw), Q16(sat), Q16(lum), prgb }
+#define TNONE                         T(0, 0, 0, 1.0, 1.0)
+#define RED   0xFF3020
+#define PINK  0xFF5AAA
+#define GREEN 0x78C83C
+
+/* name, keyframes, loop ms, blink interval scale, blink speed scale, dart amplitude scale, tint, modulators */
+#define DEF(nm, arr, loop, bi, bs, ds, tint, ...) \
+    { nm, arr, (int)(sizeof(arr) / sizeof(arr[0])), loop, Q16(bi), Q16(bs), Q16(ds), tint, { __VA_ARGS__ } }
 
 static const anim_def_t k_anims[ANIM_COUNT] = {
-    [ANIM_NEUTRAL]     = DEF("NEUTRAL",     kf_neutral,     0,    1.0, 1.0, 1.0, NOMOD),
-    [ANIM_HAPPY]       = DEF("HAPPY",       kf_happy,       0,    1.0, 1.0, 0.9, NOMOD),
-    [ANIM_SAD]         = DEF("SAD",         kf_sad,         0,    1.3, 1.3, 0.5, NOMOD),
-    [ANIM_ANGRY]       = DEF("ANGRY",       kf_angry,       0,    1.0, 1.0, 0.6, NOMOD),
-    [ANIM_SURPRISED]   = DEF("SURPRISED",   kf_surprised,   0,    1.6, 1.0, 0.3, NOMOD),
-    [ANIM_SLEEPY]      = DEF("SLEEPY",      kf_sleepy,      5300, 2.5, 2.2, 0.4, NOMOD),
-    [ANIM_LOOK_AROUND] = DEF("LOOK_AROUND", kf_look_around, 3600, 1.0, 1.0, 0.5, NOMOD),
-    [ANIM_WINK]        = DEF("WINK",        kf_wink,        3500, 1.0, 1.0, 0.8, NOMOD),
-    [ANIM_CURIOUS]     = DEF("CURIOUS",     kf_curious,     0,    1.2, 1.0, 0.7,
+    [ANIM_NEUTRAL]     = DEF("NEUTRAL",     kf_neutral,     0,    1.0, 1.0, 1.0, TNONE, NOMOD),
+    [ANIM_HAPPY]       = DEF("HAPPY",       kf_happy,       0,    1.0, 1.0, 0.9, T(4, 0, 0, 1.05, 1.08), NOMOD),
+    [ANIM_SAD]         = DEF("SAD",         kf_sad,         0,    1.3, 1.3, 0.5, T(0, 0, 0, 0.70, 0.78), NOMOD),
+    [ANIM_ANGRY]       = DEF("ANGRY",       kf_angry,       0,    1.0, 1.0, 0.6, T(0, RED, 0.30, 1.15, 1.05), NOMOD),
+    [ANIM_SURPRISED]   = DEF("SURPRISED",   kf_surprised,   0,    1.6, 1.0, 0.3, T(0, 0, 0, 1.00, 1.15), NOMOD),
+    [ANIM_SLEEPY]      = DEF("SLEEPY",      kf_sleepy,      5300, 2.5, 2.2, 0.4, T(0, 0, 0, 0.85, 0.70), NOMOD),
+    [ANIM_LOOK_AROUND] = DEF("LOOK_AROUND", kf_look_around, 3600, 1.0, 1.0, 0.5, TNONE, NOMOD),
+    [ANIM_WINK]        = DEF("WINK",        kf_wink,        3500, 1.0, 1.0, 0.8, T(0, 0, 0, 1.00, 1.04), NOMOD),
+    [ANIM_CURIOUS]     = DEF("CURIOUS",     kf_curious,     0,    1.2, 1.0, 0.7, T(0, 0, 0, 1.00, 1.05),
                              SINE(F_DY, LEFT, 3.0, 1500, 0, 0)),
-    [ANIM_CONFUSED]    = DEF("CONFUSED",    kf_confused,    0,    1.0, 1.0, 0.8,
+    [ANIM_CONFUSED]    = DEF("CONFUSED",    kf_confused,    0,    1.0, 1.0, 0.8, T(0, 0, 0, 0.90, 0.98),
                              SINE(F_DX, BOTH, 8.0, 1600, 0, 0), SINE(F_DY, RIGHT, 4.0, 900, 0, 90),
                              SINE(F_ANG, RIGHT, 4.0, 1600, 90, 90)),
-    [ANIM_LOVE]        = DEF("LOVE",        kf_love,        0,    1.4, 1.2, 0.5,
+    [ANIM_LOVE]        = DEF("LOVE",        kf_love,        0,    1.4, 1.2, 0.5, T(0, PINK, 0.35, 1.05, 1.08),
                              SINE(F_SY, BOTH, 0.07, 700, 0, 0), SINE(F_SX, BOTH, 0.05, 700, 0, 0)),
-    [ANIM_DIZZY]       = DEF("DIZZY",       kf_dizzy,       0,    2.0, 1.5, 0.0,
+    [ANIM_DIZZY]       = DEF("DIZZY",       kf_dizzy,       0,    2.0, 1.5, 0.0, T(0, GREEN, 0.30, 0.90, 0.90),
                              SINE(F_DX, BOTH, 10.0, 900, 0, 180), SINE(F_DY, BOTH, 10.0, 900, 90, 270),
                              SINE(F_ANG, BOTH, 14.0, 900, 180, 0)),
-    [ANIM_LAUGHING]    = DEF("LAUGHING",    kf_laughing,    0,    1.5, 1.0, 0.5,
+    [ANIM_LAUGHING]    = DEF("LAUGHING",    kf_laughing,    0,    1.5, 1.0, 0.5, T(4, 0, 0, 1.05, 1.10),
                              SINE(F_DY, BOTH, 5.0, 260, 0, 0), SINE(F_SY, BOTH, 0.05, 260, 90, 90)),
-    [ANIM_SCARED]      = DEF("SCARED",      kf_scared,      0,    3.0, 0.6, 1.4,
+    [ANIM_SCARED]      = DEF("SCARED",      kf_scared,      0,    3.0, 0.6, 1.4, T(0, 0, 0, 0.55, 1.12),
                              JITTER(F_DX, BOTH, 3.0, 50), JITTER(F_DY, BOTH, 3.0, 50)),
-    [ANIM_SKEPTICAL]   = DEF("SKEPTICAL",   kf_skeptical,   0,    1.0, 1.0, 0.6, NOMOD),
-    [ANIM_THINKING]    = DEF("THINKING",    kf_thinking,    5200, 1.3, 1.3, 0.6,
+    [ANIM_SKEPTICAL]   = DEF("SKEPTICAL",   kf_skeptical,   0,    1.0, 1.0, 0.6, T(0, 0, 0, 0.92, 1.00), NOMOD),
+    [ANIM_THINKING]    = DEF("THINKING",    kf_thinking,    5200, 1.3, 1.3, 0.6, T(0, 0, 0, 0.95, 0.92),
                              SINE(F_DX, BOTH, 2.0, 2500, 0, 0)),
-    [ANIM_BORED]       = DEF("BORED",       kf_bored,       6000, 1.6, 1.8, 0.5, NOMOD),
-    [ANIM_EXCITED]     = DEF("EXCITED",     kf_excited,     0,    0.7, 0.8, 1.2,
+    [ANIM_BORED]       = DEF("BORED",       kf_bored,       6000, 1.6, 1.8, 0.5, T(0, 0, 0, 0.85, 0.85), NOMOD),
+    [ANIM_EXCITED]     = DEF("EXCITED",     kf_excited,     0,    0.7, 0.8, 1.2, T(0, 0, 0, 1.10, 1.12),
                              SINE(F_DY, BOTH, 8.0, 320, 0, 0), SINE(F_SX, BOTH, 0.04, 320, 90, 90)),
-    [ANIM_SHY]         = DEF("SHY",         kf_shy,         5000, 1.0, 1.0, 0.6, NOMOD),
-    [ANIM_ANNOYED]     = DEF("ANNOYED",     kf_annoyed,     4500, 1.0, 1.0, 0.5, NOMOD),
-    [ANIM_SLEEPING]    = DEF("SLEEPING",    kf_sleeping,    0,    20.0, 3.0, 0.0,
+    [ANIM_SHY]         = DEF("SHY",         kf_shy,         5000, 1.0, 1.0, 0.6, T(0, PINK, 0.20, 1.00, 0.95), NOMOD),
+    [ANIM_ANNOYED]     = DEF("ANNOYED",     kf_annoyed,     4500, 1.0, 1.0, 0.5, T(0, RED, 0.12, 1.00, 0.90), NOMOD),
+    [ANIM_SLEEPING]    = DEF("SLEEPING",    kf_sleeping,    0,    20.0, 3.0, 0.0, T(0, 0, 0, 0.80, 0.45),
                              SINE(F_DY, BOTH, 2.0, 3200, 0, 0), SINE(F_SX, BOTH, 0.02, 3200, 0, 0)),
-    [ANIM_DANCE]       = DEF("DANCE",       kf_dance,       0,    1.0, 1.0, 0.5, NOMOD),
+    [ANIM_DANCE]       = DEF("DANCE",       kf_dance,       0,    1.0, 1.0, 0.5, TNONE, NOMOD),
 };
 
 const char *anim_name(anim_id_t id)
@@ -257,6 +268,7 @@ static void anim_enter(anim_sm_t *sm, eyes_t *eyes, anim_id_t id, uint32_t now_m
     sm->dance_last_sound_ms = now_ms;
     eyes_clear_mod(eyes);
     eyes_set_idle_rates(eyes, d->blink_interval_scale, d->blink_speed_scale, d->dart_scale);
+    eyes_set_tint(eyes, &d->tint, 450, now_ms);
     ESP_LOGI(TAG, "-> %s", d->name);
 }
 
@@ -398,6 +410,9 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
             m->dy += (int32_t)(4.f * sag * 65536.f);
         }
     }
+    /* the colour flashes a little brighter on the hit and shimmers with the bass */
+    eyes->tint_mod_lum = (int32_t)((0.22f * kick) * 65536.f);
+    eyes->tint_mod_hue = (int32_t)((8.f * bass * side) * 65536.f);
     /* blink a little more in a lively room */
     eyes_set_idle_rates(eyes, (int32_t)((1.0f - 0.4f * loud) * 65536.f), Q16_ONE, Q16(0.5));
 }

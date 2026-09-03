@@ -12,6 +12,27 @@ static const char *TAG = "settings";
 
 settings_t g_settings;
 
+/*
+ * Named after what they are, not after machine-learning puns like Vector's. The
+ * first entry is the orange the character has always had; the others sit at
+ * lightness 50-60 % so the expression tints have room in both directions.
+ */
+const eye_palette_t k_eye_palette[EYE_PALETTE_N] = {
+    { "Orange",   0xFF8C00 },
+    { "Amber",    0xFFC000 },
+    { "Lime",     0x9BE800 },
+    { "Teal",     0x00E0B0 },
+    { "Sapphire", 0x2A7DFF },
+    { "Violet",   0xA060FF },
+    { "Pink",     0xFF5FA8 },
+    { "Ivory",    0xF2E2C4 },
+};
+
+uint32_t settings_eye_rgb(void)
+{
+    return k_eye_palette[g_settings.eye_color < EYE_PALETTE_N ? g_settings.eye_color : 0].rgb;
+}
+
 esp_err_t settings_init(void)
 {
     g_settings.brightness_active = CONFIG_EYES_BRIGHTNESS_ACTIVE;
@@ -37,6 +58,7 @@ esp_err_t settings_init(void)
     uint8_t v;
     if (nvs_get_u8(h, "bri_act", &v) == ESP_OK && v >= 1 && v <= 100) g_settings.brightness_active = v;
     if (nvs_get_u8(h, "bri_aod", &v) == ESP_OK && v >= 1 && v <= 100) g_settings.brightness_aod = v;
+    if (nvs_get_u8(h, "eye_col", &v) == ESP_OK && v < EYE_PALETTE_N) g_settings.eye_color = v;
     imu_cal_t cal;
     size_t len = sizeof(cal);
     if (nvs_get_blob(h, "cal", &cal, &len) == ESP_OK && len == sizeof(cal) && cal.valid) {
@@ -55,6 +77,7 @@ esp_err_t settings_save(void)
     esp_err_t err = ESP_OK;
     if (err == ESP_OK) err = nvs_set_u8(h, "bri_act", g_settings.brightness_active);
     if (err == ESP_OK) err = nvs_set_u8(h, "bri_aod", g_settings.brightness_aod);
+    if (err == ESP_OK) err = nvs_set_u8(h, "eye_col", g_settings.eye_color);
     if (err == ESP_OK) err = nvs_set_blob(h, "cal", &g_settings.cal, sizeof(g_settings.cal));
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);

@@ -44,6 +44,21 @@ typedef union {
 
 #define EYE_POSE_NEUTRAL { { Q16_ONE, Q16_ONE, 0, 0, 0, 0, 0, 0, 0, 0, { Q16_ONE, Q16_ONE, Q16_ONE, Q16_ONE } } }
 
+/*
+ * Colour. The base colour is the character's identity (a user setting); an
+ * expression tints it by shifting the hue a little, blending it part of the
+ * way toward a colour (anger toward red, love toward pink) and scaling
+ * saturation and lightness; mood scales lightness and saturation on top.
+ */
+typedef struct {
+    int32_t hue_shift;      /* Q16 degrees, relative to the base hue */
+    int32_t pull;           /* Q16 0..1, how far to blend toward pull_rgb (in RGB, so "toward red" means the same on every base) */
+    int32_t sat, lum;       /* Q16 multipliers (ONE = base) */
+    uint32_t pull_rgb;      /* 0xRRGGBB */
+} eye_tint_t;
+#define EYE_TINT_FIELDS 4   /* eased scalars; pull_rgb is cross-faded */
+#define EYE_TINT_NEUTRAL { 0, 0, Q16_ONE, Q16_ONE, 0 }
+
 /* Transition easing. */
 typedef enum {
     EYE_EASE_SMOOTH = 0,    /* smoothstep on every field */
@@ -59,7 +74,6 @@ typedef struct {
     /* secondary motion state */
     int32_t prev_cx, prev_cy;          /* pose-driven centre last frame, Q16 */
     int32_t motion_k;                  /* smoothed stretch amount, Q16 */
-    uint16_t lut[256];
 } EyeState;
 
 typedef struct {
@@ -90,6 +104,14 @@ typedef struct {
     int32_t face_cos, face_sin;        /* Q16 */
     uint32_t prev_ms;
     bool have_prev;
+    /* colour */
+    float base_h, base_s, base_l;      /* HSL of the base colour: degrees, 0..1, 0..1 */
+    eye_tint_t tint_cur, tint_from, tint_to;
+    uint32_t tint_t0_ms, tint_dur_ms;
+    int32_t tint_mod_hue, tint_mod_lum;    /* per-frame additive (Q16 degrees / Q16 lightness multiplier delta) */
+    int32_t mood_lum, mood_sat;        /* Q16 multipliers from the behaviour layer */
+    uint32_t rgb;                      /* colour currently in the LUT, 0xRRGGBB */
+    uint16_t lut[256];
 } eyes_t;
 
 void eyes_init(eyes_t *e, uint32_t now_ms);
@@ -104,6 +126,13 @@ void eyes_set_env(eyes_t *e, int eye, const eye_pose_t *delta);
 
 /* Rotate the whole face about the screen centre; degrees, clockwise on screen, 0 = upright. */
 void eyes_set_face_angle(eyes_t *e, float deg);
+
+/* Colour: base (identity), expression tint (eased), mood multipliers (applied directly). */
+void eyes_set_base_color(eyes_t *e, uint32_t rgb);
+void eyes_set_tint(eyes_t *e, const eye_tint_t *t, uint32_t dur_ms, uint32_t now_ms);
+void eyes_set_mood(eyes_t *e, int32_t lum_q16, int32_t sat_q16);
+/* The colour the eyes are drawn with right now, 0xRRGGBB. */
+uint32_t eyes_color(const eyes_t *e);
 
 /* Idle-layer tuning used by animations. */
 void eyes_set_idle_rates(eyes_t *e, int32_t blink_interval_scale, int32_t blink_speed_scale, int32_t dart_scale);

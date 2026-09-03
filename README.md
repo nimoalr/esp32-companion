@@ -63,6 +63,15 @@ tapped expression while a reaction lasts:
 | Face down on the table | Eyes close, z's float up; lifting it back gives a short surprised wake. |
 | Music | Every 20 s while awake the mics listen for 3 s. Regular beats trigger a reaction rolled against his mood: usually a dance, headphones sliding on more often when he is energetic, sometimes an unimpressed look before ignoring the music for a while. Quiet or a tap ends it. |
 
+**Colour.** The eye colour is a setting (eight named colours, chosen in the
+setup UI, persisted in NVS) and stays the character's identity. Expressions
+tint it: a little brighter when happy or excited, dim and washed out when
+sad, sleepy or asleep, pulled toward red when angry, toward pink when in
+love or shy, toward a sickly green when dizzy, pale when scared. Mood dims
+and desaturates a tired character; the dance flashes the colour on each
+beat. The rasteriser only ever sees a 256-entry colour LUT, rebuilt when the
+colour actually changes.
+
 Mood is a single "energy" value that rises when he is handled or touched,
 sinks with time and wanders a little; it biases the music reaction and can
 drive more later. Props (headphones, stars, X eyes, z's) are drawn through the
@@ -154,8 +163,8 @@ main/
   imu.c/.h                QMI8658: accelerometer polling, hardware wake-on-motion
   pmic.c/.h               AXP2101: battery telemetry, soft power off
   i2c_bus.c/.h            the one shared I2C bus
-  settings.c/.h           brightness + calibration in NVS, Kconfig defaults
-  ui.c/.h                 setup screens (menu, calibration wizard, level, brightness, battery); pure C
+  settings.c/.h           brightness, eye colour palette + calibration in NVS, Kconfig defaults
+  ui.c/.h                 setup screens (menu, calibration wizard, level, brightness, eye colour, battery); pure C
   gfx.c/.h                band-clipped primitives: fill, text, anti-aliased disc and ring/arc
   font_spleen_*.c         Spleen 8x16 / 12x24 / 16x32 glyph tables (generated)
   imu_cal.c/.h            three-pose accelerometer calibration and screen-frame tilt; pure C
