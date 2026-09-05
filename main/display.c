@@ -64,6 +64,7 @@ static SemaphoreHandle_t s_wake_sem;      /* one-shot timer for precise scan wai
 static esp_timer_handle_t s_wake_timer;
 
 static volatile uint32_t s_bytes_pushed;
+static SemaphoreHandle_t s_panel_mutex;   /* the esp_lcd SPI io is not thread-safe: pushes and commands take turns */
 
 static bool IRAM_ATTR on_color_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *edata, void *ctx)
 {
@@ -106,6 +107,7 @@ esp_err_t display_init(void)
         s_band[i] = heap_caps_malloc(DISPLAY_BAND_BYTES, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
         ESP_RETURN_ON_FALSE(s_band[i], ESP_ERR_NO_MEM, TAG, "no internal DMA memory for band %d", i);
     }
+    s_panel_mutex = xSemaphoreCreateMutex();
     s_done_sem = xSemaphoreCreateCounting(64, 0);
     s_vsync = xSemaphoreCreateBinary();
     s_wake_sem = xSemaphoreCreateBinary();
@@ -196,6 +198,7 @@ uint16_t *display_acquire_band(void)
 uint32_t display_push(int x, int y, int w, int h, const uint16_t *band)
 {
     assert(w > 0 && h > 0 && (size_t)w * (size_t)h <= DISPLAY_BAND_PIXELS);   /* a band buffer holds this much */
+    xSemaphoreTake(s_panel_mutex, portMAX_DELAY);
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(s_panel, x, y, x + w, y + h, band));
     s_issued++;
     for (int i = 0; i < DISPLAY_BANDS; i++) {
@@ -205,7 +208,9 @@ uint32_t display_push(int x, int y, int w, int h, const uint16_t *band)
         }
     }
     s_bytes_pushed += (uint32_t)w * (uint32_t)h * 2u;
-    return s_issued;
+    const uint32_t seq = s_issued;
+    xSemaphoreGive(s_panel_mutex);
+    return seq;
 }
 
 void display_wait_idle(void)
@@ -267,7 +272,9 @@ void display_delay_until_frame(uint32_t period)
 static void panel_cmd(uint8_t cmd, const uint8_t *param, size_t len)
 {
     const int lcd_cmd = (0x02 << 24) | ((int)cmd << 8);
+    xSemaphoreTake(s_panel_mutex, portMAX_DELAY);
     ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(s_io, lcd_cmd, param, len));
+    xSemaphoreGive(s_panel_mutex);
 }
 
 void display_set_brightness(uint8_t percent)
