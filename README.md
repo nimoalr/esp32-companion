@@ -176,6 +176,12 @@ tools/bdf2c.py            BDF -> C glyph table converter
 docs/hardware.md          pin sources, TE, QSPI clock, power rails, battery budget
 ```
 
+## Host renders
+
+`tools/host/` builds the rendering and animation code with a desktop gcc and
+renders expression sheets, motion strips and timings to PPM/PNG without a
+board. See `tools/host/README.md`.
+
 ## Rendering architecture
 
 * **No framebuffer.** Two 466 x 32 px RGB565 band buffers (29 824 B each) in
