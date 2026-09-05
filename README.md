@@ -209,7 +209,7 @@ board. See `tools/host/README.md`.
   eye's local axes so each quadrant uses its own radius. On the host a
   rotated frame costs about 2.2x an upright one, mostly because the rotated
   bounding box is larger; a bent lid on an upright eye costs about 10 %.
-* **Hot spot (optional).** A separable Gaussian lightness falloff in screen
+* **Hot spot.** A separable Gaussian lightness falloff in screen
   space: two 466-entry per-axis tables per eye are refilled each frame, and
   every covered pixel does one multiply, a 2x2 ordered dither and two table
   lookups into a 32 lightness x 64 coverage RGB565 LUT (4 KB per eye,

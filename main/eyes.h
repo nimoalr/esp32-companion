@@ -152,7 +152,7 @@ void eyes_set_tint(eyes_t *e, const eye_tint_t t[2], uint32_t dur_ms, uint32_t n
 void eyes_set_mood(eyes_t *e, int32_t lum_q16, int32_t sat_q16);
 /* The colour one eye is drawn with right now, 0xRRGGBB. */
 uint32_t eyes_color(const eyes_t *e, int eye);
-/* Hot spot shading on/off (a setting; costs about 4x the fill time while the eyes move). */
+/* Hot spot shading on/off (always on in the firmware; the host harnesses compare both). */
 void eyes_set_hotspot(eyes_t *e, bool on);
 
 /* Face-level placement, applied directly (callers ease). */

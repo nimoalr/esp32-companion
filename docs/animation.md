@@ -116,7 +116,7 @@ Colour (`eyes.c`, `anim.c`, `settings.c`):
 
 Second round, after the first pass proved cheap (`raster.c`, `eyes.c`):
 
-* **Hot spot** (setting, default off): a Gaussian lightness falloff with
+* **Hot spot** (always on): a Gaussian lightness falloff with
   sigma = 0.5 x eye height, centred 1.5 x the gaze offset ahead of the eye
   centre (Vector's `HotSpotPositionMultiplier`), darkest level 0.55 at
   infinity, so the eye edge sits near 0.87. Separable, so it is two per-axis

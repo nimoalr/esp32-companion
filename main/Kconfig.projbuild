@@ -31,15 +31,6 @@ menu "Eyes"
             range 1 100
             default 10
 
-        config EYES_HOTSPOT
-            bool "Shaded eyes by default (hot spot)"
-            default n
-            help
-                Shade each eye with a soft lightness falloff that follows the
-                gaze, like Vector's hot spot. Costs about four times the fill
-                time while the eyes move. Can be toggled in the setup menu;
-                this is only the factory default.
-
         config EYES_TOUCH_MIRROR_X
             bool "Mirror touch X"
             default y

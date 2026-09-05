@@ -461,9 +461,6 @@ static void run_ui_actions(render_ctx_t *c, uint32_t now_ms)
         case UI_ACT_COLOR:
             eyes_set_base_color(&c->eyes, settings_eye_rgb());
             break;
-        case UI_ACT_HOTSPOT:
-            eyes_set_hotspot(&c->eyes, g_settings.hotspot);
-            break;
         case UI_ACT_EXIT:
             leave_ui(c, now_ms);
             break;
@@ -577,7 +574,7 @@ static void render_task(void *arg)
     uint32_t now_ms = ms_now();
     eyes_init(&c.eyes, now_ms);
     eyes_set_base_color(&c.eyes, settings_eye_rgb());
-    eyes_set_hotspot(&c.eyes, g_settings.hotspot);
+    eyes_set_hotspot(&c.eyes, true);      /* shaded eyes, always: no measurable frame cost on this build */
     anim_init(&c.sm, &c.eyes, now_ms);
     c.prev[0] = c.prev[1] = rect_empty();
     c.saved_anim = ANIM_NEUTRAL;

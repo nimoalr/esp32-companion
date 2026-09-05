@@ -123,7 +123,7 @@ const char *ui_screen_name(ui_screen_t s)
 
 /* ---- menu ------------------------------------------------------------------ */
 
-enum { MENU_CALIBRATE, MENU_LEVEL, MENU_BRIGHTNESS, MENU_COLOR, MENU_HOTSPOT, MENU_BATTERY, MENU_DANCE, MENU_EYES, MENU_COUNT };
+enum { MENU_CALIBRATE, MENU_LEVEL, MENU_BRIGHTNESS, MENU_COLOR, MENU_BATTERY, MENU_DANCE, MENU_EYES, MENU_COUNT };
 
 static const char *menu_label(const ui_t *u, int i, char *buf, int len)
 {
@@ -132,7 +132,6 @@ static const char *menu_label(const ui_t *u, int i, char *buf, int len)
     case MENU_LEVEL:      return "Level";
     case MENU_BRIGHTNESS: snprintf(buf, (size_t)len, "Brightness   %3u%%", u->settings->brightness_active); return buf;
     case MENU_COLOR:      snprintf(buf, (size_t)len, "Eye colour %s", k_eye_palette[u->settings->eye_color % EYE_PALETTE_N].name); return buf;
-    case MENU_HOTSPOT:    return u->settings->hotspot ? "Shaded eyes  on" : "Shaded eyes  off";
     case MENU_BATTERY:    return "Battery";
     case MENU_DANCE:      return "Dance mode";
     default:              return "Back to eyes";
@@ -184,12 +183,6 @@ static void menu_input(ui_t *u, ui_input_t in, uint32_t now_ms)
             break;
         case MENU_COLOR:
             goto_screen(u, UI_SCREEN_COLOR, now_ms);
-            break;
-        case MENU_HOTSPOT:
-            u->settings->hotspot = !u->settings->hotspot;
-            action(u, UI_ACT_HOTSPOT);
-            action(u, UI_ACT_SAVE);
-            dirty_add(u, BODY_X - 8, LIST_Y, BODY_X + BODY_W + 8, LIST_Y + MENU_COUNT * ROW_H);
             break;
         case MENU_BATTERY:
             goto_screen(u, UI_SCREEN_BATTERY, now_ms);
