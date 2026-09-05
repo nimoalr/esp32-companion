@@ -18,11 +18,12 @@
 
 #define IMU_CAL_POSES        3
 #define IMU_CAL_ONE_G_RAW    4096
+#define IMU_CAL_SCALE_SHIFT  28      /* scale fixed point: 1/4096 = 65536 in Q28 */
 
 typedef struct {
     bool valid;
     int16_t bias[3];        /* raw LSB */
-    int32_t scale_q16[3];   /* raw -> g, Q16 (about 1/4096) */
+    int32_t scale_q[3];     /* raw -> g in Q(IMU_CAL_SCALE_SHIFT), about 1/4096 */
     float rot[3][3];        /* sensor frame -> screen frame (rows: right, down, out of screen) */
 } imu_cal_t;
 

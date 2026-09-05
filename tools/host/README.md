@@ -19,6 +19,7 @@ python3 tools/host/tile.py sheet.png 6 2 tools/host/out/e_*.ppm   # cols, downsc
 | `feat_harness` | hot spot on/off, gaze-following hot spot, attention, face scale; prints per-frame timings |
 | `char_harness` | accessories and rotated faces, plus a behaviour simulation printout |
 | `ui_harness` | every setup screen with synthetic sensor data |
+| `imu_cal_test` | accelerometer calibration maths: the three wizard poses on five sensor mountings, rejected poses, motion restart; exits non-zero on failure |
 | `sweep` | 60 Hz sweep through every expression with rotation, hot spot, face scale and attention; asserts nothing is drawn outside a shape's bounding box. Build with `-fsanitize=address,undefined` |
 | `rot_bench`, `shape_bench` | rasteriser timings, upright vs rotated and per shape feature |
 | `drafts/hp*_harness` | headphone design drafts (none adopted) |

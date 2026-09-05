@@ -10,6 +10,7 @@ shift || { echo "usage: build.sh <harness> [cflags]"; exit 1; }
 SRCS="$R/raster.c $R/eyes.c $R/anim.c $R/gfx.c $R/font_spleen_8x16.c $R/font_spleen_12x24.c $R/font_spleen_16x32.c $R/accessories.c $R/behavior.c $R/imu_cal.c"
 case "$name" in
     ui_harness) SRCS="$SRCS $R/ui.c" ;;
+    imu_cal_test) SRCS="$R/imu_cal.c" ;;
 esac
 src="$HERE/$name.c"
 [ -f "$src" ] || src="$HERE/drafts/$name.c"
