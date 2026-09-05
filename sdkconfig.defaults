@@ -34,3 +34,5 @@ CONFIG_ESP_LCD_TOUCH_MAX_POINTS=1
 
 # Wi-Fi and Bluetooth are not built at all: the project CMakeLists restricts
 # the build to `main` and its dependencies, so esp_wifi / bt never compile.
+# 80 MHz QSPI: verified on the panel; the write beam must outrun the panel scan (docs/hardware.md, TE)
+CONFIG_EYES_LCD_PCLK_80M=y

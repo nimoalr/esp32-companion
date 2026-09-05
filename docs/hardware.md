@@ -54,12 +54,11 @@ Panel and touch have separate reset lines; they are never treated as shared.
 
 ### QSPI clock
 
-Default: **40 MHz**, `CONFIG_EYES_LCD_PCLK_40M`. That is the value every
-Waveshare reference program uses (`CO5300_PANEL_IO_QSPI_CONFIG` sets
-`pclk_hz = 40 MHz`, and the BSP does not override it). An **80 MHz** option
-(`CONFIG_EYES_LCD_PCLK_80M`, `idf.py menuconfig` -> "Eyes demo") is provided
-but was not verified on a panel while this project was written. If the image is
-corrupt at 80 MHz, go back to 40 MHz.
+Default: **80 MHz**, `CONFIG_EYES_LCD_PCLK_80M`, verified on the panel (clean
+image, TE pulsing). Waveshare's reference programs use 40 MHz
+(`CO5300_PANEL_IO_QSPI_CONFIG`), available as `CONFIG_EYES_LCD_PCLK_40M`; at
+40 MHz the write beam is slower than the panel scan and wide rotated frames
+tear (see below).
 
 Bus time per frame, RGB565 (bits per clock = 4):
 
@@ -68,30 +67,37 @@ Bus time per frame, RGB565 (bits per clock = 4):
 | Full frame 466 x 466 | 434 312 | 21.7 ms | 10.9 ms |
 | Two neutral eyes (2 x 111 x 141 px) | 62 604 | 3.1 ms | 1.6 ms |
 | Two "surprised" eyes (2 x 145 x 183 px) | 106 140 | 5.3 ms | 2.7 ms |
-
-At 60 Hz the frame budget is 16.7 ms, so idle frames fit at either clock.
+| Rotated face, both eyes in one rect | ~180 000 | 9 ms | 4.5 ms |
 
 ### Tearing effect (TE)
 
 TE **is wired**: CO5300 TE -> J3 -> `LCD_TE` -> GPIO13 (HWREF and SCH). The
 firmware enables TE in the init sequence and takes a rising-edge interrupt on
-GPIO13; the interrupt also measures the refresh period (about 16.7 ms).
+GPIO13; the interrupt also measures the refresh period (about 16.7 ms), and
+the console line shows the edge rate (`60 TE/s`).
 
-Measured behaviour (Setup -> Battery -> tap runs the test): a 32-row stripe
-written at any delay from 0 to 15 ms after the edge never tears, and one that
-straddles the next edge does. So this panel does not tear by scan position:
-it latches its whole frame memory at the TE edge, and a write shows half old,
-half new only when it spans an edge.
+What was measured (Setup -> Battery -> tap runs the probe: a column whose lit
+half flips every frame, written at a stepped delay after the edge): the
+panel refreshes top to bottom starting at the TE edge, and a write is cut
+where the scan crosses it. Writing *behind* the scan is not an option here,
+because our write is then chased by the next refresh; writing *ahead* of it
+is, provided the write beam is faster than the scan (28 rows/ms).
 
-The frame path follows from that. Every frame is rastered completely first,
-into one of two PSRAM frame buffers (both cores, the worker on core 0 taking
-the bottom half of every 16-row band), then pushed right after the next TE
-edge and nothing else is written until the next frame. DMA straight from PSRAM
-underruns the QSPI clock ("DMA TX underflow"), so the push copies each band
-into one of three internal bounce buffers first; the copy overlaps the previous
-band's transfer. A frame is tear-free as long as its push finishes inside one
-period: 16.7 ms is 330 KB at 40 MHz. The console line reports raster and push
-time separately.
+The frame path follows from that:
+
+* Every frame is rastered completely before it is sent, on both cores (the
+  worker on core 0 takes the bottom half of every 16-row band).
+* Frames that fit the internal frame buffer (up to 160 KB, sized from the free
+  heap at boot; every non-rotated face) are DMA'd straight from it, one
+  transfer per dirty rect, starting right at the TE edge. At 80 MHz a full
+  row takes 23 us, so the scan never catches up.
+* Wider frames (rotated faces) are rastered in one of two PSRAM buffers and
+  copied band by band into three internal bounce buffers on the way out; DMA
+  straight from PSRAM underruns the QSPI clock. The GDMA memcpy engine was
+  tried for these copies and silenced the TE interrupt; the CPU copies.
+* A push task does the sending so the render task rasters the next frame
+  meanwhile; panel commands and pushes share a mutex (the esp_lcd SPI io is
+  not thread-safe). Dirty rects sit on a 16 px grid.
 
 Fallback: if no TE edges arrive during the first 100 ms after init, the
 firmware logs a warning and paces frames with a 60 Hz `esp_timer` instead.
