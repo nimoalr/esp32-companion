@@ -277,6 +277,26 @@ static void paint_piece(uint16_t *band, int x0, int y, int w, int rows, const re
     }
 }
 
+/*
+ * Scan test: a bar that jumps 12 px per frame inside a full-width stripe,
+ * written `delay_ms` after the TE edge with no scan check at all. When the
+ * panel's scan crosses the stripe during the write, the bar shears.
+ */
+static void scan_test_stripe(int delay_ms, uint32_t frame)
+{
+    display_wait_after_te((uint32_t)delay_ms * 1000u);
+    const int rows = UI_SCAN_Y1 - UI_SCAN_Y0;
+    uint16_t *band = display_acquire_band();
+    memset(band, 0, (size_t)DISPLAY_W * rows * 2);
+    const gfx_band_t gb = { .dst = band, .x0 = 0, .y0 = UI_SCAN_Y0, .w = DISPLAY_W, .rows = rows };
+    const int x = (int)((frame * 12u) % (DISPLAY_W - 40));
+    gfx_fill(&gb, x, UI_SCAN_Y0, 40, rows, gfx_rgb(255, 255, 255));
+    gfx_fill(&gb, 0, UI_SCAN_Y0, DISPLAY_W, 2, gfx_rgb(60, 60, 60));
+    gfx_fill(&gb, 0, UI_SCAN_Y1 - 2, DISPLAY_W, 2, gfx_rgb(60, 60, 60));
+    display_push(0, UI_SCAN_Y0, DISPLAY_W, rows, band);
+    display_wait_idle();
+}
+
 /* Render and push every dirty rect of the frame, in band order. */
 static void push_frame(band_queue_t *bq, const rect_t *dirty, int ndirty, const render_ctx_t *c, uint32_t now_ms)
 {
@@ -643,6 +663,9 @@ static void render_task(void *arg)
 
         push_frame(&bq, dirty, ndirty, &c, now_ms);
         display_wait_idle();
+        if (c.mode == MODE_UI && c.ui.screen == UI_SCREEN_SCANTEST) {
+            scan_test_stripe(ui_scantest_delay_ms(&c.ui, now_ms), frames);
+        }
         wait_us_sum += bq.wait_us;
         brightness_step(state == POWER_ACTIVE ? 3 : 2);
 

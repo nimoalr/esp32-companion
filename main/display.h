@@ -35,6 +35,8 @@ void display_push(int x, int y, int w, int h, const uint16_t *band);
 bool display_band_safe(int y0, int y1, uint32_t bytes, int margin_rows);
 void display_wait_band_safe(int y0, int y1, uint32_t bytes, int margin_rows);
 uint32_t display_te_period_us(void);
+/* Block until `us` after the most recent TE edge (returns at once if that is past or TE is not wired). */
+void display_wait_after_te(uint32_t us);
 
 /* Block until every queued transfer has completed. */
 void display_wait_idle(void);

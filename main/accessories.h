@@ -28,9 +28,13 @@ typedef struct {
     bool zz_on;
     uint32_t zz_t0_ms;
     int zz_prev_y;
-    /* charge gauge on the rim while USB power is present */
-    bool chg_on, chg_charging, chg_dirty;
+    /* charge gauge on the rim while USB power is present: track and arc sweep in and out */
+    bool chg_on;            /* USB present: the target state */
+    bool chg_charging, chg_dirty;
     int chg_pct;
+    float chg_track, chg_arc;       /* drawn extents in degrees from the start of the sweep */
+    float chg_prev_track, chg_prev_arc;
+    uint32_t chg_ms;
     int eye_cx[2], eye_cy;  /* where the X eyes go (upright face) */
     float angle_deg;        /* face rotation, clockwise */
     float prev_angle_deg;
