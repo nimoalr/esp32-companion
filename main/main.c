@@ -285,15 +285,17 @@ static void paint_piece(uint16_t *band, int x0, int y, int w, int rows, const re
 static void scan_test_stripe(int delay_ms, uint32_t frame)
 {
     display_wait_after_te((uint32_t)delay_ms * 1000u);
-    const int rows = UI_SCAN_Y1 - UI_SCAN_Y0;
-    uint16_t *band = display_acquire_band();
-    memset(band, 0, (size_t)DISPLAY_W * rows * 2);
-    const gfx_band_t gb = { .dst = band, .x0 = 0, .y0 = UI_SCAN_Y0, .w = DISPLAY_W, .rows = rows };
     const int x = (int)((frame * 12u) % (DISPLAY_W - 40));
-    gfx_fill(&gb, x, UI_SCAN_Y0, 40, rows, gfx_rgb(255, 255, 255));
-    gfx_fill(&gb, 0, UI_SCAN_Y0, DISPLAY_W, 2, gfx_rgb(60, 60, 60));
-    gfx_fill(&gb, 0, UI_SCAN_Y1 - 2, DISPLAY_W, 2, gfx_rgb(60, 60, 60));
-    display_push(0, UI_SCAN_Y0, DISPLAY_W, rows, band);
+    for (int y = UI_SCAN_Y0; y < UI_SCAN_Y1; y += DISPLAY_BAND_ROWS) {
+        const int rows = (UI_SCAN_Y1 - y) < DISPLAY_BAND_ROWS ? (UI_SCAN_Y1 - y) : DISPLAY_BAND_ROWS;
+        uint16_t *band = display_acquire_band();
+        memset(band, 0, (size_t)DISPLAY_W * rows * 2);
+        const gfx_band_t gb = { .dst = band, .x0 = 0, .y0 = y, .w = DISPLAY_W, .rows = rows };
+        gfx_fill(&gb, x, UI_SCAN_Y0, 40, UI_SCAN_Y1 - UI_SCAN_Y0, gfx_rgb(255, 255, 255));
+        gfx_fill(&gb, 0, UI_SCAN_Y0, DISPLAY_W, 2, gfx_rgb(60, 60, 60));
+        gfx_fill(&gb, 0, UI_SCAN_Y1 - 2, DISPLAY_W, 2, gfx_rgb(60, 60, 60));
+        display_push(0, y, DISPLAY_W, rows, band);
+    }
     display_wait_idle();
 }
 

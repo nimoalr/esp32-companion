@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 #include <string.h>
+#include <assert.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "driver/spi_master.h"
@@ -194,6 +195,7 @@ uint16_t *display_acquire_band(void)
 
 void display_push(int x, int y, int w, int h, const uint16_t *band)
 {
+    assert(w > 0 && h > 0 && (size_t)w * (size_t)h <= DISPLAY_BAND_PIXELS);   /* a band buffer holds this much */
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(s_panel, x, y, x + w, y + h, band));
     s_issued++;
     for (int i = 0; i < DISPLAY_BANDS; i++) {
