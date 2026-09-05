@@ -20,6 +20,7 @@ static const char *TAG = "power";
 #define SAMPLE_MS_DROWSY   200
 #define MOTION_EVAL_MS     50       /* the "someone is handling it" detector keeps its own cadence */
 #define BATTERY_MS         5000
+#define VBUS_MS            250      /* plug/unplug shows up within a quarter second */
 #define MOTION_HITS        2        /* consecutive samples above threshold */
 
 static power_state_t s_state = POWER_ACTIVE;
@@ -32,7 +33,7 @@ static esp_pm_lock_handle_t s_lock_nosleep;  /* ESP_PM_NO_LIGHT_SLEEP */
 static bool s_cpu_held, s_nosleep_held;
 
 static bool s_imu_ok, s_pmic_ok;
-static uint32_t s_last_sample_ms, s_last_motion_eval_ms, s_last_battery_ms;
+static uint32_t s_last_sample_ms, s_last_motion_eval_ms, s_last_battery_ms, s_last_vbus_ms;
 static int32_t s_grav[3];
 static bool s_grav_init;
 static int s_motion_hits;
@@ -185,6 +186,13 @@ power_state_t power_update(uint32_t now_ms, uint32_t touch_ms)
     if (s_imu_ok && now_ms - s_last_sample_ms >= sample_ms) {
         s_last_sample_ms = now_ms;
         sample_motion(now_ms);
+    }
+    if (s_pmic_ok && now_ms - s_last_vbus_ms >= VBUS_MS) {
+        s_last_vbus_ms = now_ms;
+        bool vbus = s_batt.vbus;
+        if (pmic_read_vbus(&vbus) == ESP_OK && vbus != s_batt.vbus) {
+            s_last_battery_ms = 0;      /* charge state changed: refresh everything now */
+        }
     }
     if (s_pmic_ok && now_ms - s_last_battery_ms >= BATTERY_MS) {
         s_last_battery_ms = now_ms;

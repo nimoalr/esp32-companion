@@ -19,6 +19,8 @@ typedef struct {
 
 esp_err_t pmic_init(void);
 esp_err_t pmic_read_battery(pmic_battery_t *out);
+/* USB power present? One register read; for quick plug/unplug detection. */
+esp_err_t pmic_read_vbus(bool *vbus);
 
 /* Cut every rail (except the RTC LDO). Only the PWR button or USB brings the board back. */
 esp_err_t pmic_power_off(void);

@@ -266,6 +266,21 @@ void display_wait_band_safe(int y0, int y1, uint32_t bytes, int margin_rows)
     }
 }
 
+void display_wait_after_te(uint32_t us)
+{
+    if (!s_te_active) return;
+    const int64_t target = s_te_last_us + (int64_t)us;
+    const int64_t wait = target - esp_timer_get_time();
+    if (wait <= 0) return;
+    if (wait < 80) {
+        while (esp_timer_get_time() < target) { }
+        return;
+    }
+    xSemaphoreTake(s_wake_sem, 0);
+    esp_timer_start_once(s_wake_timer, (uint64_t)wait);
+    xSemaphoreTake(s_wake_sem, pdMS_TO_TICKS((uint32_t)(wait / 1000) + 2));
+}
+
 uint32_t display_te_period_us(void)
 {
     return s_te_period_us;

@@ -39,8 +39,13 @@
 #define CHG_A0       (-150)
 #define CHG_A1       150
 #define CHG_BAND     16         /* dirty rects are cut on the display's band grid */
+#define CHG_SWEEP    ((float)(CHG_A1 - CHG_A0))
+#define CHG_TAU_MS   160.f      /* ease of the sweeps */
+#define CHG_MAX_DPS  900.f      /* ...and their speed cap */
 
-static uint16_t col_cup, col_cup_in, col_band, col_star, col_x, col_zz, col_chg, col_full, col_track;
+static uint16_t col_cup, col_cup_in, col_band, col_star, col_x, col_zz, col_chg, col_track;
+
+static int add(acc_rect_t *out, int n, int x0, int y0, int x1, int y1);
 
 static void colours(void)
 {
@@ -53,7 +58,6 @@ static void colours(void)
     col_x = gfx_rgb(255, 140, 0);
     col_zz = gfx_rgb(160, 160, 170);
     col_chg = gfx_rgb(70, 210, 100);
-    col_full = gfx_rgb(150, 150, 160);
     col_track = gfx_rgb(26, 26, 30);
     done = true;
 }
@@ -112,16 +116,13 @@ static bool any_prop(const accessories_t *a)
 
 bool acc_any(const accessories_t *a)
 {
-    return any_prop(a) || a->chg_on;
+    return any_prop(a) || a->chg_track > 0.f || a->chg_arc > 0.f;
 }
 
 void acc_set_charge(accessories_t *a, bool on, int pct, bool charging)
 {
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
-    if (on != a->chg_on || (on && (pct != a->chg_pct || charging != a->chg_charging))) {
-        a->chg_dirty = true;
-    }
     a->chg_on = on;
     a->chg_pct = pct;
     a->chg_charging = charging;
@@ -129,7 +130,47 @@ void acc_set_charge(accessories_t *a, bool on, int pct, bool charging)
 
 void acc_redraw(accessories_t *a)
 {
-    if (a->chg_on) a->chg_dirty = true;
+    if (a->chg_track > 0.f || a->chg_arc > 0.f) a->chg_dirty = true;
+}
+
+static bool gauge_visible(const accessories_t *a)
+{
+    return a->chg_track > 0.f || a->chg_arc > 0.f;
+}
+
+/* Move `cur` toward `tgt` with an ease-out, capped in speed. */
+static float approach(float cur, float tgt, float dt_ms, float tau_ms, float max_per_s)
+{
+    float d = tgt - cur;
+    float step = d * (dt_ms / (dt_ms + tau_ms));
+    const float cap = max_per_s * dt_ms / 1000.f;
+    if (step > cap) step = cap;
+    if (step < -cap) step = -cap;
+    if (fabsf(d) < 0.3f || fabsf(step) >= fabsf(d)) return tgt;
+    return cur + step;
+}
+
+/* Bounding box of the ring segment between two sweep angles (degrees from CHG_A0), padded. */
+static int add_arc_rect(acc_rect_t *out, int n, float d0, float d1)
+{
+    if (d0 > d1) { const float t = d0; d0 = d1; d1 = t; }
+    if (d1 - d0 < 0.01f) return n;
+    int x0 = W, y0 = H, x1 = 0, y1 = 0;
+    for (float d = d0; ; d += 3.f) {
+        if (d > d1) d = d1;
+        const float rad = ((float)CHG_A0 + d) * 0.01745329f;
+        const float sx = sinf(rad), cy = -cosf(rad);
+        for (int k = 0; k < 2; k++) {
+            const float r = k ? (float)(CHG_R_OUT - CHG_THICK) : (float)CHG_R_OUT;
+            const int px = CX + (int)lrintf(sx * r), py = CY + (int)lrintf(cy * r);
+            if (px < x0) x0 = px;
+            if (px > x1) x1 = px;
+            if (py < y0) y0 = py;
+            if (py > y1) y1 = py;
+        }
+        if (d >= d1) break;
+    }
+    return add(out, n, x0 - 4, y0 - 4, x1 + 5, y1 + 5);
 }
 
 static int add(acc_rect_t *out, int n, int x0, int y0, int x1, int y1)
@@ -192,9 +233,30 @@ int acc_update(accessories_t *a, uint32_t now_ms, acc_rect_t out[ACC_MAX_DIRTY])
 {
     int n = 0;
 
-    if (a->chg_dirty) {
-        a->chg_dirty = false;
-        n = add_ring_rects(out, n);
+    /* rim gauge: the track sweeps in first, then the arc; on unplug the arc retracts, then the track */
+    {
+        const float dt = a->chg_ms ? (float)(now_ms - a->chg_ms) : 16.f;
+        a->chg_ms = now_ms;
+        const float arc_tgt = CHG_SWEEP * (float)a->chg_pct / 100.f;
+        float track_to = a->chg_track, arc_to = a->chg_arc;
+        if (a->chg_on) {
+            track_to = CHG_SWEEP;
+            if (a->chg_track >= CHG_SWEEP * 0.4f) arc_to = arc_tgt;
+        } else {
+            arc_to = 0.f;
+            if (a->chg_arc <= CHG_SWEEP * 0.2f) track_to = 0.f;
+        }
+        a->chg_track = approach(a->chg_track, track_to, dt, CHG_TAU_MS, CHG_MAX_DPS);
+        a->chg_arc = approach(a->chg_arc, arc_to, dt, CHG_TAU_MS, CHG_MAX_DPS);
+        if (a->chg_dirty) {
+            a->chg_dirty = false;
+            n = add_ring_rects(out, n);
+        } else {
+            if (a->chg_track != a->chg_prev_track) n = add_arc_rect(out, n, a->chg_prev_track, a->chg_track);
+            if (a->chg_arc != a->chg_prev_arc) n = add_arc_rect(out, n, a->chg_prev_arc, a->chg_arc);
+        }
+        a->chg_prev_track = a->chg_track;
+        a->chg_prev_arc = a->chg_arc;
     }
     if (a->angle_deg != a->prev_angle_deg) {
         a->prev_angle_deg = a->angle_deg;
@@ -280,12 +342,9 @@ static bool inside_disc(const gfx_band_t *b, int r)
 void acc_paint(const accessories_t *a, const gfx_band_t *b, uint32_t now_ms)
 {
     colours();
-    if (a->chg_on && !inside_disc(b, CHG_R_OUT - CHG_THICK)) {
-        gfx_ring(b, CX, CY, CHG_R_OUT, CHG_THICK, CHG_A0, CHG_A1, col_track);
-        if (a->chg_pct > 0) {
-            gfx_ring(b, CX, CY, CHG_R_OUT, CHG_THICK, CHG_A0, CHG_A0 + ((CHG_A1 - CHG_A0) * a->chg_pct) / 100,
-                     a->chg_charging ? col_chg : col_full);
-        }
+    if (gauge_visible(a) && !inside_disc(b, CHG_R_OUT - CHG_THICK)) {
+        if (a->chg_track > 0.f) gfx_ring(b, CX, CY, CHG_R_OUT, CHG_THICK, CHG_A0, CHG_A0 + (int)lrintf(a->chg_track), col_track);
+        if (a->chg_arc > 0.f) gfx_ring(b, CX, CY, CHG_R_OUT, CHG_THICK, CHG_A0, CHG_A0 + (int)lrintf(a->chg_arc), col_chg);
     }
     const int ang = (int)lroundf(a->angle_deg);
     if (a->head_on || a->head_y != HEAD_FROM_Q16) {

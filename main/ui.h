@@ -30,6 +30,7 @@ typedef enum {
     UI_SCREEN_BRIGHTNESS,
     UI_SCREEN_BATTERY,
     UI_SCREEN_COLOR,
+    UI_SCREEN_SCANTEST,     /* panel scan timing test (Battery screen, tap) */
 } ui_screen_t;
 
 typedef enum {
@@ -106,3 +107,12 @@ void ui_paint(const ui_t *u, const gfx_band_t *band);
 ui_action_t ui_take_action(ui_t *u);
 
 const char *ui_screen_name(ui_screen_t s);
+
+/*
+ * Scan test: the render loop writes a full-width stripe (rows UI_SCAN_Y0..Y1)
+ * with a bar that moves every frame, starting this many ms after the TE edge.
+ * The delay steps 0..16 ms, 1.5 s each; the screen shows the current value.
+ */
+#define UI_SCAN_Y0   200
+#define UI_SCAN_Y1   232
+int ui_scantest_delay_ms(const ui_t *u, uint32_t now_ms);

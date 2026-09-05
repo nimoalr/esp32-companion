@@ -87,3 +87,11 @@ esp_err_t pmic_power_off(void)
     ESP_LOGW(TAG, "powering off");
     return wr(REG_COMMON_CONFIG, (uint8_t)(v | 0x01));
 }
+
+esp_err_t pmic_read_vbus(bool *vbus)
+{
+    uint8_t s1 = 0;
+    ESP_RETURN_ON_ERROR(rd(REG_STATUS1, &s1), TAG, "status1");
+    *vbus = (s1 >> 5) & 1;
+    return ESP_OK;
+}
