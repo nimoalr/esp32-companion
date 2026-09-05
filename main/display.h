@@ -26,9 +26,23 @@ uint16_t *display_acquire_band(void);
 /* Queue a band; returns the transfer's sequence number (see display_wait_done). */
 uint32_t display_push(int x, int y, int w, int h, const uint16_t *band);
 
+/* Queue a whole internal DMA-capable buffer (w x h pixels, up to DISPLAY_DIRECT_MAX bytes); returns its sequence number. */
+#define DISPLAY_DIRECT_MAX  (160 * 1024)
+uint32_t display_push_direct(int x, int y, int w, int h, const uint16_t *pixels);
+
 /* Block until the transfer with this sequence number (and all before it) has completed. */
 void display_wait_done(uint32_t seq);
+
+/*
+ * DMA copy (GDMA memcpy) from anywhere, PSRAM included, into internal memory.
+ * Returns false if the engine refused the job (alignment); the caller then
+ * copies with the CPU. display_copy_wait() blocks until the last copy landed.
+ */
+bool display_copy_start(void *dst, const void *src, size_t bytes);
+void display_copy_wait(void);
 uint32_t display_te_period_us(void);
+/* TE edges seen since boot (diagnostic). */
+uint32_t display_te_edges(void);
 /* Block until `us` after the most recent TE edge (returns at once if that is past or TE is not wired). */
 void display_wait_after_te(uint32_t us);
 

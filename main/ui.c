@@ -497,14 +497,14 @@ static void color_input(ui_t *u, ui_input_t in, uint32_t now_ms)
 
 int ui_scantest_delay_ms(const ui_t *u, uint32_t now_ms)
 {
-    return (int)(((now_ms - u->screen_since_ms) / 2000u) % 11u);
+    return (int)(((now_ms - u->screen_since_ms) / 2000u) % 16u);
 }
 
 static void paint_scantest(const ui_t *u, const gfx_band_t *b)
 {
-    chrome(b, "SCAN TEST", "hold=back");
-    text_center(b, &font_spleen_16x32, 96, u->text_a, C.white);
-    text_center(b, &font_spleen_8x16, 350, "delay after TE; where does the bar cut?", C.grey);
+    gfx_text(b, &font_spleen_16x32, 40, 200, u->text_a, C.white, GFX_TRANSPARENT);
+    gfx_text(b, &font_spleen_8x16, 40, 240, "after TE", C.grey, GFX_TRANSPARENT);
+    gfx_text(b, &font_spleen_8x16, 320, 200, "cut row?", C.grey, GFX_TRANSPARENT);
 }
 
 static void scantest_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *s)
@@ -513,7 +513,7 @@ static void scantest_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *s)
     snprintf(a, sizeof a, "%d ms", ui_scantest_delay_ms(u, now_ms));
     if (strcmp(a, u->text_a)) {
         strcpy(u->text_a, a);
-        dirty_add(u, 100, 96, W - 100, 128);
+        dirty_add(u, 32, 192, 176, 240);
     }
 }
 
