@@ -402,7 +402,7 @@ static void render_task(void *arg)
         behavior_out_t bo = { .override_anim = -1 };
         if (c.mode == MODE_EYES) {
             behavior_in_t bi = { .cal = &g_settings.cal, .audio = af, .mic_available = c.mic_ok,
-                                 .user_interacting = now_ms - touch_last_activity_ms() < 3000, .tap_count = c.tap_count };
+                                 .user_interacting = (int32_t)(now_ms - touch_last_activity_ms()) < 3000, .tap_count = c.tap_count };
             bi.have_accel = power_last_accel(bi.accel, &bi.accel_ms);
             behavior_update(&c.beh, &bi, now_ms, &bo);
             const anim_id_t want = bo.override_anim >= 0 ? (anim_id_t)bo.override_anim : c.user_anim;

@@ -27,7 +27,8 @@ static const char *TAG = "audio";
 
 static i2s_chan_handle_t s_rx;
 static esp_codec_dev_handle_t s_dev;
-static const audio_codec_ctrl_if_t *s_ctrl_if;
+static const audio_codec_ctrl_if_t *s_ctrl_if;   /* created once, kept across start/stop */
+static bool s_opened;                             /* esp_codec_dev_open succeeded */
 static const audio_codec_if_t *s_codec_if;
 static const audio_codec_data_if_t *s_data_if;
 static TaskHandle_t s_task;
@@ -226,8 +227,13 @@ esp_err_t audio_start(void)
 
     audio_codec_i2s_cfg_t i2s_cfg = { .port = CONFIG_EYES_AUDIO_I2S_NUM, .rx_handle = s_rx, .tx_handle = NULL };
     s_data_if = audio_codec_new_i2s_data(&i2s_cfg);
-    audio_codec_i2c_cfg_t i2c_cfg = { .port = BOARD_I2C_PORT, .addr = ES7210_CODEC_DEFAULT_ADDR, .bus_handle = i2c_bus_get() };
-    s_ctrl_if = audio_codec_new_i2c_ctrl(&i2c_cfg);
+    /* The I2C control interface registers the codec on the shared bus. Keep it
+     * for good: removing the device while the touch task has a transaction in
+     * flight fails ("Wrong I2C status") and leaks the handle. */
+    if (!s_ctrl_if) {
+        audio_codec_i2c_cfg_t i2c_cfg = { .port = BOARD_I2C_PORT, .addr = ES7210_CODEC_DEFAULT_ADDR, .bus_handle = i2c_bus_get() };
+        s_ctrl_if = audio_codec_new_i2c_ctrl(&i2c_cfg);
+    }
     es7210_codec_cfg_t es_cfg = { .ctrl_if = s_ctrl_if, .mic_selected = ES7210_SEL_MIC1 | ES7210_SEL_MIC2 };
     s_codec_if = es7210_codec_new(&es_cfg);
     esp_codec_dev_cfg_t dev_cfg = { .dev_type = ESP_CODEC_DEV_TYPE_IN, .codec_if = s_codec_if, .data_if = s_data_if };
@@ -244,6 +250,7 @@ esp_err_t audio_start(void)
         audio_stop();
         return ESP_FAIL;
     }
+    s_opened = true;
 
     portENTER_CRITICAL(&s_lock);
     memset(&s_feat, 0, sizeof(s_feat));
@@ -268,16 +275,21 @@ void audio_stop(void)
     s_run = false;
     /* let the task fall out of its read loop */
     for (int i = 0; i < 50 && s_task; i++) vTaskDelay(pdMS_TO_TICKS(10));
+    bool rx_enabled = s_rx != NULL;
     if (s_dev) {
-        esp_codec_dev_close(s_dev);
+        /* closing an opened codec device disables the I2S channel through the data interface */
+        if (s_opened) {
+            esp_codec_dev_close(s_dev);
+            rx_enabled = false;
+        }
         esp_codec_dev_delete(s_dev);
         s_dev = NULL;
+        s_opened = false;
     }
     if (s_codec_if) { audio_codec_delete_codec_if(s_codec_if); s_codec_if = NULL; }
-    if (s_ctrl_if) { audio_codec_delete_ctrl_if(s_ctrl_if); s_ctrl_if = NULL; }
     if (s_data_if) { audio_codec_delete_data_if(s_data_if); s_data_if = NULL; }
     if (s_rx) {
-        i2s_channel_disable(s_rx);
+        if (rx_enabled) i2s_channel_disable(s_rx);
         i2s_del_channel(s_rx);
         s_rx = NULL;
     }

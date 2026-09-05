@@ -183,10 +183,13 @@ power_state_t power_update(uint32_t now_ms, uint32_t touch_ms)
     }
 
 #if CONFIG_EYES_POWER_ENABLE
-    const uint32_t idle_ms = now_ms - s_last_activity_ms;
+    /* Activity is stamped by other tasks (touch, audio) and can be a few ms
+     * ahead of this loop's now_ms; a plain unsigned difference would wrap to
+     * "idle for 49 days" and drop straight into DROWSY under the user's finger. */
+    const int32_t idle_ms = (int32_t)(now_ms - s_last_activity_ms);
     switch (s_state) {
     case POWER_ACTIVE:
-        if (idle_ms >= CONFIG_EYES_ACTIVE_TIMEOUT_S * 1000u) {
+        if (idle_ms >= (int32_t)(CONFIG_EYES_ACTIVE_TIMEOUT_S * 1000u)) {
             enter(POWER_DROWSY, now_ms);
         }
         break;
