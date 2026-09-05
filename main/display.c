@@ -14,9 +14,14 @@
 #include "esp_timer.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_async_memcpy.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "display";
+/* GDMA memcpy for the PSRAM -> bounce copies. Off: with it installed the TE
+ * interrupt stops arriving (TE edges 0/s, every frame misses vsync); not yet
+ * understood, and the CPU copy is adequate at 80 MHz. */
+#define DISPLAY_ASYNC_MEMCPY 0
 
 /*
  * Panel init sequence, verbatim from the Waveshare BSP
@@ -65,6 +70,8 @@ static esp_timer_handle_t s_wake_timer;
 
 static volatile uint32_t s_bytes_pushed;
 static SemaphoreHandle_t s_panel_mutex;   /* the esp_lcd SPI io is not thread-safe: pushes and commands take turns */
+static async_memcpy_handle_t s_mcp;       /* GDMA memcpy for PSRAM -> bounce buffer copies */
+static SemaphoreHandle_t s_copy_sem;
 
 static bool IRAM_ATTR on_color_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *edata, void *ctx)
 {
@@ -108,6 +115,16 @@ esp_err_t display_init(void)
         ESP_RETURN_ON_FALSE(s_band[i], ESP_ERR_NO_MEM, TAG, "no internal DMA memory for band %d", i);
     }
     s_panel_mutex = xSemaphoreCreateMutex();
+    s_copy_sem = xSemaphoreCreateBinary();
+    {
+        async_memcpy_config_t mcfg = ASYNC_MEMCPY_DEFAULT_CONFIG();
+        mcfg.backlog = 4;
+        mcfg.dma_burst_size = 64;
+        if (DISPLAY_ASYNC_MEMCPY == 0 || esp_async_memcpy_install_gdma_ahb(&mcfg, &s_mcp) != ESP_OK) {
+            ESP_LOGW(TAG, "no async memcpy: PSRAM frames are copied by the CPU");
+            s_mcp = NULL;
+        }
+    }
     s_done_sem = xSemaphoreCreateCounting(64, 0);
     s_vsync = xSemaphoreCreateBinary();
     s_wake_sem = xSemaphoreCreateBinary();
@@ -116,7 +133,7 @@ esp_err_t display_init(void)
     ESP_RETURN_ON_ERROR(esp_timer_create(&wargs, &s_wake_timer), TAG, "wake timer");
 
     const spi_bus_config_t bus = CO5300_PANEL_BUS_QSPI_CONFIG(BOARD_LCD_PCLK, BOARD_LCD_DATA0, BOARD_LCD_DATA1,
-                                                              BOARD_LCD_DATA2, BOARD_LCD_DATA3, DISPLAY_BAND_BYTES);
+                                                              BOARD_LCD_DATA2, BOARD_LCD_DATA3, DISPLAY_DIRECT_MAX);
     ESP_RETURN_ON_ERROR(spi_bus_initialize(BOARD_LCD_SPI_HOST, &bus, SPI_DMA_CH_AUTO), TAG, "spi bus");
 
     esp_lcd_panel_io_spi_config_t io_cfg = CO5300_PANEL_IO_QSPI_CONFIG(BOARD_LCD_CS, on_color_done, NULL);
@@ -155,11 +172,16 @@ esp_err_t display_init(void)
     ESP_RETURN_ON_ERROR(gpio_isr_handler_add(BOARD_LCD_TE, te_isr, NULL), TAG, "te isr");
 
     /* Decide the pacing source: wait up to 500 ms for TE to start pulsing. */
-    int waited_ms = 0;
+    int waited_ms = 0, toggles = 0, last = gpio_get_level(BOARD_LCD_TE);
     while (s_te_edges < 2 && waited_ms < 500) {
-        vTaskDelay(pdMS_TO_TICKS(20));
+        for (int i = 0; i < 200; i++) {            /* 20 ms of polling the pin as a cross-check on the interrupt */
+            const int v = gpio_get_level(BOARD_LCD_TE);
+            if (v != last) { toggles++; last = v; }
+            esp_rom_delay_us(100);
+        }
         waited_ms += 20;
     }
+    ESP_LOGI(TAG, "TE pin: %d level changes seen by polling, %" PRIu32 " interrupt edges, level now %d", toggles, s_te_edges, gpio_get_level(BOARD_LCD_TE));
     s_te_active = s_te_edges >= 2;
     if (s_te_active) {
         ESP_LOGI(TAG, "TE detected on GPIO%d (%" PRIu32 " edges after %d ms): frames locked to TE", BOARD_LCD_TE, s_te_edges, waited_ms);
@@ -223,6 +245,37 @@ void display_wait_done(uint32_t seq)
     wait_done_reaches(seq);
 }
 
+uint32_t display_push_direct(int x, int y, int w, int h, const uint16_t *pixels)
+{
+    assert((size_t)w * (size_t)h * 2u <= DISPLAY_DIRECT_MAX);
+    xSemaphoreTake(s_panel_mutex, portMAX_DELAY);
+    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(s_panel, x, y, x + w, y + h, pixels));
+    s_issued++;
+    s_bytes_pushed += (uint32_t)w * (uint32_t)h * 2u;
+    const uint32_t seq = s_issued;
+    xSemaphoreGive(s_panel_mutex);
+    return seq;
+}
+
+static bool IRAM_ATTR on_copy_done(async_memcpy_handle_t mcp, async_memcpy_event_t *event, void *arg)
+{
+    BaseType_t woken = pdFALSE;
+    xSemaphoreGiveFromISR(s_copy_sem, &woken);
+    return woken == pdTRUE;
+}
+
+bool display_copy_start(void *dst, const void *src, size_t bytes)
+{
+    if (!s_mcp) return false;
+    xSemaphoreTake(s_copy_sem, 0);
+    return esp_async_memcpy(s_mcp, dst, (void *)src, bytes, on_copy_done, NULL) == ESP_OK;
+}
+
+void display_copy_wait(void)
+{
+    xSemaphoreTake(s_copy_sem, portMAX_DELAY);
+}
+
 void display_wait_after_te(uint32_t us)
 {
     if (!s_te_active) return;
@@ -236,6 +289,11 @@ void display_wait_after_te(uint32_t us)
     xSemaphoreTake(s_wake_sem, 0);
     esp_timer_start_once(s_wake_timer, (uint64_t)wait);
     xSemaphoreTake(s_wake_sem, pdMS_TO_TICKS((uint32_t)(wait / 1000) + 2));
+}
+
+uint32_t display_te_edges(void)
+{
+    return s_te_edges;
 }
 
 uint32_t display_te_period_us(void)

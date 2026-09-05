@@ -114,6 +114,8 @@ const char *ui_screen_name(ui_screen_t s);
  * bar that jumps every frame, starting this many ms after the TE edge. The
  * delay steps 0..10 ms, 2 s each; the screen shows the current value.
  */
-#define UI_SCAN_Y0   128
-#define UI_SCAN_Y1   336
+#define UI_SCAN_X0   176
+#define UI_SCAN_X1   304
+#define UI_SCAN_Y0   0
+#define UI_SCAN_Y1   466
 int ui_scantest_delay_ms(const ui_t *u, uint32_t now_ms);

@@ -29,6 +29,7 @@
 #include "i2c_bus.h"
 #include "gfx.h"
 #include "ui.h"
+#include "gfx.h"
 #include "audio.h"
 #include "accessories.h"
 #include "behavior.h"
@@ -202,11 +203,17 @@ static void paint_piece(uint16_t *band, int x0, int y, int w, int rows, const re
     if (c->mode == MODE_UI) {
         memset(band, 0, (size_t)w * rows * 2);
         const gfx_band_t gb = { .dst = band, .x0 = x0, .y0 = y, .w = w, .rows = rows };
-        if (c->ui.screen == UI_SCREEN_SCANTEST && y >= UI_SCAN_Y0 && y < UI_SCAN_Y1) {
-            /* scan test block: a fat bar jumping 24 px per frame, faint rules every 50 rows */
-            const int x = (int)((s_frame_no * 24u) % (DISPLAY_W - 60));
-            gfx_fill(&gb, x, UI_SCAN_Y0, 60, UI_SCAN_Y1 - UI_SCAN_Y0, gfx_rgb(255, 255, 255));
-            for (int gy = UI_SCAN_Y0; gy < UI_SCAN_Y1; gy += 50) gfx_fill(&gb, 0, gy, DISPLAY_W, 1, gfx_rgb(50, 50, 50));
+        if (c->ui.screen == UI_SCREEN_SCANTEST && x0 == UI_SCAN_X0) {
+            /* scan probe: a column whose lit half flips left/right every frame; a cut shows where the scan was */
+            const int half = (UI_SCAN_X1 - UI_SCAN_X0) / 2 - 8;
+            const int bx = (s_frame_no & 1) ? UI_SCAN_X0 + half + 16 : UI_SCAN_X0;
+            gfx_fill(&gb, bx, 0, half, DISPLAY_H, gfx_rgb(255, 255, 255));
+            for (int gy = 50; gy < DISPLAY_H; gy += 50) {
+                gfx_fill(&gb, UI_SCAN_X0, gy, UI_SCAN_X1 - UI_SCAN_X0, 1, gfx_rgb(255, 60, 60));
+                char lbl[8];
+                snprintf(lbl, sizeof lbl, "%d", gy);
+                gfx_text(&gb, &font_spleen_8x16, UI_SCAN_X0 + half + 2, gy - 8, lbl, gfx_rgb(255, 60, 60), GFX_TRANSPARENT);
+            }
             return;
         }
         ui_paint(&c->ui, &gb);
@@ -229,7 +236,10 @@ static void paint_piece(uint16_t *band, int x0, int y, int w, int rows, const re
  */
 typedef struct {
     uint16_t *base;
+    size_t bytes;
+    bool internal;          /* DMA straight from here; otherwise copy through the bounce buffers */
     uint32_t seq;           /* sequence number of the last push from this buffer */
+    SemaphoreHandle_t free; /* given by the push task once it has issued everything from here */
 } framebuf_t;
 
 typedef struct {
@@ -237,11 +247,12 @@ typedef struct {
     const uint16_t *pixels;
 } frame_piece_t;
 
-static framebuf_t s_fb[2];
-static int s_fb_cur;
+#define FB_SLOTS   3        /* two in PSRAM (pipelined), one internal (frames that fit skip the copy) */
+#define FB_INTERNAL 2
+static framebuf_t s_fb[FB_SLOTS];
+static int s_fb_psram_cur;
 
 #define MAX_PIECES      (UI_MAX_DIRTY + ACC_MAX_DIRTY + 3)
-#define SCAN_MARGIN_ROWS 16       /* the scan must be this far past a rect's top row before it is written */
 
 typedef struct {
     frame_piece_t pieces[MAX_PIECES];
@@ -251,38 +262,64 @@ typedef struct {
 } push_job_t;
 
 static QueueHandle_t s_push_q;            /* one frame ahead at most */
-static SemaphoreHandle_t s_fb_free;       /* one token per frame buffer not being pushed from */
 static volatile uint32_t s_push_us_sum, s_push_frames, s_vsync_miss;
 
 static void fb_init(void)
 {
     for (int i = 0; i < 2; i++) {
         s_fb[i].base = heap_caps_aligned_alloc(64, FB_BYTES, MALLOC_CAP_SPIRAM);
+        s_fb[i].bytes = FB_BYTES;
         if (!s_fb[i].base) {
             ESP_LOGE(TAG, "no PSRAM for frame buffer %d (%u B)", i, (unsigned)FB_BYTES);
             abort();
         }
     }
+    /* internal slot: as much as the heap can spare while leaving room for audio and the rest */
+    size_t want = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    want = want > 56 * 1024 ? want - 56 * 1024 : 0;
+    if (want > DISPLAY_DIRECT_MAX) want = DISPLAY_DIRECT_MAX;
+    want &= ~(size_t)63;
+    framebuf_t *ib = &s_fb[FB_INTERNAL];
+    ib->base = want >= 32 * 1024 ? heap_caps_aligned_alloc(64, want, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) : NULL;
+    ib->bytes = ib->base ? want : 0;
+    ib->internal = true;
+    for (int i = 0; i < FB_SLOTS; i++) {
+        s_fb[i].free = xSemaphoreCreateBinary();
+        xSemaphoreGive(s_fb[i].free);
+    }
+    ESP_LOGI(TAG, "frame buffers: 2 x %u KB PSRAM, %u KB internal (frames up to that size go straight to DMA)",
+             (unsigned)(FB_BYTES / 1024), (unsigned)(ib->bytes / 1024));
 }
 
 /* Raster every dirty rect into the next frame buffer; fills `job` (pieces and buffer index). */
 static void render_frame(const rect_t *dirty, int ndirty, const render_ctx_t *c, uint32_t now_ms, push_job_t *job, uint32_t *raster_us)
 {
-    xSemaphoreTake(s_fb_free, portMAX_DELAY);   /* the push task has let go of this buffer... */
-    framebuf_t *fb = &s_fb[s_fb_cur];
+    /* Where does this frame go? Internal if it fits (no copy on the way out), else the next PSRAM buffer. */
+    size_t need = 0;
+    for (int i = 0; i < ndirty; i++) {
+        need += ((size_t)(dirty[i].x1 - dirty[i].x0) * (size_t)(dirty[i].y1 - dirty[i].y0) * 2u + 63) & ~(size_t)63;
+    }
+    int slot;
+    if (need <= s_fb[FB_INTERNAL].bytes) {
+        slot = FB_INTERNAL;
+    } else {
+        slot = s_fb_psram_cur;
+        s_fb_psram_cur ^= 1;
+    }
+    framebuf_t *fb = &s_fb[slot];
+    xSemaphoreTake(fb->free, portMAX_DELAY);    /* the push task has let go of this buffer... */
     display_wait_done(fb->seq);                 /* ...and its last transfer is off the bus */
     const int64_t t0 = esp_timer_get_time();
     frame_piece_t *pieces = job->pieces;
-    job->fb = s_fb_cur;
+    job->fb = slot;
     job->delay_us = -1;
-    s_fb_cur ^= 1;
     size_t off = 0;
     int n = 0;
     for (int i = 0; i < ndirty; i++) {
         const rect_t *r = &dirty[i];
         const int w = r->x1 - r->x0, h = r->y1 - r->y0;
         const size_t bytes = (size_t)w * (size_t)h * 2u;
-        if (off + bytes > FB_BYTES) {
+        if (off + bytes > fb->bytes) {
             ESP_LOGW(TAG, "frame buffer full: dropping rect %d", i);
             continue;
         }
@@ -299,18 +336,45 @@ static void render_frame(const rect_t *dirty, int ndirty, const render_ctx_t *c,
 }
 
 /*
- * Push task. The panel scans top to bottom from each TE edge (measured with
- * the scan test: a write tears exactly when the scan crosses it). Our write,
- * band by band from a bounce buffer, is slower than the scan, so it is started
- * only once the scan is past the first dirty row and then trails it for the
- * rest of the frame. DMA straight from PSRAM underruns the QSPI clock, hence
- * the copy through internal band buffers; the copy of one band overlaps the
- * transfer of the previous one. Running here rather than in the render task
- * lets the next frame's raster overlap this frame's transfer.
+ * Push task. Frames go out right after the TE edge, as fast as the bus allows
+ * (80 MHz QSPI: 23 us per full row, faster than the panel's own scan, so a
+ * write that starts at the edge is never overtaken), and the push runs here so
+ * the next frame's raster overlaps it. Frames in the internal buffer are DMA'd
+ * directly, one transfer per rect. Frames in PSRAM cannot feed the SPI DMA
+ * without underruns, so they go through the bounce buffers, each band copied
+ * by the GDMA memcpy engine while the previous band is on the bus.
  */
-static inline int64_t scan_us_for_row(int row)
+static void push_psram_rect(framebuf_t *fb, const frame_piece_t *p)
 {
-    return ((int64_t)row * (int64_t)display_te_period_us()) / DISPLAY_H;
+    const rect_t *r = &p->r;
+    const int w = r->x1 - r->x0;
+    const int nb = (r->y1 - r->y0 + DISPLAY_BAND_ROWS - 1) / DISPLAY_BAND_ROWS;
+    uint16_t *band = NULL, *next = NULL;
+    bool dma = false;
+    for (int k = 0; k < nb; k++) {
+        const int y = r->y0 + k * DISPLAY_BAND_ROWS;
+        const int rows = (r->y1 - y) < DISPLAY_BAND_ROWS ? (r->y1 - y) : DISPLAY_BAND_ROWS;
+        const uint16_t *src = p->pixels + (size_t)(y - r->y0) * w;
+        const size_t bytes = (size_t)w * rows * 2u;
+        if (k == 0) {
+            band = display_acquire_band();
+            dma = display_copy_start(band, src, bytes);
+            if (!dma) memcpy(band, src, bytes);
+        }
+        if (dma) display_copy_wait();
+        /* start the next band's copy before this one goes on the bus */
+        if (k + 1 < nb) {
+            const int y2 = y + DISPLAY_BAND_ROWS;
+            const int rows2 = (r->y1 - y2) < DISPLAY_BAND_ROWS ? (r->y1 - y2) : DISPLAY_BAND_ROWS;
+            const uint16_t *src2 = p->pixels + (size_t)(y2 - r->y0) * w;
+            const size_t bytes2 = (size_t)w * rows2 * 2u;
+            next = display_acquire_band();
+            dma = display_copy_start(next, src2, bytes2);
+            if (!dma) memcpy(next, src2, bytes2);
+        }
+        fb->seq = display_push(r->x0, y, w, rows, band);
+        band = next;
+    }
 }
 
 static void push_task(void *arg)
@@ -319,37 +383,29 @@ static void push_task(void *arg)
     for (;;) {
         xQueueReceive(s_push_q, &job, portMAX_DELAY);
         if (!display_wait_vsync(VSYNC_TIMEOUT_MS)) s_vsync_miss++;
+        if (job.delay_us > 0) display_wait_after_te((uint32_t)job.delay_us);
         const int64_t t0 = esp_timer_get_time();
         framebuf_t *fb = &s_fb[job.fb];
         for (int i = 0; i < job.n; i++) {
             const rect_t *r = &job.pieces[i].r;
-            const int w = r->x1 - r->x0;
-            if (job.delay_us >= 0) {
-                display_wait_after_te((uint32_t)job.delay_us);
+            if (fb->internal) {
+                fb->seq = display_push_direct(r->x0, r->y0, r->x1 - r->x0, r->y1 - r->y0, job.pieces[i].pixels);
             } else {
-                display_wait_after_te((uint32_t)scan_us_for_row(r->y0 + SCAN_MARGIN_ROWS));
-            }
-            for (int y = r->y0; y < r->y1; y += DISPLAY_BAND_ROWS) {
-                const int rows = (r->y1 - y) < DISPLAY_BAND_ROWS ? (r->y1 - y) : DISPLAY_BAND_ROWS;
-                uint16_t *band = display_acquire_band();
-                memcpy(band, job.pieces[i].pixels + (size_t)(y - r->y0) * w, (size_t)w * rows * 2u);
-                fb->seq = display_push(r->x0, y, w, rows, band);
+                push_psram_rect(fb, &job.pieces[i]);
             }
         }
         s_push_us_sum += (uint32_t)(esp_timer_get_time() - t0);
         s_push_frames++;
-        xSemaphoreGive(s_fb_free);
+        xSemaphoreGive(fb->free);
     }
 }
 
 /* Wait until every queued frame has been pushed and the bus is idle (before touching the panel directly). */
 static void push_drain(void)
 {
-    xSemaphoreTake(s_fb_free, portMAX_DELAY);
-    xSemaphoreTake(s_fb_free, portMAX_DELAY);
+    for (int i = 0; i < FB_SLOTS; i++) xSemaphoreTake(s_fb[i].free, portMAX_DELAY);
     display_wait_idle();
-    xSemaphoreGive(s_fb_free);
-    xSemaphoreGive(s_fb_free);
+    for (int i = 0; i < FB_SLOTS; i++) xSemaphoreGive(s_fb[i].free);
 }
 
 
@@ -511,8 +567,7 @@ static void render_task(void *arg)
     s_render = xTaskGetCurrentTaskHandle();
     fb_init();
     s_push_q = xQueueCreate(1, sizeof(push_job_t));
-    s_fb_free = xSemaphoreCreateCounting(2, 2);
-    assert(s_push_q && s_fb_free);
+    assert(s_push_q);
     const BaseType_t pok = xTaskCreatePinnedToCore(push_task, "push", 4096, NULL, configMAX_PRIORITIES - 2, NULL, 1);
     assert(pok == pdPASS);
     if (xTaskCreatePinnedToCore(raster_worker, "raster0", 8192, NULL, 8, &s_worker, 0) != pdPASS) {
@@ -542,7 +597,7 @@ static void render_task(void *arg)
 
     /* stats */
     int64_t stats_t0 = esp_timer_get_time();
-    uint32_t frames = 0;
+    uint32_t frames = 0, te_edges_prev = 0;
     uint64_t raster_us_sum = 0;
     uint32_t raster_us_max = 0;
     uint32_t rects_sum = 0;
@@ -691,7 +746,7 @@ static void render_task(void *arg)
         }
 
         if (c.mode == MODE_UI && c.ui.screen == UI_SCREEN_SCANTEST) {
-            dirty[ndirty++] = (rect_t){ 0, UI_SCAN_Y0, DISPLAY_W, UI_SCAN_Y1 };   /* the test block, every frame */
+            dirty[ndirty++] = (rect_t){ UI_SCAN_X0, UI_SCAN_Y0, UI_SCAN_X1, UI_SCAN_Y1 };   /* the probe column, every frame */
         }
 
         /* Raster the whole frame (into PSRAM) while the push task streams the previous one. */
@@ -727,18 +782,19 @@ static void render_task(void *arg)
             if (af.active) {
                 snprintf(audio_s, sizeof audio_s, " | audio %" PRIu32 " us/frame, %d bpm", af.cpu_us, (int)af.bpm);
             }
-            ESP_LOGI(TAG, "%s %s [%s, energy %.2f]: %" PRIu32 " fps | raster %" PRIu32 " us avg, %" PRIu32 " us max | push %" PRIu32 " us | %" PRIu32 " B/frame, %" PRIu32 " rect(s) | pace %s%s | bri %d%% | batt %u mV %d%%%s%s%s | stack %u B free",
+            ESP_LOGI(TAG, "%s %s [%s, energy %.2f]: %" PRIu32 " fps | raster %" PRIu32 " us avg, %" PRIu32 " us max | push %" PRIu32 " us | %" PRIu32 " B/frame, %" PRIu32 " rect(s) | pace %s%s (%" PRIu32 " TE/s) | bri %d%% | batt %u mV %d%%%s%s%s | stack %u B free",
                      power_state_name(state), c.mode == MODE_UI ? ui_screen_name(c.ui.screen) : anim_name(c.sm.id),
                      behavior_state_name(c.beh.state), behavior_energy(&c.beh),
                      (frames * 1000u + elapsed_ms / 2) / elapsed_ms,
                      (uint32_t)(raster_us_sum / frames), raster_us_max, s_push_frames ? s_push_us_sum / s_push_frames : 0,
                      bytes / frames, (rects_sum + frames / 2) / frames,
                      display_te_active() ? "TE" : "timer",
-                     s_vsync_miss ? " (missed vsync)" : "",
+                     s_vsync_miss ? " (missed vsync)" : "", display_te_edges() - te_edges_prev,
                      s_bri_cur,
                      b.mv, b.percent, b.charging ? " chg" : "", b.vbus ? " usb" : "", audio_s,
                      (unsigned)(uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t)));
             stats_t0 = now_us;
+            te_edges_prev = display_te_edges();
             frames = 0;
             raster_us_sum = 0;
             s_push_us_sum = 0;
