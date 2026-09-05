@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define IMU_CAL_SCALE_F  (1.f / (float)(1LL << IMU_CAL_SCALE_SHIFT))
+
 void imu_cal_capture_begin(imu_cal_capture_t *c, int target_samples, int max_dev_mg)
 {
     memset(c, 0, sizeof(*c));
@@ -122,7 +124,7 @@ bool imu_cal_compute(const int32_t mean[IMU_CAL_POSES][3], imu_cal_t *out, char 
     for (int p = 0; p < IMU_CAL_POSES; p++) {
         const int i = dom[p];
         const int32_t one_g = labs(mean[p][i] - out->bias[i]);
-        out->scale_q16[i] = one_g ? (int32_t)((1LL << 16) / one_g) : (int32_t)((1LL << 16) / IMU_CAL_ONE_G_RAW);
+        out->scale_q[i] = (int32_t)((1LL << IMU_CAL_SCALE_SHIFT) / (one_g ? one_g : IMU_CAL_ONE_G_RAW));
     }
     /*
      * Screen frame from the calibrated pose vectors. At rest the accelerometer
@@ -132,18 +134,24 @@ bool imu_cal_compute(const int32_t mean[IMU_CAL_POSES][3], imu_cal_t *out, char 
      */
     float e_out[3], e_down[3], e_right_meas[3];
     for (int i = 0; i < 3; i++) {
-        e_out[i] = (float)(mean[0][i] - out->bias[i]) * (float)out->scale_q16[i] / 65536.f;
-        e_down[i] = -(float)(mean[1][i] - out->bias[i]) * (float)out->scale_q16[i] / 65536.f;
-        e_right_meas[i] = (float)(mean[2][i] - out->bias[i]) * (float)out->scale_q16[i] / 65536.f;
+        const float k = (float)out->scale_q[i] * IMU_CAL_SCALE_F;
+        e_out[i] = (float)(mean[0][i] - out->bias[i]) * k;
+        e_down[i] = -(float)(mean[1][i] - out->bias[i]) * k;
+        e_right_meas[i] = (float)(mean[2][i] - out->bias[i]) * k;
     }
     normalize(e_out);
     /* Gram-Schmidt: make "down" orthogonal to "out". */
     const float d = dot(e_down, e_out);
     for (int i = 0; i < 3; i++) e_down[i] -= d * e_out[i];
     normalize(e_down);
-    /* right = down x out keeps (right, down, out) right-handed. */
+    /*
+     * (right, down, out) is a left-handed triad in physical space (right x down
+     * points INTO the screen), while the sensor frame is right-handed, so in
+     * sensor coordinates right = out x down. (down x out would give "left" and
+     * reject every correctly held pose 3.)
+     */
     float e_right[3];
-    cross(e_down, e_out, e_right);
+    cross(e_out, e_down, e_right);
     normalize(e_right_meas);
     if (dot(e_right, e_right_meas) < 0.5f) {   /* more than 60 degrees off */
         snprintf(err, (size_t)errlen, "pose 3 does not match: was the LEFT edge down?");
@@ -163,7 +171,7 @@ void imu_cal_default(imu_cal_t *out)
 {
     memset(out, 0, sizeof(*out));
     for (int i = 0; i < 3; i++) {
-        out->scale_q16[i] = (int32_t)((1LL << 16) / IMU_CAL_ONE_G_RAW);
+        out->scale_q[i] = (int32_t)((1LL << IMU_CAL_SCALE_SHIFT) / IMU_CAL_ONE_G_RAW);
         out->rot[i][i] = 1.f;
     }
 }
@@ -171,7 +179,7 @@ void imu_cal_default(imu_cal_t *out)
 void imu_cal_apply(const imu_cal_t *c, const int16_t raw[3], float g[3])
 {
     for (int i = 0; i < 3; i++) {
-        g[i] = (float)(raw[i] - c->bias[i]) * (float)c->scale_q16[i] / 65536.f;
+        g[i] = (float)(raw[i] - c->bias[i]) * (float)c->scale_q[i] * IMU_CAL_SCALE_F;
     }
 }
 

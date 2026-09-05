@@ -5,6 +5,10 @@
 #include <string.h>
 #include <math.h>
 
+#include "esp_log.h"
+
+static const char *TAG = "ui";
+
 /* ---- geometry ------------------------------------------------------------ */
 
 #define W        466
@@ -249,9 +253,9 @@ static void paint_calibrate(const ui_t *u, const gfx_band_t *b)
             snprintf(line, sizeof line, "bias %+d %+d %+d", u->cal_result.bias[0], u->cal_result.bias[1], u->cal_result.bias[2]);
             text_center(b, &font_spleen_12x24, CAL_BODY_Y + 56, line, C.white);
             snprintf(line, sizeof line, "scale %.3f %.3f %.3f",
-                     u->cal_result.scale_q16[0] * IMU_CAL_ONE_G_RAW / 65536.f,
-                     u->cal_result.scale_q16[1] * IMU_CAL_ONE_G_RAW / 65536.f,
-                     u->cal_result.scale_q16[2] * IMU_CAL_ONE_G_RAW / 65536.f);
+                     (float)u->cal_result.scale_q[0] * IMU_CAL_ONE_G_RAW / (float)(1LL << IMU_CAL_SCALE_SHIFT),
+                     (float)u->cal_result.scale_q[1] * IMU_CAL_ONE_G_RAW / (float)(1LL << IMU_CAL_SCALE_SHIFT),
+                     (float)u->cal_result.scale_q[2] * IMU_CAL_ONE_G_RAW / (float)(1LL << IMU_CAL_SCALE_SHIFT));
             text_center(b, &font_spleen_8x16, CAL_BODY_Y + 92, line, C.grey);
             text_center(b, &font_spleen_8x16, CAL_BODY_Y + 112, "raw units, 1 g = 4096", C.grey);
         } else {
@@ -341,6 +345,11 @@ static void calibrate_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *s)
                     char err[48];
                     u->cal_ok = imu_cal_compute(u->cal_mean, &u->cal_result, err, sizeof err);
                     if (!u->cal_ok) snprintf(u->cal_msg, sizeof u->cal_msg, "%s", err);
+                    ESP_LOGI(TAG, "calibration poses: flat %ld %ld %ld | upright %ld %ld %ld | left edge %ld %ld %ld -> %s%s",
+                             (long)u->cal_mean[0][0], (long)u->cal_mean[0][1], (long)u->cal_mean[0][2],
+                             (long)u->cal_mean[1][0], (long)u->cal_mean[1][1], (long)u->cal_mean[1][2],
+                             (long)u->cal_mean[2][0], (long)u->cal_mean[2][1], (long)u->cal_mean[2][2],
+                             u->cal_ok ? "ok" : "FAILED: ", u->cal_ok ? "" : err);
                 }
                 dirty_all(u);
             }

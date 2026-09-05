@@ -67,7 +67,7 @@ esp_err_t settings_init(void)
     if (nvs_get_u8(h, "hotspot", &v) == ESP_OK) g_settings.hotspot = v != 0;
     imu_cal_t cal;
     size_t len = sizeof(cal);
-    if (nvs_get_blob(h, "cal", &cal, &len) == ESP_OK && len == sizeof(cal) && cal.valid) {
+    if (nvs_get_blob(h, "cal2", &cal, &len) == ESP_OK && len == sizeof(cal) && cal.valid) {
         g_settings.cal = cal;
     }
     nvs_close(h);
@@ -85,7 +85,7 @@ esp_err_t settings_save(void)
     if (err == ESP_OK) err = nvs_set_u8(h, "bri_aod", g_settings.brightness_aod);
     if (err == ESP_OK) err = nvs_set_u8(h, "eye_col", g_settings.eye_color);
     if (err == ESP_OK) err = nvs_set_u8(h, "hotspot", g_settings.hotspot ? 1 : 0);
-    if (err == ESP_OK) err = nvs_set_blob(h, "cal", &g_settings.cal, sizeof(g_settings.cal));
+    if (err == ESP_OK) err = nvs_set_blob(h, "cal2", &g_settings.cal, sizeof(g_settings.cal));
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
     ESP_RETURN_ON_ERROR(err, TAG, "save");
