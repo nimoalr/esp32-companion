@@ -47,6 +47,7 @@ typedef struct {
 } rect_t;
 
 static QueueHandle_t s_tap_q;
+static void push_drain(void);
 
 static inline uint32_t ms_now(void)
 {
@@ -171,6 +172,7 @@ typedef struct {
 
 static raster_job_t s_wjob;
 static TaskHandle_t s_worker, s_render;
+static uint32_t s_frame_no;
 
 static void raster_worker(void *arg)
 {
@@ -200,6 +202,13 @@ static void paint_piece(uint16_t *band, int x0, int y, int w, int rows, const re
     if (c->mode == MODE_UI) {
         memset(band, 0, (size_t)w * rows * 2);
         const gfx_band_t gb = { .dst = band, .x0 = x0, .y0 = y, .w = w, .rows = rows };
+        if (c->ui.screen == UI_SCREEN_SCANTEST && y >= UI_SCAN_Y0 && y < UI_SCAN_Y1) {
+            /* scan test block: a fat bar jumping 24 px per frame, faint rules every 50 rows */
+            const int x = (int)((s_frame_no * 24u) % (DISPLAY_W - 60));
+            gfx_fill(&gb, x, UI_SCAN_Y0, 60, UI_SCAN_Y1 - UI_SCAN_Y0, gfx_rgb(255, 255, 255));
+            for (int gy = UI_SCAN_Y0; gy < UI_SCAN_Y1; gy += 50) gfx_fill(&gb, 0, gy, DISPLAY_W, 1, gfx_rgb(50, 50, 50));
+            return;
+        }
         ui_paint(&c->ui, &gb);
     } else {
         raster_split(band, x0, y, w, rows, c->shapes);
@@ -210,27 +219,6 @@ static void paint_piece(uint16_t *band, int x0, int y, int w, int rows, const re
     }
 }
 
-/*
- * Scan test: a bar that jumps 12 px per frame inside a full-width stripe,
- * written `delay_ms` after the TE edge with no scan check at all. When the
- * panel's scan crosses the stripe during the write, the bar shears.
- */
-static void scan_test_stripe(int delay_ms, uint32_t frame)
-{
-    display_wait_after_te((uint32_t)delay_ms * 1000u);
-    const int x = (int)((frame * 12u) % (DISPLAY_W - 40));
-    for (int y = UI_SCAN_Y0; y < UI_SCAN_Y1; y += DISPLAY_BAND_ROWS) {
-        const int rows = (UI_SCAN_Y1 - y) < DISPLAY_BAND_ROWS ? (UI_SCAN_Y1 - y) : DISPLAY_BAND_ROWS;
-        uint16_t *band = display_acquire_band();
-        memset(band, 0, (size_t)DISPLAY_W * rows * 2);
-        const gfx_band_t gb = { .dst = band, .x0 = 0, .y0 = y, .w = DISPLAY_W, .rows = rows };
-        gfx_fill(&gb, x, UI_SCAN_Y0, 40, UI_SCAN_Y1 - UI_SCAN_Y0, gfx_rgb(255, 255, 255));
-        gfx_fill(&gb, 0, UI_SCAN_Y0, DISPLAY_W, 2, gfx_rgb(60, 60, 60));
-        gfx_fill(&gb, 0, UI_SCAN_Y1 - 2, DISPLAY_W, 2, gfx_rgb(60, 60, 60));
-        display_push(0, y, DISPLAY_W, rows, band);
-    }
-    display_wait_idle();
-}
 
 /*
  * Frame path. The panel latches its whole frame memory at the TE edge, so a
@@ -252,6 +240,20 @@ typedef struct {
 static framebuf_t s_fb[2];
 static int s_fb_cur;
 
+#define MAX_PIECES      (UI_MAX_DIRTY + ACC_MAX_DIRTY + 3)
+#define SCAN_MARGIN_ROWS 16       /* the scan must be this far past a rect's top row before it is written */
+
+typedef struct {
+    frame_piece_t pieces[MAX_PIECES];
+    int n;
+    int fb;                 /* frame buffer the pieces live in */
+    int32_t delay_us;       /* >= 0: fixed delay after TE (scan test); < 0: wait for the scan to pass */
+} push_job_t;
+
+static QueueHandle_t s_push_q;            /* one frame ahead at most */
+static SemaphoreHandle_t s_fb_free;       /* one token per frame buffer not being pushed from */
+static volatile uint32_t s_push_us_sum, s_push_frames, s_vsync_miss;
+
 static void fb_init(void)
 {
     for (int i = 0; i < 2; i++) {
@@ -263,11 +265,17 @@ static void fb_init(void)
     }
 }
 
-/* Raster every dirty rect into the current frame buffer; fills `pieces` (returns their count). */
-static int render_frame(const rect_t *dirty, int ndirty, const render_ctx_t *c, uint32_t now_ms, frame_piece_t *pieces)
+/* Raster every dirty rect into the next frame buffer; fills `job` (pieces and buffer index). */
+static void render_frame(const rect_t *dirty, int ndirty, const render_ctx_t *c, uint32_t now_ms, push_job_t *job, uint32_t *raster_us)
 {
+    xSemaphoreTake(s_fb_free, portMAX_DELAY);   /* the push task has let go of this buffer... */
     framebuf_t *fb = &s_fb[s_fb_cur];
-    display_wait_done(fb->seq);         /* its previous transfer must be off the bus */
+    display_wait_done(fb->seq);                 /* ...and its last transfer is off the bus */
+    const int64_t t0 = esp_timer_get_time();
+    frame_piece_t *pieces = job->pieces;
+    job->fb = s_fb_cur;
+    job->delay_us = -1;
+    s_fb_cur ^= 1;
     size_t off = 0;
     int n = 0;
     for (int i = 0; i < ndirty; i++) {
@@ -286,30 +294,64 @@ static int render_frame(const rect_t *dirty, int ndirty, const render_ctx_t *c, 
         pieces[n++] = (frame_piece_t){ *r, block };
         off += (bytes + 63) & ~(size_t)63;
     }
-    return n;
+    job->n = n;
+    *raster_us = (uint32_t)(esp_timer_get_time() - t0);
 }
 
 /*
- * Queue the frame's pieces to the panel (call right after the TE edge). DMA
- * straight from PSRAM underruns the QSPI clock, so each band is copied into an
- * internal bounce buffer first; the copy of one band overlaps the transfer of
- * the previous one, so the loop runs at bus speed.
+ * Push task. The panel scans top to bottom from each TE edge (measured with
+ * the scan test: a write tears exactly when the scan crosses it). Our write,
+ * band by band from a bounce buffer, is slower than the scan, so it is started
+ * only once the scan is past the first dirty row and then trails it for the
+ * rest of the frame. DMA straight from PSRAM underruns the QSPI clock, hence
+ * the copy through internal band buffers; the copy of one band overlaps the
+ * transfer of the previous one. Running here rather than in the render task
+ * lets the next frame's raster overlap this frame's transfer.
  */
-static void push_frame(const frame_piece_t *pieces, int n)
+static inline int64_t scan_us_for_row(int row)
 {
-    framebuf_t *fb = &s_fb[s_fb_cur];
-    for (int i = 0; i < n; i++) {
-        const rect_t *r = &pieces[i].r;
-        const int w = r->x1 - r->x0;
-        for (int y = r->y0; y < r->y1; y += DISPLAY_BAND_ROWS) {
-            const int rows = (r->y1 - y) < DISPLAY_BAND_ROWS ? (r->y1 - y) : DISPLAY_BAND_ROWS;
-            uint16_t *band = display_acquire_band();
-            memcpy(band, pieces[i].pixels + (size_t)(y - r->y0) * w, (size_t)w * rows * 2u);
-            fb->seq = display_push(r->x0, y, w, rows, band);
-        }
-    }
-    s_fb_cur ^= 1;
+    return ((int64_t)row * (int64_t)display_te_period_us()) / DISPLAY_H;
 }
+
+static void push_task(void *arg)
+{
+    push_job_t job;
+    for (;;) {
+        xQueueReceive(s_push_q, &job, portMAX_DELAY);
+        if (!display_wait_vsync(VSYNC_TIMEOUT_MS)) s_vsync_miss++;
+        const int64_t t0 = esp_timer_get_time();
+        framebuf_t *fb = &s_fb[job.fb];
+        for (int i = 0; i < job.n; i++) {
+            const rect_t *r = &job.pieces[i].r;
+            const int w = r->x1 - r->x0;
+            if (job.delay_us >= 0) {
+                display_wait_after_te((uint32_t)job.delay_us);
+            } else {
+                display_wait_after_te((uint32_t)scan_us_for_row(r->y0 + SCAN_MARGIN_ROWS));
+            }
+            for (int y = r->y0; y < r->y1; y += DISPLAY_BAND_ROWS) {
+                const int rows = (r->y1 - y) < DISPLAY_BAND_ROWS ? (r->y1 - y) : DISPLAY_BAND_ROWS;
+                uint16_t *band = display_acquire_band();
+                memcpy(band, job.pieces[i].pixels + (size_t)(y - r->y0) * w, (size_t)w * rows * 2u);
+                fb->seq = display_push(r->x0, y, w, rows, band);
+            }
+        }
+        s_push_us_sum += (uint32_t)(esp_timer_get_time() - t0);
+        s_push_frames++;
+        xSemaphoreGive(s_fb_free);
+    }
+}
+
+/* Wait until every queued frame has been pushed and the bus is idle (before touching the panel directly). */
+static void push_drain(void)
+{
+    xSemaphoreTake(s_fb_free, portMAX_DELAY);
+    xSemaphoreTake(s_fb_free, portMAX_DELAY);
+    display_wait_idle();
+    xSemaphoreGive(s_fb_free);
+    xSemaphoreGive(s_fb_free);
+}
+
 
 static void enter_ui(render_ctx_t *c, bool first_boot, uint32_t now_ms)
 {
@@ -321,6 +363,7 @@ static void enter_ui(render_ctx_t *c, bool first_boot, uint32_t now_ms)
 static void leave_ui(render_ctx_t *c, uint32_t now_ms)
 {
     c->mode = MODE_EYES;
+    push_drain();
     display_fill_black();
     c->prev[0] = c->prev[1] = rect_empty();
     acc_init(&c->acc, BOARD_LCD_H_RES / 2 - 95, BOARD_LCD_H_RES / 2 + 95, BOARD_LCD_V_RES / 2);
@@ -406,6 +449,7 @@ static void eyes_closed_now(render_ctx_t *c, uint32_t now_ms)
 /* SLEEP: panel off, light sleep until motion/touch (-> ACTIVE) or the deadline (-> DEEP). */
 static void do_sleep(render_ctx_t *c)
 {
+    push_drain();
     if (audio_running()) audio_stop();
     brightness_set_now(0);
     display_sleep(true);
@@ -466,6 +510,11 @@ static void render_task(void *arg)
     static render_ctx_t c;
     s_render = xTaskGetCurrentTaskHandle();
     fb_init();
+    s_push_q = xQueueCreate(1, sizeof(push_job_t));
+    s_fb_free = xSemaphoreCreateCounting(2, 2);
+    assert(s_push_q && s_fb_free);
+    const BaseType_t pok = xTaskCreatePinnedToCore(push_task, "push", 4096, NULL, configMAX_PRIORITIES - 2, NULL, 1);
+    assert(pok == pdPASS);
     if (xTaskCreatePinnedToCore(raster_worker, "raster0", 8192, NULL, 8, &s_worker, 0) != pdPASS) {
         s_worker = NULL;
         ESP_LOGW(TAG, "no raster worker: single-core raster");
@@ -493,8 +542,8 @@ static void render_task(void *arg)
 
     /* stats */
     int64_t stats_t0 = esp_timer_get_time();
-    uint32_t frames = 0, vsync_miss = 0;
-    uint64_t raster_us_sum = 0, push_us_sum = 0;
+    uint32_t frames = 0;
+    uint64_t raster_us_sum = 0;
     uint32_t raster_us_max = 0;
     uint32_t rects_sum = 0;
 
@@ -641,34 +690,31 @@ static void render_task(void *arg)
             }
         }
 
-        /* Raster the whole frame first (into PSRAM), while the previous frame's transfer runs. */
-        const int64_t t_raster0 = esp_timer_get_time();
-        frame_piece_t pieces[UI_MAX_DIRTY + ACC_MAX_DIRTY + 2];
-        const int npieces = render_frame(dirty, ndirty, &c, now_ms, pieces);
-        const uint32_t raster_us = (uint32_t)(esp_timer_get_time() - t_raster0);
+        if (c.mode == MODE_UI && c.ui.screen == UI_SCREEN_SCANTEST) {
+            dirty[ndirty++] = (rect_t){ 0, UI_SCAN_Y0, DISPLAY_W, UI_SCAN_Y1 };   /* the test block, every frame */
+        }
 
-        /* Pacing: every TE edge when ACTIVE; every Nth edge, light-sleeping in between, when DROWSY. */
+        /* Raster the whole frame (into PSRAM) while the push task streams the previous one. */
+        static push_job_t job;
+        uint32_t raster_us;
+        render_frame(dirty, ndirty, &c, now_ms, &job, &raster_us);
+        if (c.mode == MODE_UI && c.ui.screen == UI_SCREEN_SCANTEST) {
+            job.delay_us = ui_scantest_delay_ms(&c.ui, now_ms) * 1000;
+        }
+        s_frame_no++;
+
+        /* Pacing: the push task locks every frame to a TE edge; when DROWSY only every Nth, light-sleeping in between. */
         if (state == POWER_DROWSY) {
             power_allow_light_sleep(true);
             display_delay_until_frame(DROWSY_PERIOD);
             power_allow_light_sleep(false);
         }
-        if (!display_wait_vsync(VSYNC_TIMEOUT_MS)) {
-            vsync_miss++;
-        }
-        const int64_t t_push0 = esp_timer_get_time();
-        push_frame(pieces, npieces);
-        if (c.mode == MODE_UI && c.ui.screen == UI_SCREEN_SCANTEST) {
-            display_wait_idle();
-            scan_test_stripe(ui_scantest_delay_ms(&c.ui, now_ms), frames);
-        }
+        xQueueSend(s_push_q, &job, portMAX_DELAY);
         brightness_step(state == POWER_ACTIVE ? 3 : 2);
-        const uint32_t push_us = (uint32_t)(esp_timer_get_time() - t_push0);
 
         frames++;
         rects_sum += (uint32_t)ndirty;
         raster_us_sum += raster_us;
-        push_us_sum += push_us;
         if (raster_us > raster_us_max) raster_us_max = raster_us;
 
         const int64_t now_us = esp_timer_get_time();
@@ -685,18 +731,19 @@ static void render_task(void *arg)
                      power_state_name(state), c.mode == MODE_UI ? ui_screen_name(c.ui.screen) : anim_name(c.sm.id),
                      behavior_state_name(c.beh.state), behavior_energy(&c.beh),
                      (frames * 1000u + elapsed_ms / 2) / elapsed_ms,
-                     (uint32_t)(raster_us_sum / frames), raster_us_max, (uint32_t)(push_us_sum / frames),
+                     (uint32_t)(raster_us_sum / frames), raster_us_max, s_push_frames ? s_push_us_sum / s_push_frames : 0,
                      bytes / frames, (rects_sum + frames / 2) / frames,
                      display_te_active() ? "TE" : "timer",
-                     vsync_miss ? " (missed vsync)" : "",
+                     s_vsync_miss ? " (missed vsync)" : "",
                      s_bri_cur,
                      b.mv, b.percent, b.charging ? " chg" : "", b.vbus ? " usb" : "", audio_s,
                      (unsigned)(uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t)));
             stats_t0 = now_us;
             frames = 0;
-            vsync_miss = 0;
             raster_us_sum = 0;
-            push_us_sum = 0;
+            s_push_us_sum = 0;
+            s_push_frames = 0;
+            s_vsync_miss = 0;
             raster_us_max = 0;
             rects_sum = 0;
         }

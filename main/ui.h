@@ -109,10 +109,11 @@ ui_action_t ui_take_action(ui_t *u);
 const char *ui_screen_name(ui_screen_t s);
 
 /*
- * Scan test: the render loop writes a full-width stripe (rows UI_SCAN_Y0..Y1)
- * with a bar that moves every frame, starting this many ms after the TE edge.
- * The delay steps 0..16 ms, 1.5 s each; the screen shows the current value.
+ * Scan test: the render loop writes a full-width block (rows UI_SCAN_Y0..Y1,
+ * the size of a rotated face) through the normal frame path, holding a fat
+ * bar that jumps every frame, starting this many ms after the TE edge. The
+ * delay steps 0..10 ms, 2 s each; the screen shows the current value.
  */
-#define UI_SCAN_Y0   200
-#define UI_SCAN_Y1   232
+#define UI_SCAN_Y0   128
+#define UI_SCAN_Y1   336
 int ui_scantest_delay_ms(const ui_t *u, uint32_t now_ms);
