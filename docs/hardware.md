@@ -1,5 +1,16 @@
 # Hardware notes: Waveshare ESP32-S3-Touch-AMOLED-1.75
 
+> **Board variant: ESP32-S3-Touch-AMOLED-1.75C.** The user's unit is the
+> **1.75C**, not the 1.75. Display, touch, PMIC, IMU and the I2C bus are the
+> same, but three pins differ, per Waveshare's `esp32_s3_touch_amoled_1_75c`
+> board package: I2S MCLK is **GPIO16** (GPIO42 on the 1.75), LCD reset is
+> **GPIO1** (GPIO39) and touch reset is **GPIO2** (GPIO40). The wrong MCLK pin
+> leaves both audio codecs silently unclocked while every signal still looks
+> right at the ESP32 pads; that cost a full day of diagnosis on 2026-09-06.
+> Pin references marked [HWREF]/[SCH] below were taken from the 1.75 schematic
+> and are correct for the 1.75C except where `board.h` says otherwise.
+
+
 Board: Waveshare ESP32-S3-Touch-AMOLED-1.75, SKU 31261, and the 31262 "-B" variant
 (same board supplied with a case). MCU ESP32-S3R8 (8 MB octal PSRAM), 16 MB QIO flash.
 Battery: the 3.7 V 500 mAh MX1.25 pouch sold for the board.
@@ -219,7 +230,7 @@ when the expression is entered and torn down when it is left.
 
 | Signal | GPIO | Source |
 | --- | ---: | --- |
-| I2S MCLK | 42 | HWREF, BSP `BSP_I2S_MCLK` |
+| I2S MCLK | **16 on the 1.75C** (42 on the 1.75) | 1.75C BSP `BSP_I2S_MCLK` |
 | I2S BCLK | 9 | HWREF, BSP `BSP_I2S_SCLK` |
 | I2S LRCK / WS | 45 | HWREF, BSP `BSP_I2S_LCLK` |
 | I2S data in (ES7210 SDOUT) | 10 | HWREF, BSP `BSP_I2S_DSIN` |

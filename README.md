@@ -1,6 +1,6 @@
 # esp32-companion
 
-A small companion character for the Waveshare ESP32-S3-Touch-AMOLED-1.75: two
+A small companion character for the Waveshare ESP32-S3-Touch-AMOLED-1.75C: two
 orange cartoon eyes on the round 1.75" AMOLED that blink and glance around on
 their own, change expression when tapped, dim into an always-on face when left
 alone, and sleep until the device is picked up. No graphics library: the

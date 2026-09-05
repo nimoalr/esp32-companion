@@ -21,7 +21,7 @@
 #define BOARD_LCD_DATA2        GPIO_NUM_6       /* [HWREF][BSP][SCH QSPI_SI2][ARD] */
 #define BOARD_LCD_DATA3        GPIO_NUM_7       /* [HWREF][BSP][SCH QSPI_SI3][ARD] */
 #define BOARD_LCD_CS           GPIO_NUM_12      /* [HWREF][BSP][SCH LCD_CS][ARD] */
-#define BOARD_LCD_RST          GPIO_NUM_39      /* [HWREF][BSP][SCH LCD_RESET][ARD] */
+#define BOARD_LCD_RST          GPIO_NUM_1       /* [1.75C BSP BSP_LCD_RST] (GPIO39 on the 1.75) */
 #define BOARD_LCD_TE           GPIO_NUM_13      /* [HWREF][SCH LCD_TE]; not used by [BSP] */
 
 #define BOARD_LCD_H_RES        466              /* [BSP] BSP_LCD_H_RES */
@@ -36,7 +36,7 @@
 #define BOARD_I2C_SDA          GPIO_NUM_15      /* [HWREF][BSP][SCH TP_SDA / ESP32_SDA][ARD] */
 #define BOARD_I2C_HZ           400000           /* [HWREF] "maintained BSP defaults to 400 kHz" */
 #define BOARD_TOUCH_ADDR       0x5A             /* [HWREF][cst9217 driver] 7-bit */
-#define BOARD_TOUCH_RST        GPIO_NUM_40      /* [HWREF][BSP][SCH TP_RESET][ARD] */
+#define BOARD_TOUCH_RST        GPIO_NUM_2       /* [1.75C BSP BSP_LCD_TOUCH_RST] (GPIO40 on the 1.75) */
 #define BOARD_TOUCH_INT        GPIO_NUM_11      /* [HWREF][BSP][SCH TP_INT][ARD] */
 
 /* ---- QMI8658 IMU (shared I2C bus) ---------------------------------------- */
@@ -44,7 +44,7 @@
 #define BOARD_IMU_INT2         GPIO_NUM_21      /* [HWREF][SCH QMI_INT2 -> GPIO21]; RTC-capable, usable as a sleep wake source */
 
 /* ---- ES7210 microphone ADC (I2S + shared I2C bus) ------------------------- */
-#define BOARD_I2S_MCLK         GPIO_NUM_42      /* [HWREF][BSP BSP_I2S_MCLK][SCH I2S_MCLK] */
+#define BOARD_I2S_MCLK         GPIO_NUM_16      /* [1.75C BSP BSP_I2S_MCLK]: GPIO42 on the 1.75, GPIO16 on the 1.75C */
 #define BOARD_I2S_BCLK         GPIO_NUM_9       /* [HWREF][BSP BSP_I2S_SCLK][SCH I2S_SCLK] */
 #define BOARD_I2S_LRCK         GPIO_NUM_45      /* [HWREF][BSP BSP_I2S_LCLK][SCH I2S_LRCK] */
 #define BOARD_I2S_DIN          GPIO_NUM_10      /* [HWREF][BSP BSP_I2S_DSIN][SCH I2S_ASDOUT]: ES7210 -> ESP32 */
