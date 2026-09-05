@@ -44,7 +44,7 @@ int main(int argc, char **argv) {
 
     const char *names[] = {"neutral","happy","sad","angry","surprised","sleepy","look_around","wink"};
     const uint32_t settle[] = {400, 400, 1400, 400, 400, 3200, 1200, 600};
-    for (int a = 0; a < ANIM_COUNT; a++) {
+    for (int a = 0; a < 8; a++) {   /* the original eight; anim_harness covers the rest */
         if (a) anim_next(&sm, &eyes, t);
         uint32_t t_end = t + settle[a];
         /* step time in 16 ms increments so keyframes fire in order */
