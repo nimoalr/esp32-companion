@@ -16,8 +16,9 @@
 
 static const char *TAG = "power";
 
-#define SAMPLE_MS_ACTIVE   50
+#define SAMPLE_MS_ACTIVE   10       /* accel read cadence: the face follows gravity from these */
 #define SAMPLE_MS_DROWSY   200
+#define MOTION_EVAL_MS     50       /* the "someone is handling it" detector keeps its own cadence */
 #define BATTERY_MS         5000
 #define MOTION_HITS        2        /* consecutive samples above threshold */
 
@@ -31,7 +32,7 @@ static esp_pm_lock_handle_t s_lock_nosleep;  /* ESP_PM_NO_LIGHT_SLEEP */
 static bool s_cpu_held, s_nosleep_held;
 
 static bool s_imu_ok, s_pmic_ok;
-static uint32_t s_last_sample_ms, s_last_battery_ms;
+static uint32_t s_last_sample_ms, s_last_motion_eval_ms, s_last_battery_ms;
 static int32_t s_grav[3];
 static bool s_grav_init;
 static int s_motion_hits;
@@ -97,6 +98,10 @@ esp_err_t power_init(void)
     ESP_RETURN_ON_ERROR(esp_pm_configure(&pm), TAG, "pm configure");
     ESP_RETURN_ON_ERROR(esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "eyes_cpu", &s_lock_cpu), TAG, "lock");
     ESP_RETURN_ON_ERROR(esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "eyes_awake", &s_lock_nosleep), TAG, "lock");
+    /* Hold both locks from here on: the sensor bring-up below sleeps the task, and an
+     * unlocked light sleep at this point drops the USB console mid-boot. */
+    hold_cpu(true);
+    hold_nosleep(true);
 
     const gpio_config_t int2 = {
         .pin_bit_mask = BIT64(BOARD_IMU_INT2),
@@ -143,6 +148,10 @@ static void sample_motion(uint32_t now_ms)
     }
     s_last_raw[0] = a[0]; s_last_raw[1] = a[1]; s_last_raw[2] = a[2];
     s_last_raw_ms = now_ms;
+    if (now_ms - s_last_motion_eval_ms < MOTION_EVAL_MS) {
+        return;
+    }
+    s_last_motion_eval_ms = now_ms;
     if (!s_grav_init) {
         for (int i = 0; i < 3; i++) s_grav[i] = a[i];
         s_grav_init = true;
@@ -196,8 +205,8 @@ power_state_t power_update(uint32_t now_ms, uint32_t touch_ms)
     case POWER_DROWSY:
         if ((int32_t)(s_last_activity_ms - s_state_since_ms) > 0) {
             enter(POWER_ACTIVE, now_ms);
-        } else if (now_ms - s_state_since_ms >= CONFIG_EYES_DROWSY_MIN_S * 1000u) {
-            enter(POWER_SLEEP, now_ms);
+        } else if (now_ms - s_state_since_ms >= CONFIG_EYES_DROWSY_MIN_S * 1000u && !power_on_usb()) {
+            enter(POWER_SLEEP, now_ms);     /* on USB power he only ever dozes: nothing is switched off */
         }
         break;
     default:
@@ -212,11 +221,26 @@ power_state_t power_state(void)
     return s_state;
 }
 
+bool power_on_usb(void)
+{
+#if CONFIG_EYES_USB_NO_LIGHT_SLEEP
+    return s_pmic_ok && s_batt.vbus;
+#else
+    return false;
+#endif
+}
+
 void power_allow_light_sleep(bool allow)
 {
     /* DROWSY frame window: full clock and no sleep while rasterising and pushing
      * (race to idle), then release everything until the next frame slot. */
     if (s_state == POWER_DROWSY) {
+#if CONFIG_EYES_USB_NO_LIGHT_SLEEP
+        if (allow && power_on_usb()) {
+            hold_cpu(false);        /* DFS still saves a little */
+            return;                 /* keep the no-sleep lock: the USB console stays up */
+        }
+#endif
         hold_cpu(!allow);
         hold_nosleep(!allow);
     }

@@ -16,8 +16,8 @@ static const DRAM_ATTR uint8_t k_sub_w[4] = { 64, 64, 64, 63 };
 #define RCP_MIN_Q16  256
 #define X_CLAMP_Q16  (1 << 30)
 
-/* Row-local coverage accumulator (band width max). */
-static uint8_t s_cov[512];
+/* Row-local coverage accumulator (band width max): lives on the caller's stack so two cores can raster at once. */
+#define COV_MAX 512
 
 static inline uint32_t IRAM_ATTR isqrt32(uint32_t v)
 {
@@ -437,8 +437,6 @@ static inline void IRAM_ATTR cov_add(uint8_t *cov, int base, int n, int32_t l, i
     cov[ir - base] += (uint8_t)(((r - (ir << 16)) * w) >> 16);
 }
 
-static bool s_over;   /* raster_shapes_over(): leave uncovered pixels alone */
-
 /* Blend the colour (byte-swapped RGB565) over dst with alpha a (0..255). */
 static inline uint16_t IRAM_ATTR blend565(uint16_t dst, uint16_t col, uint32_t a)
 {
@@ -457,10 +455,10 @@ static inline uint16_t IRAM_ATTR blend565(uint16_t dst, uint16_t col, uint32_t a
 static const DRAM_ATTR uint8_t k_dither[4] = { 0, 9, 13, 4 };
 
 /* Edge pixels: coverage -> colour, optionally shaded by the hot spot. x = screen x of dst[0]. */
-static inline void IRAM_ATTR blit_cov(uint16_t *dst, const uint8_t *cov, int n, const raster_shape_t *s, int x, int py)
+static inline void IRAM_ATTR blit_cov(uint16_t *dst, const uint8_t *cov, int n, const raster_shape_t *s, int x, int py, bool over)
 {
     const uint16_t *lut = s->lut;
-    if (s->hot && !s_over) {
+    if (s->hot && !over) {
         const uint8_t *gx = s->hot_gx + x, *g2l = s->hot_g2l;
         const uint32_t gy = s->hot_gy[py];
         const uint16_t *lut2 = s->lut2;
@@ -470,7 +468,7 @@ static inline void IRAM_ATTR blit_cov(uint16_t *dst, const uint8_t *cov, int n, 
         }
         return;
     }
-    if (s_over) {
+    if (over) {
         /* edges blend over whatever is there, so overlapping strokes stay solid */
         const uint16_t full = lut[255];
         for (int i = 0; i < n; i++) {
@@ -517,8 +515,9 @@ static inline void IRAM_ATTR fill16(uint16_t *p, uint16_t v, int n)
 }
 
 /* Render one shape into one row. `row` covers screen x in [bx0, bx1). */
-static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const raster_shape_t *s)
+static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const raster_shape_t *s, bool over)
 {
+    uint8_t cov[COV_MAX];
     span_t sp[4][RASTER_MAX_SPANS];
     int ns[4];
     int total = 0;
@@ -574,11 +573,11 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
 
         if (cl > pl) {
             const int n = cl - pl;
-            memset(s_cov, 0, (size_t)n);
+            memset(cov, 0, (size_t)n);
             for (int k = 0; k < 4; k++) {
-                if (ns[k]) cov_add(s_cov, pl, n, sp[k][0].l, sp[k][0].r, k_sub_w[k]);
+                if (ns[k]) cov_add(cov, pl, n, sp[k][0].l, sp[k][0].r, k_sub_w[k]);
             }
-            blit_cov(row + (pl - bx0), s_cov, n, s, pl, py);
+            blit_cov(row + (pl - bx0), cov, n, s, pl, py, over);
         }
         if (cr > cl) {
             if (s->hot) {
@@ -589,11 +588,11 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
         }
         if (pr > cr) {
             const int n = pr - cr;
-            memset(s_cov, 0, (size_t)n);
+            memset(cov, 0, (size_t)n);
             for (int k = 0; k < 4; k++) {
-                if (ns[k]) cov_add(s_cov, cr, n, sp[k][0].l, sp[k][0].r, k_sub_w[k]);
+                if (ns[k]) cov_add(cov, cr, n, sp[k][0].l, sp[k][0].r, k_sub_w[k]);
             }
-            blit_cov(row + (cr - bx0), s_cov, n, s, cr, py);
+            blit_cov(row + (cr - bx0), cov, n, s, cr, py, over);
         }
         return;
     }
@@ -614,16 +613,16 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
         return;
     }
     const int n = pr - pl;
-    memset(s_cov, 0, (size_t)n);
+    memset(cov, 0, (size_t)n);
     for (int k = 0; k < 4; k++) {
         for (int j = 0; j < ns[k]; j++) {
-            cov_add(s_cov, pl, n, sp[k][j].l, sp[k][j].r, k_sub_w[k]);
+            cov_add(cov, pl, n, sp[k][j].l, sp[k][j].r, k_sub_w[k]);
         }
     }
-    blit_cov(row + (pl - bx0), s_cov, n, s, pl, py);
+    blit_cov(row + (pl - bx0), cov, n, s, pl, py, over);
 }
 
-static void IRAM_ATTR draw_shapes(uint16_t *dst, int x0, int y0, int w, int rows, const raster_shape_t *shapes, int nshapes)
+static void IRAM_ATTR draw_shapes(uint16_t *dst, int x0, int y0, int w, int rows, const raster_shape_t *shapes, int nshapes, bool over)
 {
     const int x1 = x0 + w;
     for (int i = 0; i < nshapes; i++) {
@@ -634,7 +633,7 @@ static void IRAM_ATTR draw_shapes(uint16_t *dst, int x0, int y0, int w, int rows
         int ya = s->py0 > y0 ? s->py0 : y0;
         int yb = s->py1 < y0 + rows ? s->py1 : y0 + rows;
         for (int py = ya; py < yb; py++) {
-            render_row(dst + (size_t)(py - y0) * w, x0, x1, py, s);
+            render_row(dst + (size_t)(py - y0) * w, x0, x1, py, s, over);
         }
     }
 }
@@ -642,15 +641,12 @@ static void IRAM_ATTR draw_shapes(uint16_t *dst, int x0, int y0, int w, int rows
 void IRAM_ATTR raster_band(uint16_t *dst, int x0, int y0, int w, int rows, const raster_shape_t *shapes, int nshapes)
 {
     memset(dst, 0, (size_t)w * (size_t)rows * 2u);
-    s_over = false;
-    draw_shapes(dst, x0, y0, w, rows, shapes, nshapes);
+    draw_shapes(dst, x0, y0, w, rows, shapes, nshapes, false);
 }
 
 void raster_shapes_over(uint16_t *dst, int x0, int y0, int w, int rows, const raster_shape_t *shapes, int nshapes)
 {
-    s_over = true;
-    draw_shapes(dst, x0, y0, w, rows, shapes, nshapes);
-    s_over = false;
+    draw_shapes(dst, x0, y0, w, rows, shapes, nshapes, true);
 }
 
 void raster_shape_finalize(raster_shape_t *s, int screen_w, int screen_h)

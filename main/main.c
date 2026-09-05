@@ -154,36 +154,150 @@ typedef struct {
     bool mic_ok;
 } render_ctx_t;
 
-/* Eyes + accessories into one band. */
-static void push_rect_scene(const rect_t *r, const raster_shape_t *shapes, const accessories_t *acc, uint32_t now_ms)
+/*
+ * Frame pipeline. The dirty rects are cut into band jobs on a global 16-row
+ * grid and rendered in row order (both eyes' pieces of a band back to back), so
+ * the panel write moves down the screen once per frame. A job is pushed only
+ * after the panel's scan has passed it; meanwhile the raster runs ahead into
+ * the other band buffers.
+ */
+typedef struct {
+    int x0, y, w, rows;
+    uint16_t *buf;
+} band_job_t;
+
+typedef struct {
+    band_job_t q[DISPLAY_BANDS];
+    int head, count;
+    uint32_t wait_us;      /* time spent waiting for the scan this frame */
+} band_queue_t;
+
+static void job_push(band_queue_t *bq)
 {
-    const int w = r->x1 - r->x0;
-    for (int y = r->y0; y < r->y1; y += DISPLAY_BAND_ROWS) {
-        int rows = r->y1 - y;
-        if (rows > DISPLAY_BAND_ROWS) rows = DISPLAY_BAND_ROWS;
-        uint16_t *band = display_acquire_band();
-        raster_band(band, r->x0, y, w, rows, shapes, 2);
-        if (acc_any(acc)) {
-            const gfx_band_t gb = { .dst = band, .x0 = r->x0, .y0 = y, .w = w, .rows = rows };
-            acc_paint(acc, &gb, now_ms);
-        }
-        display_push(r->x0, y, w, rows, band);
+    const band_job_t *j = &bq->q[bq->head];
+    display_push(j->x0, j->y, j->w, j->rows, j->buf);
+    bq->head = (bq->head + 1) % DISPLAY_BANDS;
+    bq->count--;
+}
+
+static inline uint32_t job_bytes(const band_job_t *j)
+{
+    return (uint32_t)j->w * (uint32_t)j->rows * 2u;
+}
+
+static inline bool job_safe(const band_job_t *j)
+{
+    return display_band_safe(j->y, j->y + j->rows, job_bytes(j), CONFIG_EYES_SCAN_MARGIN_ROWS);
+}
+
+static void job_push_when_safe(band_queue_t *bq)
+{
+    const band_job_t *j = &bq->q[bq->head];
+    if (!job_safe(j)) {
+        const int64_t t0 = esp_timer_get_time();
+        display_wait_band_safe(j->y, j->y + j->rows, job_bytes(j), CONFIG_EYES_SCAN_MARGIN_ROWS);
+        bq->wait_us += (uint32_t)(esp_timer_get_time() - t0);
+    }
+    job_push(bq);
+}
+
+static void job_flush(band_queue_t *bq)
+{
+    while (bq->count) job_push_when_safe(bq);
+}
+
+/* Acquire a band buffer for the next job, pushing older jobs as the scan allows. */
+static uint16_t *job_begin(band_queue_t *bq)
+{
+    while (bq->count && job_safe(&bq->q[bq->head])) {
+        job_push(bq);
+    }
+    if (bq->count == DISPLAY_BANDS) {
+        job_push_when_safe(bq);
+    }
+    return display_acquire_band();
+}
+
+static void job_end(band_queue_t *bq, int x0, int y, int w, int rows, uint16_t *buf)
+{
+    band_job_t *j = &bq->q[(bq->head + bq->count) % DISPLAY_BANDS];
+    *j = (band_job_t){ x0, y, w, rows, buf };
+    bq->count++;
+}
+
+/*
+ * Second raster core. The render task takes the top half of every band piece,
+ * the worker on core 0 the bottom half; the eye rasteriser is reentrant and
+ * the band buffers are in uncached internal SRAM, so no further sync is needed.
+ */
+typedef struct {
+    uint16_t *dst;
+    int x0, y, w, rows;
+    const raster_shape_t *shapes;
+} raster_job_t;
+
+static raster_job_t s_wjob;
+static TaskHandle_t s_worker, s_render;
+
+static void raster_worker(void *arg)
+{
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        raster_band(s_wjob.dst, s_wjob.x0, s_wjob.y, s_wjob.w, s_wjob.rows, s_wjob.shapes, 2);
+        xTaskNotifyGive(s_render);
     }
 }
 
-/* Paint one UI rect through the band path: black, then the screen's elements clipped to the band. */
-static void push_rect_ui(const rect_t *r, const ui_t *ui)
+static void raster_split(uint16_t *band, int x0, int y, int w, int rows, const raster_shape_t *shapes)
 {
-    const int w = r->x1 - r->x0;
-    for (int y = r->y0; y < r->y1; y += DISPLAY_BAND_ROWS) {
-        int rows = r->y1 - y;
-        if (rows > DISPLAY_BAND_ROWS) rows = DISPLAY_BAND_ROWS;
-        uint16_t *band = display_acquire_band();
-        memset(band, 0, (size_t)w * rows * 2);
-        const gfx_band_t gb = { .dst = band, .x0 = r->x0, .y0 = y, .w = w, .rows = rows };
-        ui_paint(ui, &gb);
-        display_push(r->x0, y, w, rows, band);
+    if (!s_worker || rows < 4) {
+        raster_band(band, x0, y, w, rows, shapes, 2);
+        return;
     }
+    const int top = rows / 2;
+    s_wjob = (raster_job_t){ band + (size_t)top * w, x0, y + top, w, rows - top, shapes };
+    xTaskNotifyGive(s_worker);
+    raster_band(band, x0, y, w, top, shapes, 2);
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+}
+
+/* Eyes + accessories, or a UI screen, into one band piece. */
+static void paint_piece(uint16_t *band, int x0, int y, int w, int rows, const render_ctx_t *c, uint32_t now_ms)
+{
+    if (c->mode == MODE_UI) {
+        memset(band, 0, (size_t)w * rows * 2);
+        const gfx_band_t gb = { .dst = band, .x0 = x0, .y0 = y, .w = w, .rows = rows };
+        ui_paint(&c->ui, &gb);
+    } else {
+        raster_split(band, x0, y, w, rows, c->shapes);
+        if (acc_any(&c->acc)) {
+            const gfx_band_t gb = { .dst = band, .x0 = x0, .y0 = y, .w = w, .rows = rows };
+            acc_paint(&c->acc, &gb, now_ms);
+        }
+    }
+}
+
+/* Render and push every dirty rect of the frame, in band order. */
+static void push_frame(band_queue_t *bq, const rect_t *dirty, int ndirty, const render_ctx_t *c, uint32_t now_ms)
+{
+    int ymin = DISPLAY_H, ymax = 0;
+    for (int i = 0; i < ndirty; i++) {
+        if (dirty[i].y0 < ymin) ymin = dirty[i].y0;
+        if (dirty[i].y1 > ymax) ymax = dirty[i].y1;
+    }
+    bq->wait_us = 0;
+    for (int by = ymin - ymin % DISPLAY_BAND_ROWS; by < ymax; by += DISPLAY_BAND_ROWS) {
+        for (int i = 0; i < ndirty; i++) {
+            const rect_t *r = &dirty[i];
+            const int y0 = r->y0 > by ? r->y0 : by;
+            const int y1 = r->y1 < by + DISPLAY_BAND_ROWS ? r->y1 : by + DISPLAY_BAND_ROWS;
+            if (y0 >= y1) continue;
+            uint16_t *band = job_begin(bq);
+            paint_piece(band, r->x0, y0, r->x1 - r->x0, y1 - y0, c, now_ms);
+            job_end(bq, r->x0, y0, r->x1 - r->x0, y1 - y0, band);
+        }
+    }
+    job_flush(bq);
 }
 
 static void enter_ui(render_ctx_t *c, bool first_boot, uint32_t now_ms)
@@ -307,6 +421,7 @@ static void do_sleep(render_ctx_t *c)
     eyes_closed_now(c, now_ms);
     c->prev[0] = c->prev[1] = rect_empty();
     display_sleep(false);
+    acc_redraw(&c->acc);
     c->user_anim = ANIM_NEUTRAL;
     anim_set(&c->sm, &c->eyes, ANIM_NEUTRAL, ms_now());
     brightness_set_now(g_settings.brightness_active);
@@ -338,6 +453,11 @@ static void on_transition(render_ctx_t *c, power_state_t from, power_state_t to,
 static void render_task(void *arg)
 {
     static render_ctx_t c;
+    s_render = xTaskGetCurrentTaskHandle();
+    if (xTaskCreatePinnedToCore(raster_worker, "raster0", 6144, NULL, 8, &s_worker, 0) != pdPASS) {
+        s_worker = NULL;
+        ESP_LOGW(TAG, "no raster worker: single-core raster");
+    }
     uint32_t now_ms = ms_now();
     eyes_init(&c.eyes, now_ms);
     eyes_set_base_color(&c.eyes, settings_eye_rgb());
@@ -362,7 +482,8 @@ static void render_task(void *arg)
     /* stats */
     int64_t stats_t0 = esp_timer_get_time();
     uint32_t frames = 0, vsync_miss = 0;
-    uint64_t frame_us_sum = 0;
+    uint64_t frame_us_sum = 0, wait_us_sum = 0;
+    band_queue_t bq = { 0 };
     uint32_t frame_us_max = 0;
     uint32_t rects_sum = 0;
 
@@ -420,6 +541,11 @@ static void render_task(void *arg)
             eyes_set_mood(&c.eyes, (int32_t)((0.85f + 0.15f * energy) * 65536.f), (int32_t)((0.90f + 0.10f * energy) * 65536.f));
             eyes_set_face_angle(&c.eyes, bo.face_angle_deg);
             acc_set_angle(&c.acc, bo.face_angle_deg);
+            {
+                pmic_battery_t b;
+                power_battery(&b);
+                acc_set_charge(&c.acc, b.vbus, b.present ? b.percent : 0, b.charging);
+            }
             acc_set_headphones(&c.acc, bo.headphones, now_ms);
             acc_set_knocked_out(&c.acc, bo.knocked_out, now_ms);
             acc_set_zz(&c.acc, bo.zz || c.sm.id == ANIM_SLEEPING, now_ms);
@@ -515,11 +641,9 @@ static void render_task(void *arg)
         }
         const int64_t t_frame = esp_timer_get_time();
 
-        for (int i = 0; i < ndirty; i++) {
-            if (c.mode == MODE_UI) push_rect_ui(&dirty[i], &c.ui);
-            else push_rect_scene(&dirty[i], c.shapes, &c.acc, now_ms);
-        }
+        push_frame(&bq, dirty, ndirty, &c, now_ms);
         display_wait_idle();
+        wait_us_sum += bq.wait_us;
         brightness_step(state == POWER_ACTIVE ? 3 : 2);
 
         const uint32_t frame_us = (uint32_t)(esp_timer_get_time() - t_frame);
@@ -538,11 +662,11 @@ static void render_task(void *arg)
             if (af.active) {
                 snprintf(audio_s, sizeof audio_s, " | audio %" PRIu32 " us/frame, %d bpm", af.cpu_us, (int)af.bpm);
             }
-            ESP_LOGI(TAG, "%s %s [%s, energy %.2f]: %" PRIu32 " fps | frame %" PRIu32 " us avg, %" PRIu32 " us max | %" PRIu32 " B/frame, %" PRIu32 " rect(s) | pace %s%s | bri %d%% | batt %u mV %d%%%s%s%s",
+            ESP_LOGI(TAG, "%s %s [%s, energy %.2f]: %" PRIu32 " fps | frame %" PRIu32 " us avg (%" PRIu32 " waiting for scan), %" PRIu32 " us max | %" PRIu32 " B/frame, %" PRIu32 " rect(s) | pace %s%s | bri %d%% | batt %u mV %d%%%s%s%s",
                      power_state_name(state), c.mode == MODE_UI ? ui_screen_name(c.ui.screen) : anim_name(c.sm.id),
                      behavior_state_name(c.beh.state), behavior_energy(&c.beh),
                      (frames * 1000u + elapsed_ms / 2) / elapsed_ms,
-                     (uint32_t)(frame_us_sum / frames), frame_us_max,
+                     (uint32_t)(frame_us_sum / frames), (uint32_t)(wait_us_sum / frames), frame_us_max,
                      bytes / frames, (rects_sum + frames / 2) / frames,
                      display_te_active() ? "TE" : "timer",
                      vsync_miss ? " (missed vsync)" : "",
@@ -552,6 +676,7 @@ static void render_task(void *arg)
             frames = 0;
             vsync_miss = 0;
             frame_us_sum = 0;
+            wait_us_sum = 0;
             frame_us_max = 0;
             rects_sum = 0;
         }

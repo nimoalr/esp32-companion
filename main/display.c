@@ -42,30 +42,46 @@ static const co5300_lcd_init_cmd_t s_init_cmds[] = {
 static esp_lcd_panel_io_handle_t s_io;
 static esp_lcd_panel_handle_t s_panel;
 
-static uint16_t *s_band[2];
-static SemaphoreHandle_t s_band_free;     /* counting, one token per idle band buffer */
+static uint16_t *s_band[DISPLAY_BANDS];
 static uint32_t s_band_seq;               /* which buffer the next acquire hands out */
+/* Transfers complete in the order they were queued, so a buffer is free once the
+ * completion count has reached the sequence number of its last push. */
+static uint32_t s_issued;                 /* pushes queued */
+static volatile uint32_t s_done;          /* pushes completed (ISR) */
+static uint32_t s_last_issue[DISPLAY_BANDS];
+static SemaphoreHandle_t s_done_sem;      /* counting, one token per completed push */
 
 static SemaphoreHandle_t s_vsync;         /* given by the TE edge (or the fallback timer) */
 static volatile uint32_t s_te_edges;
 static volatile int64_t s_te_last_us;
+static volatile uint32_t s_te_period_us = 16667;
 static int64_t s_last_frame_te_us;
 static bool s_te_active;
 static esp_timer_handle_t s_pace_timer;
+
+static SemaphoreHandle_t s_wake_sem;      /* one-shot timer for precise scan waits */
+static esp_timer_handle_t s_wake_timer;
 
 static volatile uint32_t s_bytes_pushed;
 
 static bool IRAM_ATTR on_color_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *edata, void *ctx)
 {
     BaseType_t woken = pdFALSE;
-    xSemaphoreGiveFromISR(s_band_free, &woken);
+    s_done++;
+    xSemaphoreGiveFromISR(s_done_sem, &woken);
     return woken == pdTRUE;
 }
 
 static void IRAM_ATTR te_isr(void *arg)
 {
+    const int64_t now = esp_timer_get_time();
+    const int64_t d = now - s_te_last_us;
+    if (d > 12000 && d < 25000) {
+        /* smooth the measured refresh period (1/8 per edge) */
+        s_te_period_us += (uint32_t)((int32_t)(d - (int64_t)s_te_period_us) >> 3);
+    }
     s_te_edges++;
-    s_te_last_us = esp_timer_get_time();
+    s_te_last_us = now;
     BaseType_t woken = pdFALSE;
     xSemaphoreGiveFromISR(s_vsync, &woken);
     if (woken) {
@@ -78,15 +94,23 @@ static void pace_timer_cb(void *arg)
     xSemaphoreGive(s_vsync);
 }
 
+static void wake_timer_cb(void *arg)
+{
+    xSemaphoreGive(s_wake_sem);
+}
+
 esp_err_t display_init(void)
 {
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < DISPLAY_BANDS; i++) {
         s_band[i] = heap_caps_malloc(DISPLAY_BAND_BYTES, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
         ESP_RETURN_ON_FALSE(s_band[i], ESP_ERR_NO_MEM, TAG, "no internal DMA memory for band %d", i);
     }
-    s_band_free = xSemaphoreCreateCounting(2, 2);
+    s_done_sem = xSemaphoreCreateCounting(64, 0);
     s_vsync = xSemaphoreCreateBinary();
-    ESP_RETURN_ON_FALSE(s_band_free && s_vsync, ESP_ERR_NO_MEM, TAG, "no memory for semaphores");
+    s_wake_sem = xSemaphoreCreateBinary();
+    ESP_RETURN_ON_FALSE(s_done_sem && s_vsync && s_wake_sem, ESP_ERR_NO_MEM, TAG, "no memory for semaphores");
+    const esp_timer_create_args_t wargs = { .callback = wake_timer_cb, .name = "scanwait", .dispatch_method = ESP_TIMER_TASK };
+    ESP_RETURN_ON_ERROR(esp_timer_create(&wargs, &s_wake_timer), TAG, "wake timer");
 
     const spi_bus_config_t bus = CO5300_PANEL_BUS_QSPI_CONFIG(BOARD_LCD_PCLK, BOARD_LCD_DATA0, BOARD_LCD_DATA1,
                                                               BOARD_LCD_DATA2, BOARD_LCD_DATA3, DISPLAY_BAND_BYTES);
@@ -94,7 +118,7 @@ esp_err_t display_init(void)
 
     esp_lcd_panel_io_spi_config_t io_cfg = CO5300_PANEL_IO_QSPI_CONFIG(BOARD_LCD_CS, on_color_done, NULL);
     io_cfg.pclk_hz = CONFIG_EYES_LCD_PCLK_HZ;
-    io_cfg.trans_queue_depth = 4;
+    io_cfg.trans_queue_depth = 2 * DISPLAY_BANDS;
     ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)BOARD_LCD_SPI_HOST, &io_cfg, &s_io), TAG, "panel io");
 
     const co5300_vendor_config_t vendor = {
@@ -148,30 +172,103 @@ esp_err_t display_init(void)
         ESP_LOGW(TAG, "no TE edges seen on GPIO%d: pacing frames with a 60 Hz timer", BOARD_LCD_TE);
     }
 
-    ESP_LOGI(TAG, "CO5300 %dx%d over QSPI at %u MHz, 2 x %u B band buffers in internal SRAM",
-             DISPLAY_W, DISPLAY_H, (unsigned)(CONFIG_EYES_LCD_PCLK_HZ / 1000000), (unsigned)DISPLAY_BAND_BYTES);
+    ESP_LOGI(TAG, "CO5300 %dx%d over QSPI at %u MHz, %d x %u B band buffers (%d rows) in internal SRAM",
+             DISPLAY_W, DISPLAY_H, (unsigned)(CONFIG_EYES_LCD_PCLK_HZ / 1000000), DISPLAY_BANDS,
+             (unsigned)DISPLAY_BAND_BYTES, DISPLAY_BAND_ROWS);
     return ESP_OK;
+}
+
+static void wait_done_reaches(uint32_t seq)
+{
+    while ((int32_t)(seq - s_done) > 0) {
+        xSemaphoreTake(s_done_sem, portMAX_DELAY);
+    }
 }
 
 uint16_t *display_acquire_band(void)
 {
-    xSemaphoreTake(s_band_free, portMAX_DELAY);
-    return s_band[s_band_seq++ & 1];
+    const uint32_t b = s_band_seq++ % DISPLAY_BANDS;
+    wait_done_reaches(s_last_issue[b]);
+    return s_band[b];
 }
 
 void display_push(int x, int y, int w, int h, const uint16_t *band)
 {
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(s_panel, x, y, x + w, y + h, band));
+    s_issued++;
+    for (int i = 0; i < DISPLAY_BANDS; i++) {
+        if (s_band[i] == band) {
+            s_last_issue[i] = s_issued;
+            break;
+        }
+    }
     s_bytes_pushed += (uint32_t)w * (uint32_t)h * 2u;
 }
 
 void display_wait_idle(void)
 {
-    /* Both tokens available means nothing is in flight. */
-    xSemaphoreTake(s_band_free, portMAX_DELAY);
-    xSemaphoreTake(s_band_free, portMAX_DELAY);
-    xSemaphoreGive(s_band_free);
-    xSemaphoreGive(s_band_free);
+    wait_done_reaches(s_issued);
+}
+
+/* Estimated time (us since the last TE edge) at which the scan passes `row`. */
+static inline int64_t scan_us_for_row(int row)
+{
+    return ((int64_t)row * (int64_t)s_te_period_us) / DISPLAY_H;
+}
+
+/* Bus time for `bytes` of pixels: QSPI moves 4 bits per clock. */
+static inline int64_t bus_us(uint32_t bytes)
+{
+    return ((int64_t)bytes * 2 * 1000000) / CONFIG_EYES_LCD_PCLK_HZ;
+}
+
+/*
+ * Returns 0 when [y0, y1) is safe to write now, otherwise the absolute time to
+ * re-check: when the scan will have passed the band, or the next TE edge,
+ * whichever comes first.
+ */
+static int64_t band_check(int y0, int y1, uint32_t bytes, int margin_rows)
+{
+    if (!s_te_active) return 0;
+    const int64_t te = s_te_last_us;
+    const int64_t now = esp_timer_get_time();
+    const int64_t since = now - te;
+    const int64_t passed_at = scan_us_for_row(y1 + margin_rows);
+    if (since >= passed_at) return 0;
+    /* ahead of the scan: the queue in front of us plus this band must be on the panel before the scan gets here */
+    const uint32_t inflight = (s_issued - s_done) * DISPLAY_BAND_BYTES;
+    const int64_t done_at = since + bus_us(inflight + bytes) + 150;
+    if (done_at <= scan_us_for_row(y0 - margin_rows)) return 0;
+    const int64_t next_te = te + s_te_period_us;
+    const int64_t at = te + passed_at;
+    return at < next_te ? at : next_te;
+}
+
+bool display_band_safe(int y0, int y1, uint32_t bytes, int margin_rows)
+{
+    return band_check(y0, y1, bytes, margin_rows) == 0;
+}
+
+void display_wait_band_safe(int y0, int y1, uint32_t bytes, int margin_rows)
+{
+    for (;;) {
+        const int64_t target = band_check(y0, y1, bytes, margin_rows);
+        if (target == 0) return;
+        const int64_t wait = target - esp_timer_get_time();
+        if (wait <= 0) continue;
+        if (wait < 80) {
+            while (esp_timer_get_time() < target) { }
+            continue;
+        }
+        xSemaphoreTake(s_wake_sem, 0);
+        esp_timer_start_once(s_wake_timer, (uint64_t)wait);
+        xSemaphoreTake(s_wake_sem, pdMS_TO_TICKS((uint32_t)(wait / 1000) + 2));
+    }
+}
+
+uint32_t display_te_period_us(void)
+{
+    return s_te_period_us;
 }
 
 bool display_wait_vsync(uint32_t timeout_ms)

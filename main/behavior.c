@@ -14,9 +14,13 @@
 #define CONFIG_EYES_GRAVITY_FACE 1
 #endif
 
-#define FACE_TILT_ON_G      0.30f    /* lateral gravity needed before the face follows (about 17 degrees) */
-#define FACE_SLEW_DEG_S     240.f
-#define FACE_DEADBAND_DEG   2.f
+#define FACE_TILT_ON_G      0.25f    /* lateral gravity needed before the face follows (about 14 degrees) */
+#define FACE_TILT_OFF_G     0.15f    /* ...and below this it comes back upright */
+#define FACE_TAU_MS         70.f     /* first-order approach to the gravity angle */
+#define FACE_SLEW_DEG_S     720.f    /* rate cap on that approach */
+#define FACE_DEADBAND_DEG   1.5f
+#define GRAV_TAU_MS         60.f     /* gravity vector smoothing */
+#define SHAKE_TAU_MS        150.f    /* shake envelope smoothing */
 
 #define SHAKE_ON_G          ((float)CONFIG_EYES_SHAKE_MG / 1000.f)
 #define DIZZY_AFTER_MS      900.f
@@ -95,7 +99,8 @@ static void feel_motion(behavior_t *b, const behavior_in_t *in, uint32_t now_ms)
 
     /* shake: how far the magnitude departs from 1 g, smoothed over ~0.3 s */
     const float dev = fabsf(mag - 1.f);
-    b->shake += (dev - b->shake) * 0.3f;
+    const float fdt = (float)dt;
+    b->shake += (dev - b->shake) * (fdt / (fdt + SHAKE_TAU_MS));
     if (b->shake > SHAKE_ON_G) {
         b->shake_time_ms += (float)dt;
     } else {
@@ -104,7 +109,7 @@ static void feel_motion(behavior_t *b, const behavior_in_t *in, uint32_t now_ms)
     }
 
     /* gravity direction, smoothed (used for gaze and face-down) */
-    const float k = 0.15f;
+    const float k = fdt / (fdt + GRAV_TAU_MS);
     b->gx += (sg[0] - b->gx) * k;
     b->gy += (sg[1] - b->gy) * k;
     b->gz += (sg[2] - b->gz) * k;
@@ -224,7 +229,7 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
         const float lat = sqrtf(b->gx * b->gx + b->gy * b->gy);
         if (lat > FACE_TILT_ON_G) {
             b->face_target = atan2f(b->gx, -b->gy) * 57.2957795f;
-        } else if (lat < FACE_TILT_ON_G * 0.6f) {
+        } else if (lat < FACE_TILT_OFF_G) {
             b->face_target = 0.f;   /* lying flat: come back upright */
         }
         const uint32_t dt = b->face_ms ? now_ms - b->face_ms : 16;
@@ -232,8 +237,12 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
         float diff = b->face_target - b->face_angle;
         while (diff > 180.f) diff -= 360.f;
         while (diff < -180.f) diff += 360.f;
-        const float step = FACE_SLEW_DEG_S * (float)dt / 1000.f;
-        if (fabsf(diff) <= step) b->face_angle = b->face_target;
+        /* ease toward the target, but never faster than the slew cap */
+        const float fdt = (float)dt;
+        float step = fabsf(diff) * (fdt / (fdt + FACE_TAU_MS));
+        const float cap = FACE_SLEW_DEG_S * fdt / 1000.f;
+        if (step > cap) step = cap;
+        if (fabsf(diff) <= step || fabsf(diff) < 0.05f) b->face_angle = b->face_target;
         else b->face_angle += diff > 0.f ? step : -step;
         while (b->face_angle > 180.f) b->face_angle -= 360.f;
         while (b->face_angle < -180.f) b->face_angle += 360.f;
