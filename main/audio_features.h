@@ -8,6 +8,8 @@ typedef struct {
     bool active;            /* analyser running */
     float bass, mid, high;  /* band levels, 0..1 after automatic gain */
     float loud;             /* overall level, 0..1 */
+    float raw_loud;         /* overall level before automatic gain: RMS of the 16-bit samples, in LSB */
+    int16_t peak;           /* largest sample magnitude in the last frame */
     float balance;          /* -1 = left mic louder .. +1 = right mic louder */
     uint32_t beat_count;    /* increments on each bass onset */
     uint32_t last_beat_ms;

@@ -52,6 +52,15 @@ esp_err_t pmic_init(void)
     adc = (uint8_t)((adc | 0x01) & ~0x02);
     ESP_RETURN_ON_ERROR(wr(REG_ADC_CHANNEL_CTRL, adc), TAG, "adc ctrl");
 
+    /* Rail map, for the record: DCDC enable 0x80, LDO enables 0x90/0x91, ALDO1-4 voltage 0x92-0x95, BLDO1-2 0x96-0x97 */
+    {
+        uint8_t dc = 0, l0 = 0, l1 = 0, v[6] = { 0 };
+        rd(0x80, &dc); rd(0x90, &l0); rd(0x91, &l1);
+        for (int i = 0; i < 6; i++) rd((uint8_t)(0x92 + i), &v[i]);
+        ESP_LOGI(TAG, "rails: DCDC en 0x%02X, LDO en 0x%02X 0x%02X; ALDO1-4 %u %u %u %u mV, BLDO1-2 %u %u mV",
+                 dc, l0, l1, 500 + 100 * (v[0] & 0x1F), 500 + 100 * (v[1] & 0x1F), 500 + 100 * (v[2] & 0x1F),
+                 500 + 100 * (v[3] & 0x1F), 500 + 100 * (v[4] & 0x1F), 500 + 100 * (v[5] & 0x1F));
+    }
     pmic_battery_t b;
     if (pmic_read_battery(&b) == ESP_OK) {
         ESP_LOGI(TAG, "AXP2101 ok: battery %s, %u mV, %d%%, %s%s", b.present ? "present" : "absent",

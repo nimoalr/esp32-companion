@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <string.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/i2s_std.h"
@@ -25,7 +26,8 @@ static const char *TAG = "audio";
 #define BIN_MID_HI      32                  /* 2 kHz */
 #define BEAT_MIN_GAP_MS 240                 /* 250 bpm ceiling */
 
-static i2s_chan_handle_t s_rx;
+static i2s_chan_handle_t s_rx, s_tx;
+
 static esp_codec_dev_handle_t s_dev;
 static const audio_codec_ctrl_if_t *s_ctrl_if;   /* created once, kept across start/stop */
 static bool s_opened;                             /* esp_codec_dev_open succeeded */
@@ -101,7 +103,11 @@ static inline float agc(float level, float *running_max)
 static void analyse(const int16_t *pcm, uint32_t now_ms)
 {
     float l_e = 0.f, r_e = 0.f;
+    int peak = 0;
     for (int i = 0; i < FRAME; i++) {
+        const int al = abs((int)pcm[2 * i]), ar = abs((int)pcm[2 * i + 1]);
+        if (al > peak) peak = al;
+        if (ar > peak) peak = ar;
         const float l = (float)pcm[2 * i] * (1.f / 32768.f);
         const float r = (float)pcm[2 * i + 1] * (1.f / 32768.f);
         l_e += l * l;
@@ -165,6 +171,8 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     s_feat.mid = agc(mid, &s_max_mid);
     s_feat.high = agc(high, &s_max_high);
     s_feat.loud = agc(loud, &s_max_loud);
+    s_feat.raw_loud = loud * 32768.f;
+    s_feat.peak = (int16_t)(peak > 32767 ? 32767 : peak);
     s_feat.balance = s_balance;
     if (beat) s_feat.beat_count++;
     s_feat.last_beat_ms = s_last_beat_ms;
@@ -202,9 +210,10 @@ esp_err_t audio_start(void)
         tables = true;
     }
 
+    /* Full duplex like the Waveshare BSP: the RX side alone left the ES7210's data line silent. */
     i2s_chan_config_t chan = I2S_CHANNEL_DEFAULT_CONFIG(CONFIG_EYES_AUDIO_I2S_NUM, I2S_ROLE_MASTER);
     chan.auto_clear = true;
-    ESP_RETURN_ON_ERROR(i2s_new_channel(&chan, NULL, &s_rx), TAG, "i2s channel");
+    ESP_RETURN_ON_ERROR(i2s_new_channel(&chan, &s_tx, &s_rx), TAG, "i2s channel");
     const i2s_std_config_t std = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE),
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
@@ -212,20 +221,23 @@ esp_err_t audio_start(void)
             .mclk = BOARD_I2S_MCLK,
             .bclk = BOARD_I2S_BCLK,
             .ws = BOARD_I2S_LRCK,
-            .dout = I2S_GPIO_UNUSED,
+            .dout = BOARD_I2S_DOUT,
             .din = BOARD_I2S_DIN,
             .invert_flags = { 0 },
         },
     };
-    esp_err_t err = i2s_channel_init_std_mode(s_rx, &std);
+    esp_err_t err = i2s_channel_init_std_mode(s_tx, &std);
+    if (err == ESP_OK) err = i2s_channel_enable(s_tx);
+    if (err == ESP_OK) err = i2s_channel_init_std_mode(s_rx, &std);
     if (err == ESP_OK) err = i2s_channel_enable(s_rx);
     if (err != ESP_OK) {
+        i2s_del_channel(s_tx);
         i2s_del_channel(s_rx);
-        s_rx = NULL;
+        s_tx = s_rx = NULL;
         ESP_RETURN_ON_ERROR(err, TAG, "i2s std");
     }
 
-    audio_codec_i2s_cfg_t i2s_cfg = { .port = CONFIG_EYES_AUDIO_I2S_NUM, .rx_handle = s_rx, .tx_handle = NULL };
+    audio_codec_i2s_cfg_t i2s_cfg = { .port = CONFIG_EYES_AUDIO_I2S_NUM, .rx_handle = s_rx, .tx_handle = s_tx };
     s_data_if = audio_codec_new_i2s_data(&i2s_cfg);
     /* The I2C control interface registers the codec on the shared bus. Keep it
      * for good: removing the device while the touch task has a transaction in
@@ -292,6 +304,11 @@ void audio_stop(void)
         if (rx_enabled) i2s_channel_disable(s_rx);
         i2s_del_channel(s_rx);
         s_rx = NULL;
+    }
+    if (s_tx) {
+        i2s_channel_disable(s_tx);
+        i2s_del_channel(s_tx);
+        s_tx = NULL;
     }
     portENTER_CRITICAL(&s_lock);
     s_feat.active = false;
