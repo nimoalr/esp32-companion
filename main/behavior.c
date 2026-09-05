@@ -256,16 +256,26 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
         if (bx < -1.f) bx = -1.f;
         if (by > 1.f) by = 1.f;
         if (by < -1.f) by = -1.f;
-        /* with the face following gravity, the residual gaze is what is left after the turn */
-        if (out->face_angle_deg != 0.f) {
-            const float r = -out->face_angle_deg * 0.01745329f;
+        /*
+         * With the face following gravity, the residual gaze is what is left after
+         * the turn. Use the angle the face is heading to, not the eased one: while
+         * the face is still turning the eyes would otherwise chase a residual that
+         * vanishes at the end of the turn, sliding one way and back.
+         */
+        const float turn_deg = CONFIG_EYES_GRAVITY_FACE ? b->face_target : out->face_angle_deg;
+        if (turn_deg != 0.f) {
+            const float r = -turn_deg * 0.01745329f;
             const float c = cosf(r), sn = sinf(r);
             const float rx = bx * c - by * sn, ry = bx * sn + by * c;
             bx = rx; by = ry;
         }
-        /* slight handling: a small wobble proportional to the motion */
+        /* slight handling: a small wobble proportional to the motion, quiet while the face is mid-turn */
         float wob = b->shake > 0.03f ? (b->shake - 0.03f) * 40.f : 0.f;
         if (wob > 6.f) wob = 6.f;
+        float turning = fabsf(b->face_target - b->face_angle);
+        while (turning > 180.f) turning -= 360.f;
+        turning = fabsf(turning);
+        if (turning > 2.f) wob *= turning >= 30.f ? 0.f : 1.f - turning / 30.f;
         const float ph = (float)(now_ms % 1000) * 0.0062831853f * 6.f;    /* 6 Hz */
         const float wx = sinf(ph) * wob, wy = cosf(ph * 1.3f) * wob * 0.6f;
         for (int e = 0; e < 2; e++) {
