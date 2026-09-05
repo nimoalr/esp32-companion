@@ -193,7 +193,7 @@ uint16_t *display_acquire_band(void)
     return s_band[b];
 }
 
-void display_push(int x, int y, int w, int h, const uint16_t *band)
+uint32_t display_push(int x, int y, int w, int h, const uint16_t *band)
 {
     assert(w > 0 && h > 0 && (size_t)w * (size_t)h <= DISPLAY_BAND_PIXELS);   /* a band buffer holds this much */
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(s_panel, x, y, x + w, y + h, band));
@@ -205,6 +205,7 @@ void display_push(int x, int y, int w, int h, const uint16_t *band)
         }
     }
     s_bytes_pushed += (uint32_t)w * (uint32_t)h * 2u;
+    return s_issued;
 }
 
 void display_wait_idle(void)
@@ -212,60 +213,9 @@ void display_wait_idle(void)
     wait_done_reaches(s_issued);
 }
 
-/* Estimated time (us since the last TE edge) at which the scan passes `row`. */
-static inline int64_t scan_us_for_row(int row)
+void display_wait_done(uint32_t seq)
 {
-    return ((int64_t)row * (int64_t)s_te_period_us) / DISPLAY_H;
-}
-
-/* Bus time for `bytes` of pixels: QSPI moves 4 bits per clock. */
-static inline int64_t bus_us(uint32_t bytes)
-{
-    return ((int64_t)bytes * 2 * 1000000) / CONFIG_EYES_LCD_PCLK_HZ;
-}
-
-/*
- * Returns 0 when [y0, y1) is safe to write now, otherwise the absolute time to
- * re-check: when the scan will have passed the band, or the next TE edge,
- * whichever comes first.
- */
-static int64_t band_check(int y0, int y1, uint32_t bytes, int margin_rows)
-{
-    if (!s_te_active) return 0;
-    const int64_t te = s_te_last_us;
-    const int64_t now = esp_timer_get_time();
-    const int64_t since = now - te;
-    const int64_t passed_at = scan_us_for_row(y1 + margin_rows);
-    if (since >= passed_at) return 0;
-    /* ahead of the scan: the queue in front of us plus this band must be on the panel before the scan gets here */
-    const uint32_t inflight = (s_issued - s_done) * DISPLAY_BAND_BYTES;
-    const int64_t done_at = since + bus_us(inflight + bytes) + 150;
-    if (done_at <= scan_us_for_row(y0 - margin_rows)) return 0;
-    const int64_t next_te = te + s_te_period_us;
-    const int64_t at = te + passed_at;
-    return at < next_te ? at : next_te;
-}
-
-bool display_band_safe(int y0, int y1, uint32_t bytes, int margin_rows)
-{
-    return band_check(y0, y1, bytes, margin_rows) == 0;
-}
-
-void display_wait_band_safe(int y0, int y1, uint32_t bytes, int margin_rows)
-{
-    for (;;) {
-        const int64_t target = band_check(y0, y1, bytes, margin_rows);
-        if (target == 0) return;
-        const int64_t wait = target - esp_timer_get_time();
-        if (wait <= 0) continue;
-        if (wait < 80) {
-            while (esp_timer_get_time() < target) { }
-            continue;
-        }
-        xSemaphoreTake(s_wake_sem, 0);
-        esp_timer_start_once(s_wake_timer, (uint64_t)wait);
-        xSemaphoreTake(s_wake_sem, pdMS_TO_TICKS((uint32_t)(wait / 1000) + 2));
-    }
+    wait_done_reaches(seq);
 }
 
 void display_wait_after_te(uint32_t us)

@@ -39,6 +39,8 @@ static const char *TAG = "eyes";
 #define STATS_PERIOD_US    1000000
 #define DROWSY_PERIOD      (60 / CONFIG_EYES_DROWSY_FPS)
 #define UI_TIMEOUT_MS      (CONFIG_EYES_UI_TIMEOUT_S * 1000u)
+#define RECT_GRID          16
+#define FB_BYTES           (DISPLAY_FRAME_BYTES * 3)     /* dirty rects may overlap; three screens of room */
 
 typedef struct {
     int x0, y0, x1, y1;     /* [x0, x1) x [y0, y1) in pixels; empty when x0 >= x1 */
@@ -85,10 +87,12 @@ static bool rect_overlaps(const rect_t *a, const rect_t *b)
 static rect_t rect_align(rect_t r)
 {
     if (rect_is_empty(&r)) return rect_empty();
-    r.x0 &= ~(BOARD_LCD_PIXEL_ALIGN - 1);
-    r.y0 &= ~(BOARD_LCD_PIXEL_ALIGN - 1);
-    r.x1 = (r.x1 + BOARD_LCD_PIXEL_ALIGN - 1) & ~(BOARD_LCD_PIXEL_ALIGN - 1);
-    r.y1 = (r.y1 + BOARD_LCD_PIXEL_ALIGN - 1) & ~(BOARD_LCD_PIXEL_ALIGN - 1);
+    /* 16 px grid: w * h * 2 is then a multiple of 64 (except at the clipped screen edge),
+     * which lets the SPI driver DMA straight from PSRAM without a bounce copy. */
+    r.x0 &= ~(RECT_GRID - 1);
+    r.y0 &= ~(RECT_GRID - 1);
+    r.x1 = (r.x1 + RECT_GRID - 1) & ~(RECT_GRID - 1);
+    r.y1 = (r.y1 + RECT_GRID - 1) & ~(RECT_GRID - 1);
     if (r.x0 < 0) r.x0 = 0;
     if (r.y0 < 0) r.y0 = 0;
     if (r.x1 > DISPLAY_W) r.x1 = DISPLAY_W;
@@ -153,77 +157,6 @@ typedef struct {
     uint32_t tap_count;
     bool mic_ok;
 } render_ctx_t;
-
-/*
- * Frame pipeline. The dirty rects are cut into band jobs on a global 16-row
- * grid and rendered in row order (both eyes' pieces of a band back to back), so
- * the panel write moves down the screen once per frame. A job is pushed only
- * after the panel's scan has passed it; meanwhile the raster runs ahead into
- * the other band buffers.
- */
-typedef struct {
-    int x0, y, w, rows;
-    uint16_t *buf;
-} band_job_t;
-
-typedef struct {
-    band_job_t q[DISPLAY_BANDS];
-    int head, count;
-    uint32_t wait_us;      /* time spent waiting for the scan this frame */
-} band_queue_t;
-
-static void job_push(band_queue_t *bq)
-{
-    const band_job_t *j = &bq->q[bq->head];
-    display_push(j->x0, j->y, j->w, j->rows, j->buf);
-    bq->head = (bq->head + 1) % DISPLAY_BANDS;
-    bq->count--;
-}
-
-static inline uint32_t job_bytes(const band_job_t *j)
-{
-    return (uint32_t)j->w * (uint32_t)j->rows * 2u;
-}
-
-static inline bool job_safe(const band_job_t *j)
-{
-    return display_band_safe(j->y, j->y + j->rows, job_bytes(j), CONFIG_EYES_SCAN_MARGIN_ROWS);
-}
-
-static void job_push_when_safe(band_queue_t *bq)
-{
-    const band_job_t *j = &bq->q[bq->head];
-    if (!job_safe(j)) {
-        const int64_t t0 = esp_timer_get_time();
-        display_wait_band_safe(j->y, j->y + j->rows, job_bytes(j), CONFIG_EYES_SCAN_MARGIN_ROWS);
-        bq->wait_us += (uint32_t)(esp_timer_get_time() - t0);
-    }
-    job_push(bq);
-}
-
-static void job_flush(band_queue_t *bq)
-{
-    while (bq->count) job_push_when_safe(bq);
-}
-
-/* Acquire a band buffer for the next job, pushing older jobs as the scan allows. */
-static uint16_t *job_begin(band_queue_t *bq)
-{
-    while (bq->count && job_safe(&bq->q[bq->head])) {
-        job_push(bq);
-    }
-    if (bq->count == DISPLAY_BANDS) {
-        job_push_when_safe(bq);
-    }
-    return display_acquire_band();
-}
-
-static void job_end(band_queue_t *bq, int x0, int y, int w, int rows, uint16_t *buf)
-{
-    band_job_t *j = &bq->q[(bq->head + bq->count) % DISPLAY_BANDS];
-    *j = (band_job_t){ x0, y, w, rows, buf };
-    bq->count++;
-}
 
 /*
  * Second raster core. The render task takes the top half of every band piece,
@@ -299,27 +232,83 @@ static void scan_test_stripe(int delay_ms, uint32_t frame)
     display_wait_idle();
 }
 
-/* Render and push every dirty rect of the frame, in band order. */
-static void push_frame(band_queue_t *bq, const rect_t *dirty, int ndirty, const render_ctx_t *c, uint32_t now_ms)
+/*
+ * Frame path. The panel latches its whole frame memory at the TE edge, so a
+ * write only tears when it straddles an edge. Every frame is therefore
+ * rastered completely into a PSRAM frame buffer first (both cores), and pushed
+ * from there right after the next TE edge at bus speed. Two buffers alternate
+ * so the raster of frame N+1 overlaps the transfer of frame N.
+ */
+typedef struct {
+    uint16_t *base;
+    uint32_t seq;           /* sequence number of the last push from this buffer */
+} framebuf_t;
+
+typedef struct {
+    rect_t r;
+    const uint16_t *pixels;
+} frame_piece_t;
+
+static framebuf_t s_fb[2];
+static int s_fb_cur;
+
+static void fb_init(void)
 {
-    int ymin = DISPLAY_H, ymax = 0;
-    for (int i = 0; i < ndirty; i++) {
-        if (dirty[i].y0 < ymin) ymin = dirty[i].y0;
-        if (dirty[i].y1 > ymax) ymax = dirty[i].y1;
-    }
-    bq->wait_us = 0;
-    for (int by = ymin - ymin % DISPLAY_BAND_ROWS; by < ymax; by += DISPLAY_BAND_ROWS) {
-        for (int i = 0; i < ndirty; i++) {
-            const rect_t *r = &dirty[i];
-            const int y0 = r->y0 > by ? r->y0 : by;
-            const int y1 = r->y1 < by + DISPLAY_BAND_ROWS ? r->y1 : by + DISPLAY_BAND_ROWS;
-            if (y0 >= y1) continue;
-            uint16_t *band = job_begin(bq);
-            paint_piece(band, r->x0, y0, r->x1 - r->x0, y1 - y0, c, now_ms);
-            job_end(bq, r->x0, y0, r->x1 - r->x0, y1 - y0, band);
+    for (int i = 0; i < 2; i++) {
+        s_fb[i].base = heap_caps_aligned_alloc(64, FB_BYTES, MALLOC_CAP_SPIRAM);
+        if (!s_fb[i].base) {
+            ESP_LOGE(TAG, "no PSRAM for frame buffer %d (%u B)", i, (unsigned)FB_BYTES);
+            abort();
         }
     }
-    job_flush(bq);
+}
+
+/* Raster every dirty rect into the current frame buffer; fills `pieces` (returns their count). */
+static int render_frame(const rect_t *dirty, int ndirty, const render_ctx_t *c, uint32_t now_ms, frame_piece_t *pieces)
+{
+    framebuf_t *fb = &s_fb[s_fb_cur];
+    display_wait_done(fb->seq);         /* its previous transfer must be off the bus */
+    size_t off = 0;
+    int n = 0;
+    for (int i = 0; i < ndirty; i++) {
+        const rect_t *r = &dirty[i];
+        const int w = r->x1 - r->x0, h = r->y1 - r->y0;
+        const size_t bytes = (size_t)w * (size_t)h * 2u;
+        if (off + bytes > FB_BYTES) {
+            ESP_LOGW(TAG, "frame buffer full: dropping rect %d", i);
+            continue;
+        }
+        uint16_t *block = fb->base + off / 2;
+        for (int y = r->y0; y < r->y1; y += DISPLAY_BAND_ROWS) {
+            const int rows = (r->y1 - y) < DISPLAY_BAND_ROWS ? (r->y1 - y) : DISPLAY_BAND_ROWS;
+            paint_piece(block + (size_t)(y - r->y0) * w, r->x0, y, w, rows, c, now_ms);
+        }
+        pieces[n++] = (frame_piece_t){ *r, block };
+        off += (bytes + 63) & ~(size_t)63;
+    }
+    return n;
+}
+
+/*
+ * Queue the frame's pieces to the panel (call right after the TE edge). DMA
+ * straight from PSRAM underruns the QSPI clock, so each band is copied into an
+ * internal bounce buffer first; the copy of one band overlaps the transfer of
+ * the previous one, so the loop runs at bus speed.
+ */
+static void push_frame(const frame_piece_t *pieces, int n)
+{
+    framebuf_t *fb = &s_fb[s_fb_cur];
+    for (int i = 0; i < n; i++) {
+        const rect_t *r = &pieces[i].r;
+        const int w = r->x1 - r->x0;
+        for (int y = r->y0; y < r->y1; y += DISPLAY_BAND_ROWS) {
+            const int rows = (r->y1 - y) < DISPLAY_BAND_ROWS ? (r->y1 - y) : DISPLAY_BAND_ROWS;
+            uint16_t *band = display_acquire_band();
+            memcpy(band, pieces[i].pixels + (size_t)(y - r->y0) * w, (size_t)w * rows * 2u);
+            fb->seq = display_push(r->x0, y, w, rows, band);
+        }
+    }
+    s_fb_cur ^= 1;
 }
 
 static void enter_ui(render_ctx_t *c, bool first_boot, uint32_t now_ms)
@@ -476,6 +465,7 @@ static void render_task(void *arg)
 {
     static render_ctx_t c;
     s_render = xTaskGetCurrentTaskHandle();
+    fb_init();
     if (xTaskCreatePinnedToCore(raster_worker, "raster0", 8192, NULL, 8, &s_worker, 0) != pdPASS) {
         s_worker = NULL;
         ESP_LOGW(TAG, "no raster worker: single-core raster");
@@ -504,9 +494,8 @@ static void render_task(void *arg)
     /* stats */
     int64_t stats_t0 = esp_timer_get_time();
     uint32_t frames = 0, vsync_miss = 0;
-    uint64_t frame_us_sum = 0, wait_us_sum = 0;
-    band_queue_t bq = { 0 };
-    uint32_t frame_us_max = 0;
+    uint64_t raster_us_sum = 0, push_us_sum = 0;
+    uint32_t raster_us_max = 0;
     uint32_t rects_sum = 0;
 
     for (;;) {
@@ -652,6 +641,12 @@ static void render_task(void *arg)
             }
         }
 
+        /* Raster the whole frame first (into PSRAM), while the previous frame's transfer runs. */
+        const int64_t t_raster0 = esp_timer_get_time();
+        frame_piece_t pieces[UI_MAX_DIRTY + ACC_MAX_DIRTY + 2];
+        const int npieces = render_frame(dirty, ndirty, &c, now_ms, pieces);
+        const uint32_t raster_us = (uint32_t)(esp_timer_get_time() - t_raster0);
+
         /* Pacing: every TE edge when ACTIVE; every Nth edge, light-sleeping in between, when DROWSY. */
         if (state == POWER_DROWSY) {
             power_allow_light_sleep(true);
@@ -661,21 +656,20 @@ static void render_task(void *arg)
         if (!display_wait_vsync(VSYNC_TIMEOUT_MS)) {
             vsync_miss++;
         }
-        const int64_t t_frame = esp_timer_get_time();
-
-        push_frame(&bq, dirty, ndirty, &c, now_ms);
-        display_wait_idle();
+        const int64_t t_push0 = esp_timer_get_time();
+        push_frame(pieces, npieces);
         if (c.mode == MODE_UI && c.ui.screen == UI_SCREEN_SCANTEST) {
+            display_wait_idle();
             scan_test_stripe(ui_scantest_delay_ms(&c.ui, now_ms), frames);
         }
-        wait_us_sum += bq.wait_us;
         brightness_step(state == POWER_ACTIVE ? 3 : 2);
+        const uint32_t push_us = (uint32_t)(esp_timer_get_time() - t_push0);
 
-        const uint32_t frame_us = (uint32_t)(esp_timer_get_time() - t_frame);
         frames++;
         rects_sum += (uint32_t)ndirty;
-        frame_us_sum += frame_us;
-        if (frame_us > frame_us_max) frame_us_max = frame_us;
+        raster_us_sum += raster_us;
+        push_us_sum += push_us;
+        if (raster_us > raster_us_max) raster_us_max = raster_us;
 
         const int64_t now_us = esp_timer_get_time();
         if (now_us - stats_t0 >= STATS_PERIOD_US && frames) {
@@ -687,11 +681,11 @@ static void render_task(void *arg)
             if (af.active) {
                 snprintf(audio_s, sizeof audio_s, " | audio %" PRIu32 " us/frame, %d bpm", af.cpu_us, (int)af.bpm);
             }
-            ESP_LOGI(TAG, "%s %s [%s, energy %.2f]: %" PRIu32 " fps | frame %" PRIu32 " us avg (%" PRIu32 " waiting for scan), %" PRIu32 " us max | %" PRIu32 " B/frame, %" PRIu32 " rect(s) | pace %s%s | bri %d%% | batt %u mV %d%%%s%s%s | stack %u B free",
+            ESP_LOGI(TAG, "%s %s [%s, energy %.2f]: %" PRIu32 " fps | raster %" PRIu32 " us avg, %" PRIu32 " us max | push %" PRIu32 " us | %" PRIu32 " B/frame, %" PRIu32 " rect(s) | pace %s%s | bri %d%% | batt %u mV %d%%%s%s%s | stack %u B free",
                      power_state_name(state), c.mode == MODE_UI ? ui_screen_name(c.ui.screen) : anim_name(c.sm.id),
                      behavior_state_name(c.beh.state), behavior_energy(&c.beh),
                      (frames * 1000u + elapsed_ms / 2) / elapsed_ms,
-                     (uint32_t)(frame_us_sum / frames), (uint32_t)(wait_us_sum / frames), frame_us_max,
+                     (uint32_t)(raster_us_sum / frames), raster_us_max, (uint32_t)(push_us_sum / frames),
                      bytes / frames, (rects_sum + frames / 2) / frames,
                      display_te_active() ? "TE" : "timer",
                      vsync_miss ? " (missed vsync)" : "",
@@ -701,9 +695,9 @@ static void render_task(void *arg)
             stats_t0 = now_us;
             frames = 0;
             vsync_miss = 0;
-            frame_us_sum = 0;
-            wait_us_sum = 0;
-            frame_us_max = 0;
+            raster_us_sum = 0;
+            push_us_sum = 0;
+            raster_us_max = 0;
             rects_sum = 0;
         }
     }
