@@ -240,27 +240,6 @@ static inline int IRAM_ATTR shape_spans(const raster_shape_t *s, int32_t y, span
  */
 #define FINF 3.0e38f
 
-/* Intervals of screen x (relative to the centre) where k*x + off is below -h, within [-h, h], above h. */
-static inline void IRAM_ATTR zones3(float k, float off, float h, float z[3][2])
-{
-    if (k > -1e-6f && k < 1e-6f) {
-        for (int i = 0; i < 3; i++) { z[i][0] = FINF; z[i][1] = -FINF; }
-        const int i = off < -h ? 0 : (off > h ? 2 : 1);
-        z[i][0] = -FINF; z[i][1] = FINF;
-        return;
-    }
-    const float x1 = (-h - off) / k, x2 = (h - off) / k;
-    if (k > 0.f) {
-        z[0][0] = -FINF; z[0][1] = x1;
-        z[1][0] = x1;    z[1][1] = x2;
-        z[2][0] = x2;    z[2][1] = FINF;
-    } else {
-        z[0][0] = x1;    z[0][1] = FINF;
-        z[1][0] = x2;    z[1][1] = x1;
-        z[2][0] = -FINF; z[2][1] = x2;
-    }
-}
-
 /* Screen-x interval where -h <= k*x + off <= h. Empty when lo >= hi. */
 static inline void IRAM_ATTR band3(float k, float off, float h, float *lo, float *hi)
 {
@@ -272,67 +251,64 @@ static inline void IRAM_ATTR band3(float k, float off, float h, float *lo, float
     if (x1 < x2) { *lo = x1; *hi = x2; } else { *lo = x2; *hi = x1; }
 }
 
-/*
- * Interval of the line (lx = c*x + p, ly = -sn*x + q) inside the rounded rectangle of
- * half sizes (hw, hh) and corner radius r, restricted to screen x in [xlo, xhi].
- * Widens [*lo, *hi].
- */
-static inline __attribute__((always_inline)) void IRAM_ATTR rr_interval(float c, float sn, float p, float q, float hw, float hh, float rx, float ry,
-                                         bool clip, float xlo, float xhi, float *lo, float *hi)
+/* Screen-x range where k*x > m (a ray). */
+static inline void IRAM_ATTR ray_gt(float k, float m, float *lo, float *hi)
 {
-    const float a = hw - rx, b = hh - ry;
-    const bool circ = rx == ry;
-    float xz[3][2], yz[3][2];
-    zones3(c, p, a, xz);
-    zones3(-sn, q, b, yz);
-    for (int i = 0; i < 3; i++) {
-        for (int j = 0; j < 3; j++) {
-            float rlo = xz[i][0] > yz[j][0] ? xz[i][0] : yz[j][0];
-            float rhi = xz[i][1] < yz[j][1] ? xz[i][1] : yz[j][1];
-            if (clip) {
-                if (rlo < xlo) rlo = xlo;
-                if (rhi > xhi) rhi = xhi;
-            }
-            if (rlo >= rhi) continue;
-            float clo, chi;
-            if (i == 1 && j == 1) {
-                clo = -FINF; chi = FINF;
-            } else if (i == 1) {
-                band3(-sn, q, hh, &clo, &chi);
-            } else if (j == 1) {
-                band3(c, p, hw, &clo, &chi);
+    if (k > 1e-6f) { *lo = m / k; *hi = FINF; }
+    else if (k < -1e-6f) { *lo = -FINF; *hi = m / k; }
+    else if (m < 0.f) { *lo = -FINF; *hi = FINF; }
+    else { *lo = FINF; *hi = -FINF; }
+}
+
+/*
+ * Walk one end of the line's interval inside the rounded rectangle. `x` is where the line
+ * enters the plain rectangle (dir > 0: from the left, dir < 0: from the right). The shape is
+ * convex, so the true end is either right there (a flat edge), on the corner ellipse of the
+ * corner zone the point sits in, or where the line leaves that corner zone. At most a few
+ * steps, instead of testing all nine zone combinations for every sub-row.
+ */
+static inline float IRAM_ATTR rot_refine_end(const raster_shape_t *s, float c, float sn, float p, float q,
+                                             float x, float limit, int dir)
+{
+    const float hw = s->fhw, hh = s->fhh;
+    for (int step = 0; step < 4; step++) {
+        const float xe = x + (dir > 0 ? 1e-3f : -1e-3f);          /* just inside the interval */
+        const float u = c * xe + p, v = -sn * xe + q;
+        const int qi = (u >= 0.f ? 1 : 0) + (v >= 0.f ? 2 : 0);
+        const float rx = s->frad[qi], ry = s->frady[qi];
+        const float a = hw - rx, b = hh - ry;
+        const float su = u >= 0.f ? 1.f : -1.f, sv = v >= 0.f ? 1.f : -1.f;
+        if (!(su * u > a && sv * v > b)) {
+            return x;                                            /* edge or centre zone: inside */
+        }
+        /* corner zone: its x range, and the corner ellipse */
+        float zl, zr, l2, h2;
+        ray_gt(c * su, a - su * p, &zl, &zr);
+        ray_gt(-sn * sv, b - sv * q, &l2, &h2);
+        if (l2 > zl) zl = l2;
+        if (h2 < zr) zr = h2;
+        const float pp = p - su * a, qq = q - sv * b;
+        const float ix = s->finv_rx2[qi], iy = s->finv_ry2[qi];
+        const float A = c * c * ix + sn * sn * iy;
+        const float Bh = c * pp * ix - sn * qq * iy;
+        const float C = pp * pp * ix + qq * qq * iy - 1.f;
+        const float D = Bh * Bh - A * C;
+        if (D > 0.f) {
+            const float sq = sqrtf(D), ia = 1.f / A;
+            const float e0 = (-Bh - sq) * ia, e1 = (-Bh + sq) * ia;
+            if (dir > 0) {
+                const float cand = e0 > x ? e0 : x;
+                if (cand <= e1 && cand <= zr) return cand;
             } else {
-                const float sx = (i == 0) ? -1.f : 1.f, sy = (j == 0) ? -1.f : 1.f;
-                const float pp = p - sx * a, qq = q - sy * b;   /* u = c*x + pp, v = -sn*x + qq */
-                if (circ) {
-                    const float beta = c * pp - sn * qq;         /* x^2 + 2*beta*x + gamma <= 0 */
-                    const float gamma = pp * pp + qq * qq - rx * rx;
-                    const float D = beta * beta - gamma;
-                    if (D <= 0.f) continue;
-                    const float sq = sqrtf(D);
-                    clo = -beta - sq;
-                    chi = -beta + sq;
-                } else {
-                    /* ellipse: u^2/rx^2 + v^2/ry^2 <= 1 */
-                    const float ix = 1.f / (rx * rx), iy = 1.f / (ry * ry);
-                    const float A = c * c * ix + sn * sn * iy;
-                    const float Bh = c * pp * ix - sn * qq * iy;                 /* half of B */
-                    const float C = pp * pp * ix + qq * qq * iy - 1.f;
-                    const float D = Bh * Bh - A * C;
-                    if (D <= 0.f) continue;
-                    const float sq = sqrtf(D);
-                    clo = (-Bh - sq) / A;
-                    chi = (-Bh + sq) / A;
-                }
-            }
-            if (clo > rlo) rlo = clo;
-            if (chi < rhi) rhi = chi;
-            if (rlo < rhi) {
-                if (rlo < *lo) *lo = rlo;
-                if (rhi > *hi) *hi = rhi;
+                const float cand = e1 < x ? e1 : x;
+                if (cand >= e0 && cand >= zl) return cand;
             }
         }
+        /* the line misses this corner's arc: leave the zone and look again */
+        x = dir > 0 ? zr : zl;
+        if (dir > 0 ? x >= limit : x <= limit) return limit;
     }
+    return x;
 }
 
 static inline int IRAM_ATTR shape_spans_rot(const raster_shape_t *s, int32_t y, span_t *out)
@@ -340,27 +316,18 @@ static inline int IRAM_ATTR shape_spans_rot(const raster_shape_t *s, int32_t y, 
     const float Y = (float)(y - s->cy) * (1.f / 65536.f);
     const float c = s->fc, sn = s->fs;
     const float p = sn * Y, q = c * Y;               /* lx = c*x + p, ly = -sn*x + q */
-    float lo = FINF, hi = -FINF;
 
-    if (s->rad_equal) {
-        rr_interval(c, sn, p, q, s->fhw, s->fhh, s->frad[0], s->frady[0], false, -FINF, FINF, &lo, &hi);
-    } else {
-        /* split the line where it crosses the local axes; each piece lies in one quadrant */
-        float cut[2];
-        int nc = 0;
-        if (c > 1e-6f || c < -1e-6f) cut[nc++] = -p / c;
-        if (sn > 1e-6f || sn < -1e-6f) cut[nc++] = q / sn;
-        if (nc == 2 && cut[0] > cut[1]) { const float t = cut[0]; cut[0] = cut[1]; cut[1] = t; }
-        for (int k = 0; k <= nc; k++) {
-            const float xlo = k == 0 ? -FINF : cut[k - 1];
-            const float xhi = k == nc ? FINF : cut[k];
-            if (xlo >= xhi) continue;
-            const float xm = (k == 0) ? (nc ? cut[0] - 1.f : 0.f) : (k == nc ? cut[nc - 1] + 1.f : 0.5f * (xlo + xhi));
-            const float lx = c * xm + p, ly = -sn * xm + q;
-            const int qi = (lx >= 0.f ? 1 : 0) + (ly >= 0.f ? 2 : 0);
-            rr_interval(c, sn, p, q, s->fhw, s->fhh, s->frad[qi], s->frady[qi], true, xlo, xhi, &lo, &hi);
-        }
-    }
+    /* the plain rectangle first: |lx| <= hw and |ly| <= hh */
+    float lo, hi, l2, h2;
+    band3(c, p, s->fhw, &lo, &hi);
+    band3(-sn, q, s->fhh, &l2, &h2);
+    if (l2 > lo) lo = l2;
+    if (h2 < hi) hi = h2;
+    if (lo >= hi) return 0;
+    /* then pull each end in over its corner */
+    const float lo2 = rot_refine_end(s, c, sn, p, q, lo, hi, +1);
+    const float hi2 = rot_refine_end(s, c, sn, p, q, hi, lo2, -1);
+    lo = lo2; hi = hi2;
     if (lo >= hi) return 0;
 
     /* top lid, straight: keep ly >= top + slant*lx  ->  (-sn - slant*c) x >= top + slant*p - q */
@@ -597,7 +564,12 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
         return;
     }
 
-    /* General path (bottom arc splits the row): accumulate over the union extent. */
+    /*
+     * General path (a lid curve splits the row into several spans). Pixels inside every
+     * sub-row's spans are solid and filled directly; only the pixels around the span ends
+     * go through the coverage accumulator. Before, the whole row went through it, which
+     * made a curved-lid row about six times the cost of a plain one.
+     */
     int32_t L = INT32_MAX, R = INT32_MIN;
     for (int k = 0; k < 4; k++) {
         for (int j = 0; j < ns[k]; j++) {
@@ -612,14 +584,68 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
     if (pl >= pr) {
         return;
     }
-    const int n = pr - pl;
-    memset(cov, 0, (size_t)n);
-    for (int k = 0; k < 4; k++) {
-        for (int j = 0; j < ns[k]; j++) {
-            cov_add(cov, pl, n, sp[k][j].l, sp[k][j].r, k_sub_w[k]);
+
+    /* solid core: intersection of the four span lists, in whole pixels */
+    span_t core_a[2 * RASTER_MAX_SPANS], core_b[2 * RASTER_MAX_SPANS];
+    span_t *core = core_a, *tmp = core_b;
+    int ncore = 0;
+    if (ns[0] && ns[1] && ns[2] && ns[3]) {
+        for (int j = 0; j < ns[0]; j++) core[ncore++] = sp[0][j];
+        for (int k = 1; k < 4 && ncore; k++) {
+            int nt = 0, a = 0, b = 0;
+            while (a < ncore && b < ns[k] && nt < 2 * RASTER_MAX_SPANS) {
+                const int32_t l = core[a].l > sp[k][b].l ? core[a].l : sp[k][b].l;
+                const int32_t r = core[a].r < sp[k][b].r ? core[a].r : sp[k][b].r;
+                if (l < r) { tmp[nt].l = l; tmp[nt].r = r; nt++; }
+                if (core[a].r < sp[k][b].r) a++; else b++;
+            }
+            span_t *t = core; core = tmp; tmp = t;
+            ncore = nt;
         }
     }
-    blit_cov(row + (pl - bx0), cov, n, s, pl, py, over);
+
+    int x = pl;
+    for (int i = 0; i <= ncore; i++) {
+        int cl, cr;
+        if (i < ncore) {
+            cl = (core[i].l + 0xFFFF) >> 16;
+            cr = core[i].r >> 16;
+            if (cl < pl) cl = pl;
+            if (cr > pr) cr = pr;
+            if (cl >= cr) continue;
+        } else {
+            cl = cr = pr;
+        }
+        /* edge pixels before this core */
+        if (cl > x) {
+            const int n = cl - x;
+            memset(cov, 0, (size_t)n);
+            for (int k = 0; k < 4; k++) {
+                for (int j = 0; j < ns[k]; j++) {
+                    cov_add(cov, x, n, sp[k][j].l, sp[k][j].r, k_sub_w[k]);
+                }
+            }
+            blit_cov(row + (x - bx0), cov, n, s, x, py, over);
+        }
+        if (cr > cl) {
+            if (over) {
+                /* the over-paint blend wants coverage for every pixel; keep the exact path */
+                const int n = cr - cl;
+                memset(cov, 0, (size_t)n);
+                for (int k = 0; k < 4; k++) {
+                    for (int j = 0; j < ns[k]; j++) {
+                        cov_add(cov, cl, n, sp[k][j].l, sp[k][j].r, k_sub_w[k]);
+                    }
+                }
+                blit_cov(row + (cl - bx0), cov, n, s, cl, py, over);
+            } else if (s->hot) {
+                fill_hot(row + (cl - bx0), cr - cl, s, cl, py);
+            } else {
+                fill16(row + (cl - bx0), s->lut[255], cr - cl);
+            }
+        }
+        x = cr > x ? cr : x;
+    }
 }
 
 static void IRAM_ATTR draw_shapes(uint16_t *dst, int x0, int y0, int w, int rows, const raster_shape_t *shapes, int nshapes, bool over)
@@ -697,6 +723,8 @@ void raster_shape_finalize(raster_shape_t *s, int screen_w, int screen_h)
         for (int i = 0; i < 4; i++) {
             s->frad[i] = (float)s->rad[i] * k;
             s->frady[i] = (float)s->rady[i] * k;
+            s->finv_rx2[i] = s->frad[i] > 1e-3f ? 1.f / (s->frad[i] * s->frad[i]) : 1e6f;
+            s->finv_ry2[i] = s->frady[i] > 1e-3f ? 1.f / (s->frady[i] * s->frady[i]) : 1e6f;
         }
         s->ftop = (float)(s->top_base - s->cy) * k;
         s->fbot = (float)(s->bot_base - s->cy) * k;

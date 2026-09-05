@@ -65,7 +65,7 @@ tapped expression while a reaction lasts:
 | Tilting the device | The whole face turns about the screen centre so "up" stays up, like a badge on a wheel hub (past ~17 deg of tilt; back upright when flat). Within that, the eyes slide a little toward the low side, and slight handling adds a small wobble. |
 | Shaking | Dizzy after about a second; passing out after about four: X eyes, stars circling overhead for 8 s, then a groggy few seconds. |
 | Face down on the table | Eyes close, z's float up; lifting it back gives a short surprised wake. |
-| Music | Every 20 s while awake the mics listen for 3 s. Regular beats trigger a reaction rolled against his mood: usually a dance, headphones sliding on more often when he is energetic, sometimes an unimpressed look before ignoring the music for a while. Quiet or a tap ends it. |
+| Music | Every 20 s while awake the mics listen for 3 s. Regular beats trigger a reaction rolled against his mood: usually a dance, sometimes an unimpressed look before ignoring the music for a while. Quiet or a tap ends it. |
 
 **Colour.** The eye colour is a setting (eight named colours, chosen in the
 setup UI, persisted in NVS) and stays the character's identity. Expressions
@@ -78,7 +78,7 @@ colour actually changes.
 
 Mood is a single "energy" value that rises when he is handled or touched,
 sinks with time and wanders a little; it biases the music reaction and can
-drive more later. Props (headphones, stars, X eyes, z's) are drawn through the
+drive more later. Props (stars, X eyes, z's) are drawn through the
 same band path as the eyes and rotate with the face.
 
 **Dance mode.** The last expression (also reachable from the setup menu)
@@ -162,7 +162,7 @@ main/
   anim.c/.h               keyframe + modulator table for 23 expressions, dance choreography
   audio.c/.h              ES7210 microphones over I2S via esp_codec_dev; 256-point FFT, bands, onsets, balance
   behavior.c/.h           environment reactions: shake/knock-out, face-down, music sniffing, mood, gravity face; pure C
-  accessories.c/.h        headphones, stars, X eyes, z's; rotate with the face; pure C
+  accessories.c/.h        stars, X eyes, z's; rotate with the face; pure C
   power.c/.h              ACTIVE / DROWSY / SLEEP / DEEP, motion detector, PM locks, sleep
   imu.c/.h                QMI8658: accelerometer polling, hardware wake-on-motion
   pmic.c/.h               AXP2101: battery telemetry, soft power off

@@ -41,14 +41,13 @@ int main(void) {
     printf("rot30 bbox L[%d,%d)x[%d,%d)\n", sh[0].px0, sh[0].px1, sh[0].py0, sh[0].py1);
     anim_set(&sm, &eyes, ANIM_HAPPY, t); eyes_set_face_angle(&eyes, 90.f); settle(&sm, &eyes, sh, &t, 400); render(sh, &acc, t); ppm("out/c_rot90_happy.ppm");
     anim_set(&sm, &eyes, ANIM_ANGRY, t); eyes_set_face_angle(&eyes, -140.f); settle(&sm, &eyes, sh, &t, 400); render(sh, &acc, t); ppm("out/c_rotm140_angry.ppm");
-    /* 4: dance with headphones, 20 deg */
-    anim_set(&sm, &eyes, ANIM_DANCE, t); eyes_set_face_angle(&eyes, 20.f); acc_set_angle(&acc, 20.f); acc_set_headphones(&acc, true, t);
-    audio_features_t af = { .active = true, .loud = 0.8f, .bass = 0.9f, .beat_count = 3, .last_beat_ms = t };
+    /* 4: dance, 20 deg */
+    anim_set(&sm, &eyes, ANIM_DANCE, t); eyes_set_face_angle(&eyes, 20.f); acc_set_angle(&acc, 20.f); audio_features_t af = { .active = true, .loud = 0.8f, .bass = 0.9f, .beat_count = 3, .last_beat_ms = t };
     anim_set_audio(&sm, &af);
     for (int i = 0; i < 40; i++) { t += 16; acc_update(&acc, t, ar); anim_update(&sm, &eyes, t); eyes_update(&eyes, t, sh); }
-    render(sh, &acc, t); ppm("out/c_dance_headphones.ppm");
+    render(sh, &acc, t); ppm("out/c_dance_rotated.ppm");
     /* 5: knocked out, upright */
-    acc_set_headphones(&acc, false, t); eyes_set_face_angle(&eyes, 0.f); acc_set_angle(&acc, 0.f);
+    eyes_set_face_angle(&eyes, 0.f); acc_set_angle(&acc, 0.f);
     for (int i = 0; i < 40; i++) { t += 16; acc_update(&acc, t, ar); }
     anim_set(&sm, &eyes, ANIM_SLEEPING, t); acc_set_knocked_out(&acc, true, t);
     settle(&sm, &eyes, sh, &t, 700); sh[0].visible = sh[1].visible = false; acc_update(&acc, t, ar); render(sh, &acc, t); ppm("out/c_ko.ppm");
@@ -78,14 +77,14 @@ int main(void) {
         if (step == 1050 || step == 1099 || step == 1150) printf("t=%5.1fs face angle %.1f deg, gaze dx %.1f px\n", (t - 1000) / 1000.f, bo.face_angle_deg, bo.env[0].dx / 65536.f);
     }
     /* music reaction rolls */
-    int hp = 0, dance = 0, meh = 0;
+    int dance = 0, meh = 0;
     for (int trial = 0; trial < 200; trial++) {
         behavior_init(&b, t); b.energy = 0.6f; b.next_sniff_ms = t; in.mic_available = true;
         in.audio = (audio_features_t){ .active = true, .beat_count = 8, .bpm = 120, .regularity = 0.9f, .loud = 0.5f };
         for (int i = 0; i < 10; i++) { t += 100; behavior_update(&b, &in, t, &bo); }
-        if (b.state == BEH_MUSIC) { dance++; if (bo.headphones) hp++; } else if (b.state == BEH_UNIMPRESSED) meh++;
+        if (b.state == BEH_MUSIC) { dance++; } else if (b.state == BEH_UNIMPRESSED) meh++;
         t += 1000;
     }
-    printf("music rolls at energy 0.6: dance %d (headphones %d), unimpressed %d\n", dance, hp, meh);
+    printf("music rolls at energy 0.6: dance %d, unimpressed %d\n", dance, meh);
     return 0;
 }

@@ -189,7 +189,6 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
                 if (r < 0.12f + 0.25f * (1.f - b->energy)) {
                     enter(b, BEH_UNIMPRESSED, now_ms);
                 } else {
-                    b->music_headphones = frand(b) < 0.2f + 0.6f * b->energy;
                     enter(b, BEH_MUSIC, now_ms);
                 }
             }
@@ -219,7 +218,7 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
     case BEH_GROGGY:      out->override_anim = ANIM_SLEEPY; break;
     case BEH_FACE_DOWN:   out->override_anim = ANIM_SLEEPING; out->zz = true; break;
     case BEH_WAKING:      out->override_anim = ANIM_SURPRISED; break;
-    case BEH_MUSIC:       out->override_anim = ANIM_DANCE; out->headphones = b->music_headphones; break;
+    case BEH_MUSIC:       out->override_anim = ANIM_DANCE; break;
     case BEH_UNIMPRESSED: out->override_anim = ANIM_ANNOYED; break;
     default: break;
     }

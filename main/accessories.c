@@ -8,17 +8,6 @@
 #define CX 233
 #define CY 233
 
-/* headphones geometry */
-#define CUP_R        30
-#define CUP_X_L      38
-#define CUP_X_R      (W - 38)
-#define BAND_R       208
-#define BAND_T       11
-#define BAND_A0      (-78)
-#define BAND_A1      78
-#define HEAD_SLIDE_MS 450
-#define HEAD_FROM_Q16 (-160 * 65536)
-
 /* knocked out */
 #define STAR_R       6
 #define STAR_ORBIT   46
@@ -43,7 +32,7 @@
 #define CHG_TAU_MS   160.f      /* ease of the sweeps */
 #define CHG_MAX_DPS  900.f      /* ...and their speed cap */
 
-static uint16_t col_cup, col_cup_in, col_band, col_star, col_x, col_zz, col_chg, col_track;
+static uint16_t col_star, col_x, col_zz, col_chg, col_track;
 
 static int add(acc_rect_t *out, int n, int x0, int y0, int x1, int y1);
 
@@ -51,9 +40,6 @@ static void colours(void)
 {
     static bool done;
     if (done) return;
-    col_cup = gfx_rgb(150, 150, 160);
-    col_cup_in = gfx_rgb(60, 60, 70);
-    col_band = gfx_rgb(120, 120, 130);
     col_star = gfx_rgb(255, 220, 60);
     col_x = gfx_rgb(255, 140, 0);
     col_zz = gfx_rgb(160, 160, 170);
@@ -69,7 +55,6 @@ void acc_init(accessories_t *a, int left_cx, int right_cx, int cy)
     a->eye_cx[0] = left_cx;
     a->eye_cx[1] = right_cx;
     a->eye_cy = cy;
-    a->head_y = HEAD_FROM_Q16;
     a->first = true;
 }
 
@@ -85,13 +70,6 @@ static void rot(const accessories_t *a, float x, float y, int *ox, int *oy)
     const float c = cosf(r), s = sinf(r);
     *ox = CX + (int)(x * c - y * s);
     *oy = CY + (int)(x * s + y * c);
-}
-
-void acc_set_headphones(accessories_t *a, bool on, uint32_t now_ms)
-{
-    if (a->head_on == on) return;
-    a->head_on = on;
-    a->head_t0_ms = now_ms;
 }
 
 void acc_set_knocked_out(accessories_t *a, bool on, uint32_t now_ms)
@@ -111,7 +89,7 @@ void acc_set_zz(accessories_t *a, bool on, uint32_t now_ms)
 /* Props that turn with the face (the rim gauge does not). */
 static bool any_prop(const accessories_t *a)
 {
-    return a->head_on || a->ko_on || a->zz_on || a->head_y != HEAD_FROM_Q16;
+    return a->ko_on || a->zz_on;
 }
 
 bool acc_any(const accessories_t *a)
@@ -208,15 +186,6 @@ static int add_ring_rects(acc_rect_t *out, int n)
     return n;
 }
 
-/* Headphones bounding box for a given vertical offset (px). */
-static void head_bbox(int dy, int *x0, int *y0, int *x1, int *y1)
-{
-    *x0 = 0;
-    *x1 = W;
-    *y0 = CY - BAND_R + dy - 1;
-    *y1 = CY + CUP_R + dy + 2;
-}
-
 static void star_pos(uint32_t now_ms, uint32_t t0, int i, int *x, int *y)
 {
     const float ph = 6.2831853f * ((float)((now_ms - t0) % STAR_PERIOD) / (float)STAR_PERIOD) + (float)i * 2.0943951f;
@@ -259,27 +228,12 @@ int acc_update(accessories_t *a, uint32_t now_ms, acc_rect_t out[ACC_MAX_DIRTY])
         a->chg_prev_arc = a->chg_arc;
     }
     if (a->angle_deg != a->prev_angle_deg) {
+        const float from = a->prev_angle_deg;
         a->prev_angle_deg = a->angle_deg;
-        if (any_prop(a)) {
-            return add(out, 0, 0, 0, W, H);   /* everything moves while the face turns */
+        (void)from;
+        if (a->ko_on || a->zz_on || a->ko_prev[0][0] || a->zz_prev_y) {
+            return add(out, 0, 0, 0, W, H);   /* rare states: everything moves while the face turns */
         }
-    }
-
-    /* headphones slide */
-    const int32_t target = a->head_on ? 0 : HEAD_FROM_Q16;
-    if (a->head_y != target) {
-        uint32_t el = now_ms - a->head_t0_ms;
-        if (el > HEAD_SLIDE_MS) el = HEAD_SLIDE_MS;
-        float t = (float)el / (float)HEAD_SLIDE_MS;
-        t = t * t * (3.f - 2.f * t);
-        const int32_t from = a->head_on ? HEAD_FROM_Q16 : 0;
-        int32_t ny = from + (int32_t)((float)(target - from) * t);
-        if (el >= HEAD_SLIDE_MS) ny = target;
-        int ax0, ay0, ax1, ay1, bx0, by0, bx1, by1;
-        head_bbox(a->head_y >> 16, &ax0, &ay0, &ax1, &ay1);
-        head_bbox(ny >> 16, &bx0, &by0, &bx1, &by1);
-        n = add(out, n, ax0 < bx0 ? ax0 : bx0, ay0 < by0 ? ay0 : by0, ax1 > bx1 ? ax1 : bx1, ay1 > by1 ? ay1 : by1);
-        a->head_y = ny;
     }
 
     /* knocked out: stars move every frame, X eyes appear/disappear */
@@ -345,21 +299,6 @@ void acc_paint(const accessories_t *a, const gfx_band_t *b, uint32_t now_ms)
     if (gauge_visible(a) && !inside_disc(b, CHG_R_OUT - CHG_THICK)) {
         if (a->chg_track > 0.f) gfx_ring(b, CX, CY, CHG_R_OUT, CHG_THICK, CHG_A0, CHG_A0 + (int)lrintf(a->chg_track), col_track);
         if (a->chg_arc > 0.f) gfx_ring(b, CX, CY, CHG_R_OUT, CHG_THICK, CHG_A0, CHG_A0 + (int)lrintf(a->chg_arc), col_chg);
-    }
-    const int ang = (int)lroundf(a->angle_deg);
-    if (a->head_on || a->head_y != HEAD_FROM_Q16) {
-        const int dy = a->head_y >> 16;
-        if (dy > -BAND_R - CUP_R) {
-            int hx, hy, lx, ly, rx, ry;
-            rot(a, 0.f, (float)dy, &hx, &hy);
-            rot(a, (float)(CUP_X_L - CX), (float)dy, &lx, &ly);
-            rot(a, (float)(CUP_X_R - CX), (float)dy, &rx, &ry);
-            gfx_ring(b, hx, hy, BAND_R, BAND_T, BAND_A0 + ang, BAND_A1 + ang, col_band);
-            gfx_disc(b, lx, ly, CUP_R, col_cup);
-            gfx_disc(b, lx, ly, CUP_R - 9, col_cup_in);
-            gfx_disc(b, rx, ry, CUP_R, col_cup);
-            gfx_disc(b, rx, ry, CUP_R - 9, col_cup_in);
-        }
     }
     if (a->ko_on) {
         for (int e = 0; e < 2; e++) {

@@ -1,5 +1,5 @@
 /*
- * Props drawn around the eyes: headphones when music is on, stars and X eyes
+ * Props drawn around the eyes: stars and X eyes
  * when knocked out, floating z's when asleep. Pure C on gfx.h; the render
  * task composes them into the same bands as the eyes.
  */
@@ -16,10 +16,6 @@ typedef struct {
 #define ACC_MAX_DIRTY 64        /* a charge-ring redraw is one thin rect per 16-row band */
 
 typedef struct {
-    /* headphones: slide in from above */
-    bool head_on;
-    int32_t head_y;         /* Q16 px offset, 0 = in place, negative = above the screen */
-    uint32_t head_t0_ms;
     /* knocked out */
     bool ko_on;
     uint32_t ko_t0_ms;
@@ -42,7 +38,6 @@ typedef struct {
 } accessories_t;
 
 void acc_init(accessories_t *a, int left_cx, int right_cx, int cy);
-void acc_set_headphones(accessories_t *a, bool on, uint32_t now_ms);
 void acc_set_knocked_out(accessories_t *a, bool on, uint32_t now_ms);
 void acc_set_zz(accessories_t *a, bool on, uint32_t now_ms);
 void acc_set_angle(accessories_t *a, float deg);

@@ -65,8 +65,6 @@ static int64_t s_last_frame_te_us;
 static bool s_te_active;
 static esp_timer_handle_t s_pace_timer;
 
-static SemaphoreHandle_t s_wake_sem;      /* one-shot timer for precise scan waits */
-static esp_timer_handle_t s_wake_timer;
 
 static volatile uint32_t s_bytes_pushed;
 static SemaphoreHandle_t s_panel_mutex;   /* the esp_lcd SPI io is not thread-safe: pushes and commands take turns */
@@ -103,10 +101,6 @@ static void pace_timer_cb(void *arg)
     xSemaphoreGive(s_vsync);
 }
 
-static void wake_timer_cb(void *arg)
-{
-    xSemaphoreGive(s_wake_sem);
-}
 
 esp_err_t display_init(void)
 {
@@ -127,10 +121,7 @@ esp_err_t display_init(void)
     }
     s_done_sem = xSemaphoreCreateCounting(64, 0);
     s_vsync = xSemaphoreCreateBinary();
-    s_wake_sem = xSemaphoreCreateBinary();
-    ESP_RETURN_ON_FALSE(s_done_sem && s_vsync && s_wake_sem, ESP_ERR_NO_MEM, TAG, "no memory for semaphores");
-    const esp_timer_create_args_t wargs = { .callback = wake_timer_cb, .name = "scanwait", .dispatch_method = ESP_TIMER_TASK };
-    ESP_RETURN_ON_ERROR(esp_timer_create(&wargs, &s_wake_timer), TAG, "wake timer");
+    ESP_RETURN_ON_FALSE(s_done_sem && s_vsync, ESP_ERR_NO_MEM, TAG, "no memory for semaphores");
 
     const spi_bus_config_t bus = CO5300_PANEL_BUS_QSPI_CONFIG(BOARD_LCD_PCLK, BOARD_LCD_DATA0, BOARD_LCD_DATA1,
                                                               BOARD_LCD_DATA2, BOARD_LCD_DATA3, DISPLAY_DIRECT_MAX);
@@ -274,21 +265,6 @@ bool display_copy_start(void *dst, const void *src, size_t bytes)
 void display_copy_wait(void)
 {
     xSemaphoreTake(s_copy_sem, portMAX_DELAY);
-}
-
-void display_wait_after_te(uint32_t us)
-{
-    if (!s_te_active) return;
-    const int64_t target = s_te_last_us + (int64_t)us;
-    const int64_t wait = target - esp_timer_get_time();
-    if (wait <= 0) return;
-    if (wait < 80) {
-        while (esp_timer_get_time() < target) { }
-        return;
-    }
-    xSemaphoreTake(s_wake_sem, 0);
-    esp_timer_start_once(s_wake_timer, (uint64_t)wait);
-    xSemaphoreTake(s_wake_sem, pdMS_TO_TICKS((uint32_t)(wait / 1000) + 2));
 }
 
 uint32_t display_te_edges(void)

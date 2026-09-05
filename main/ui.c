@@ -117,8 +117,8 @@ static void goto_screen(ui_t *u, ui_screen_t s, uint32_t now_ms)
 
 const char *ui_screen_name(ui_screen_t s)
 {
-    static const char *n[] = { "MENU", "CALIBRATE", "LEVEL", "BRIGHTNESS", "BATTERY", "COLOR", "SCANTEST" };
-    return (s <= UI_SCREEN_SCANTEST) ? n[s] : "?";
+    static const char *n[] = { "MENU", "CALIBRATE", "LEVEL", "BRIGHTNESS", "BATTERY", "COLOR" };
+    return (s <= UI_SCREEN_COLOR) ? n[s] : "?";
 }
 
 /* ---- menu ------------------------------------------------------------------ */
@@ -488,31 +488,9 @@ static void color_input(ui_t *u, ui_input_t in, uint32_t now_ms)
 
 /* ---- battery --------------------------------------------------------------- */
 
-int ui_scantest_delay_ms(const ui_t *u, uint32_t now_ms)
-{
-    return (int)(((now_ms - u->screen_since_ms) / 2000u) % 16u);
-}
-
-static void paint_scantest(const ui_t *u, const gfx_band_t *b)
-{
-    gfx_text(b, &font_spleen_16x32, 40, 200, u->text_a, C.white, GFX_TRANSPARENT);
-    gfx_text(b, &font_spleen_8x16, 40, 240, "after TE", C.grey, GFX_TRANSPARENT);
-    gfx_text(b, &font_spleen_8x16, 320, 200, "cut row?", C.grey, GFX_TRANSPARENT);
-}
-
-static void scantest_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *s)
-{
-    char a[40];
-    snprintf(a, sizeof a, "%d ms", ui_scantest_delay_ms(u, now_ms));
-    if (strcmp(a, u->text_a)) {
-        strcpy(u->text_a, a);
-        dirty_add(u, 32, 192, 176, 240);
-    }
-}
-
 static void paint_battery(const ui_t *u, const gfx_band_t *b)
 {
-    chrome(b, "BATTERY", "tap=scan test  hold=back");
+    chrome(b, "BATTERY", "hold=back");
     text_center(b, &font_spleen_16x32, 136, u->text_a, C.white);
     text_center(b, &font_spleen_12x24, 196, u->text_b, C.fg);
     text_center(b, &font_spleen_12x24, 236, u->text_c, C.grey);
@@ -569,12 +547,8 @@ void ui_input(ui_t *u, ui_input_t in, uint32_t now_ms)
     case UI_SCREEN_CALIBRATE:  calibrate_input(u, in, now_ms); break;
     case UI_SCREEN_BRIGHTNESS: brightness_input(u, in, now_ms); break;
     case UI_SCREEN_COLOR:      color_input(u, in, now_ms); break;
-    case UI_SCREEN_BATTERY:
-        if (in == UI_IN_TAP) { goto_screen(u, UI_SCREEN_SCANTEST, now_ms); u->text_a[0] = 0; break; }
-        if (in == UI_IN_LONG || in == UI_IN_RIGHT) goto_screen(u, UI_SCREEN_MENU, now_ms);
-        break;
     case UI_SCREEN_LEVEL:
-    case UI_SCREEN_SCANTEST:
+    case UI_SCREEN_BATTERY:
         if (in == UI_IN_LONG || in == UI_IN_RIGHT) goto_screen(u, UI_SCREEN_MENU, now_ms);
         break;
     }
@@ -586,7 +560,6 @@ int ui_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *sens, ui_rect_t out[
     case UI_SCREEN_CALIBRATE: calibrate_update(u, now_ms, sens); break;
     case UI_SCREEN_LEVEL:     level_update(u, now_ms, sens); break;
     case UI_SCREEN_BATTERY:   battery_update(u, now_ms, sens); break;
-    case UI_SCREEN_SCANTEST:  scantest_update(u, now_ms, sens); break;
     default: break;
     }
     const int n = u->ndirty;
@@ -604,7 +577,6 @@ void ui_paint(const ui_t *u, const gfx_band_t *band)
     case UI_SCREEN_BRIGHTNESS: paint_brightness(u, band); break;
     case UI_SCREEN_COLOR:      paint_color(u, band); break;
     case UI_SCREEN_BATTERY:    paint_battery(u, band); break;
-    case UI_SCREEN_SCANTEST:   paint_scantest(u, band); break;
     }
 }
 

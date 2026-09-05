@@ -51,6 +51,7 @@ typedef struct {
     bool bot_simple;        /* bottom lid is straight or a plain upward arc: integer path (set by raster_shape_finalize) */
     /* Float mirror of the geometry for the rotated / bent-lid per-row paths (set by raster_shape_finalize) */
     float fc, fs, frad[4], frady[4], fhw, fhh, ftop, fbot, fslant, fbslant, fcurve, fbend, finv_hw2;
+    float finv_rx2[4], finv_ry2[4];   /* 1 / radius^2 per corner (set by raster_shape_finalize) */
     /*
      * Hot spot: lightness level per pixel = hot_g2l[((hot_gx[x] * hot_gy[y]) >> 8) + dither(x, y)],
      * colour = lut2[level * 64 + cov / 4]. The 2x2 ordered dither hides the 8-bit steps of the falloff.

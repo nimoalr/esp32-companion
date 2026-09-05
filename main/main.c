@@ -203,19 +203,6 @@ static void paint_piece(uint16_t *band, int x0, int y, int w, int rows, const re
     if (c->mode == MODE_UI) {
         memset(band, 0, (size_t)w * rows * 2);
         const gfx_band_t gb = { .dst = band, .x0 = x0, .y0 = y, .w = w, .rows = rows };
-        if (c->ui.screen == UI_SCREEN_SCANTEST && x0 == UI_SCAN_X0) {
-            /* scan probe: a column whose lit half flips left/right every frame; a cut shows where the scan was */
-            const int half = (UI_SCAN_X1 - UI_SCAN_X0) / 2 - 8;
-            const int bx = (s_frame_no & 1) ? UI_SCAN_X0 + half + 16 : UI_SCAN_X0;
-            gfx_fill(&gb, bx, 0, half, DISPLAY_H, gfx_rgb(255, 255, 255));
-            for (int gy = 50; gy < DISPLAY_H; gy += 50) {
-                gfx_fill(&gb, UI_SCAN_X0, gy, UI_SCAN_X1 - UI_SCAN_X0, 1, gfx_rgb(255, 60, 60));
-                char lbl[8];
-                snprintf(lbl, sizeof lbl, "%d", gy);
-                gfx_text(&gb, &font_spleen_8x16, UI_SCAN_X0 + half + 2, gy - 8, lbl, gfx_rgb(255, 60, 60), GFX_TRANSPARENT);
-            }
-            return;
-        }
         ui_paint(&c->ui, &gb);
     } else {
         raster_split(band, x0, y, w, rows, c->shapes);
@@ -258,7 +245,6 @@ typedef struct {
     frame_piece_t pieces[MAX_PIECES];
     int n;
     int fb;                 /* frame buffer the pieces live in */
-    int32_t delay_us;       /* >= 0: fixed delay after TE (scan test); < 0: wait for the scan to pass */
 } push_job_t;
 
 static QueueHandle_t s_push_q;            /* one frame ahead at most */
@@ -312,7 +298,6 @@ static void render_frame(const rect_t *dirty, int ndirty, const render_ctx_t *c,
     const int64_t t0 = esp_timer_get_time();
     frame_piece_t *pieces = job->pieces;
     job->fb = slot;
-    job->delay_us = -1;
     size_t off = 0;
     int n = 0;
     for (int i = 0; i < ndirty; i++) {
@@ -383,7 +368,6 @@ static void push_task(void *arg)
     for (;;) {
         xQueueReceive(s_push_q, &job, portMAX_DELAY);
         if (!display_wait_vsync(VSYNC_TIMEOUT_MS)) s_vsync_miss++;
-        if (job.delay_us > 0) display_wait_after_te((uint32_t)job.delay_us);
         const int64_t t0 = esp_timer_get_time();
         framebuf_t *fb = &s_fb[job.fb];
         for (int i = 0; i < job.n; i++) {
@@ -658,7 +642,6 @@ static void render_task(void *arg)
                 power_battery(&b);
                 acc_set_charge(&c.acc, b.vbus, b.present ? b.percent : 0, b.charging);
             }
-            acc_set_headphones(&c.acc, bo.headphones, now_ms);
             acc_set_knocked_out(&c.acc, bo.knocked_out, now_ms);
             acc_set_zz(&c.acc, bo.zz || c.sm.id == ANIM_SLEEPING, now_ms);
         }
@@ -742,17 +725,10 @@ static void render_task(void *arg)
             }
         }
 
-        if (c.mode == MODE_UI && c.ui.screen == UI_SCREEN_SCANTEST) {
-            dirty[ndirty++] = (rect_t){ UI_SCAN_X0, UI_SCAN_Y0, UI_SCAN_X1, UI_SCAN_Y1 };   /* the probe column, every frame */
-        }
-
         /* Raster the whole frame (into PSRAM) while the push task streams the previous one. */
         static push_job_t job;
         uint32_t raster_us;
         render_frame(dirty, ndirty, &c, now_ms, &job, &raster_us);
-        if (c.mode == MODE_UI && c.ui.screen == UI_SCREEN_SCANTEST) {
-            job.delay_us = ui_scantest_delay_ms(&c.ui, now_ms) * 1000;
-        }
         s_frame_no++;
 
         /* Pacing: the push task locks every frame to a TE edge; when DROWSY only every Nth, light-sleeping in between. */

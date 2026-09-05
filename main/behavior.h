@@ -24,7 +24,7 @@ typedef struct {
 
 typedef struct {
     int override_anim;          /* anim_id_t to show, or -1 for the user's choice */
-    bool headphones, knocked_out, zz;
+    bool knocked_out, zz;
     bool want_mic;              /* behaviour wants the microphones running */
     eye_pose_t env[2];          /* gravity gaze deltas */
     float face_angle_deg;       /* whole-face rotation so it stays upright against gravity */
@@ -54,7 +54,6 @@ typedef struct {
     uint32_t sniff_start_ms;
     bool sniffing;
     uint32_t music_quiet_since_ms;
-    bool music_headphones;      /* this time he put the headphones on */
     /* mood */
     float energy;               /* 0..1, drifts; fed by handling and touch */
     uint32_t mood_tick_ms;
