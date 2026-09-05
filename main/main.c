@@ -474,7 +474,7 @@ static void render_task(void *arg)
 {
     static render_ctx_t c;
     s_render = xTaskGetCurrentTaskHandle();
-    if (xTaskCreatePinnedToCore(raster_worker, "raster0", 6144, NULL, 8, &s_worker, 0) != pdPASS) {
+    if (xTaskCreatePinnedToCore(raster_worker, "raster0", 8192, NULL, 8, &s_worker, 0) != pdPASS) {
         s_worker = NULL;
         ESP_LOGW(TAG, "no raster worker: single-core raster");
     }
@@ -685,7 +685,7 @@ static void render_task(void *arg)
             if (af.active) {
                 snprintf(audio_s, sizeof audio_s, " | audio %" PRIu32 " us/frame, %d bpm", af.cpu_us, (int)af.bpm);
             }
-            ESP_LOGI(TAG, "%s %s [%s, energy %.2f]: %" PRIu32 " fps | frame %" PRIu32 " us avg (%" PRIu32 " waiting for scan), %" PRIu32 " us max | %" PRIu32 " B/frame, %" PRIu32 " rect(s) | pace %s%s | bri %d%% | batt %u mV %d%%%s%s%s",
+            ESP_LOGI(TAG, "%s %s [%s, energy %.2f]: %" PRIu32 " fps | frame %" PRIu32 " us avg (%" PRIu32 " waiting for scan), %" PRIu32 " us max | %" PRIu32 " B/frame, %" PRIu32 " rect(s) | pace %s%s | bri %d%% | batt %u mV %d%%%s%s%s | stack %u B free",
                      power_state_name(state), c.mode == MODE_UI ? ui_screen_name(c.ui.screen) : anim_name(c.sm.id),
                      behavior_state_name(c.beh.state), behavior_energy(&c.beh),
                      (frames * 1000u + elapsed_ms / 2) / elapsed_ms,
@@ -694,7 +694,8 @@ static void render_task(void *arg)
                      display_te_active() ? "TE" : "timer",
                      vsync_miss ? " (missed vsync)" : "",
                      s_bri_cur,
-                     b.mv, b.percent, b.charging ? " chg" : "", b.vbus ? " usb" : "", audio_s);
+                     b.mv, b.percent, b.charging ? " chg" : "", b.vbus ? " usb" : "", audio_s,
+                     (unsigned)(uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t)));
             stats_t0 = now_us;
             frames = 0;
             vsync_miss = 0;
@@ -724,6 +725,6 @@ void app_main(void)
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
-    const BaseType_t ok = xTaskCreatePinnedToCore(render_task, "render", 8192, NULL, configMAX_PRIORITIES - 3, NULL, 1);
+    const BaseType_t ok = xTaskCreatePinnedToCore(render_task, "render", 16384, NULL, configMAX_PRIORITIES - 3, NULL, 1);
     assert(ok == pdPASS);
 }
