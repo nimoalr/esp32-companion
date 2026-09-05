@@ -28,7 +28,7 @@ int main(void) {
             anim_set(&sm, &eyes, ids[i], t); eyes.idle.next_blink_ms = eyes.idle.next_dart_ms = t + 100000000;
             for (uint32_t end = t + 1400; t < end; t += 16) { anim_update(&sm, &eyes, t); eyes_update(&eyes, t, sh); }
             render(sh); snprintf(p, sizeof p, "out/k_%d_%d.ppm", b, i); ppm_crop(p, 90, 376);
-            printf("base %06X %-9s -> %06X\n", bases[b], anim_name(ids[i]), eyes_color(&eyes));
+            printf("base %06X %-9s -> %06X\n", bases[b], anim_name(ids[i]), eyes_color(&eyes, 0));
         }
     }
     /* mood extremes on neutral orange */
@@ -39,7 +39,7 @@ int main(void) {
         eyes_set_mood(&eyes, (int32_t)((0.85f + 0.15f * e) * 65536.f), (int32_t)((0.90f + 0.10f * e) * 65536.f));
         for (uint32_t end = t + 600; t < end; t += 16) { anim_update(&sm, &eyes, t); eyes_update(&eyes, t, sh); }
         render(sh); snprintf(p, sizeof p, "out/m_%d.ppm", m); ppm_crop(p, 90, 376);
-        printf("mood energy %.0f -> %06X\n", e, eyes_color(&eyes));
+        printf("mood energy %.0f -> %06X\n", e, eyes_color(&eyes, 0));
     }
     return 0;
 }
