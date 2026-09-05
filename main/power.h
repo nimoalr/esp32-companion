@@ -48,6 +48,9 @@ power_state_t power_update(uint32_t now_ms, uint32_t touch_ms);
 power_state_t power_state(void);
 const char *power_state_name(power_state_t s);
 
+/* True while USB power is present (and the USB-keeps-awake option is on): no light sleep, no SLEEP state. */
+bool power_on_usb(void);
+
 /* In DROWSY: allow (true) or forbid (false) automatic light sleep. No-op in other states. */
 void power_allow_light_sleep(bool allow);
 

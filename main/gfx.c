@@ -214,6 +214,57 @@ static bool in_sector(int dx, int dy, int a0, int a1)
     #undef COS
 }
 
+/* One pixel range [px0, px1) of one row of a ring: exact sub-row coverage, sector-clipped. */
+static void ring_row(const gfx_band_t *b, int cx, int cy, int32_t ro8, int32_t ri8, int r_in, int a0_deg, int a1_deg,
+                     uint16_t color, int py, int px0, int px1)
+{
+    static uint8_t cov[512];
+    if (px0 < b->x0) px0 = b->x0;
+    if (px1 > b->x0 + b->w) px1 = b->x0 + b->w;
+    if (px0 >= px1) return;
+    const int n = px1 - px0;
+    memset(cov, 0, (size_t)n);
+    bool any = false;
+
+    for (int k = 0; k < 4; k++) {
+        const int32_t sy = (py << 8) + 32 + 64 * k;             /* sub-row centre, Q8 */
+        int32_t dy = sy - (cy << 8); if (dy < 0) dy = -dy;
+        const int32_t so = chord_q8(ro8, dy);
+        if (so < 0) continue;
+        const int32_t si = (r_in > 0) ? chord_q8(ri8, dy) : -1;
+        /* spans in Q8 screen x: [cx-so, cx-si] and [cx+si, cx+so] (or one span if no hole) */
+        int32_t spans[2][2];
+        int ns = 0;
+        if (si < 0) { spans[ns][0] = (cx << 8) - so; spans[ns][1] = (cx << 8) + so; ns++; }
+        else {
+            spans[ns][0] = (cx << 8) - so; spans[ns][1] = (cx << 8) - si; ns++;
+            spans[ns][0] = (cx << 8) + si; spans[ns][1] = (cx << 8) + so; ns++;
+        }
+        for (int s = 0; s < ns; s++) {
+            int32_t l = spans[s][0], r = spans[s][1];
+            const int32_t lim_l = px0 << 8, lim_r = px1 << 8;
+            if (l < lim_l) l = lim_l;
+            if (r > lim_r) r = lim_r;
+            if (l >= r) continue;
+            any = true;
+            const int il = l >> 8, ir = (r - 1) >> 8;
+            const int w = (k == 3) ? 63 : 64;
+            if (il == ir) { cov[il - px0] += (uint8_t)(((r - l) * w) >> 8); continue; }
+            cov[il - px0] += (uint8_t)(((((il + 1) << 8) - l) * w) >> 8);
+            for (int x = il + 1; x < ir; x++) cov[x - px0] += (uint8_t)w;
+            cov[ir - px0] += (uint8_t)(((r - (ir << 8)) * w) >> 8);
+        }
+    }
+    if (!any) return;
+    uint16_t *row = b->dst + (size_t)(py - b->y0) * b->w;
+    for (int i = 0; i < n; i++) {
+        if (!cov[i]) continue;
+        const int px = px0 + i;
+        if (!in_sector(px - cx, py - cy, a0_deg, a1_deg)) continue;
+        row[px - b->x0] = (cov[i] >= 255) ? color : gfx_scale(color, cov[i]);
+    }
+}
+
 void gfx_ring(const gfx_band_t *b, int cx, int cy, int r_out, int thick, int a0_deg, int a1_deg, uint16_t color)
 {
     if (thick <= 0 || r_out <= 0) return;
@@ -222,56 +273,25 @@ void gfx_ring(const gfx_band_t *b, int cx, int cy, int r_out, int thick, int a0_
     if (y_a < b->y0) y_a = b->y0;
     if (y_b > b->y0 + b->rows) y_b = b->y0 + b->rows;
     const int32_t ro8 = r_out << 8, ri8 = r_in << 8;
-    static uint8_t cov[512];
 
     for (int py = y_a; py < y_b; py++) {
-        /* Row extent: outer chord at the sub-row nearest the centre. */
+        /* Row extent: outer chord at the sub-row nearest the centre, hole from the inner chord at the farthest. */
         int32_t dyc = ((py << 8) + 128) - (cy << 8);
         if (dyc < 0) dyc = -dyc;
         int32_t dy_min = dyc - 128; if (dy_min < 0) dy_min = 0;
         const int32_t so_max = chord_q8(ro8, dy_min);
         if (so_max < 0) continue;
-        int px0 = cx - ((so_max + 255) >> 8) - 1, px1 = cx + ((so_max + 255) >> 8) + 2;
-        if (px0 < b->x0) px0 = b->x0;
-        if (px1 > b->x0 + b->w) px1 = b->x0 + b->w;
-        if (px0 >= px1) continue;
-        const int n = px1 - px0;
-        memset(cov, 0, (size_t)n);
-
-        for (int k = 0; k < 4; k++) {
-            const int32_t sy = (py << 8) + 32 + 64 * k;             /* sub-row centre, Q8 */
-            int32_t dy = sy - (cy << 8); if (dy < 0) dy = -dy;
-            const int32_t so = chord_q8(ro8, dy);
-            if (so < 0) continue;
-            const int32_t si = (r_in > 0) ? chord_q8(ri8, dy) : -1;
-            /* spans in Q8 screen x: [cx-so, cx-si] and [cx+si, cx+so] (or one span if no hole) */
-            int32_t spans[2][2];
-            int ns = 0;
-            if (si < 0) { spans[ns][0] = (cx << 8) - so; spans[ns][1] = (cx << 8) + so; ns++; }
-            else {
-                spans[ns][0] = (cx << 8) - so; spans[ns][1] = (cx << 8) - si; ns++;
-                spans[ns][0] = (cx << 8) + si; spans[ns][1] = (cx << 8) + so; ns++;
-            }
-            for (int s = 0; s < ns; s++) {
-                int32_t l = spans[s][0], r = spans[s][1];
-                const int32_t lim_l = px0 << 8, lim_r = px1 << 8;
-                if (l < lim_l) l = lim_l;
-                if (r > lim_r) r = lim_r;
-                if (l >= r) continue;
-                const int il = l >> 8, ir = (r - 1) >> 8;
-                const int w = (k == 3) ? 63 : 64;
-                if (il == ir) { cov[il - px0] += (uint8_t)(((r - l) * w) >> 8); continue; }
-                cov[il - px0] += (uint8_t)(((((il + 1) << 8) - l) * w) >> 8);
-                for (int x = il + 1; x < ir; x++) cov[x - px0] += (uint8_t)w;
-                cov[ir - px0] += (uint8_t)(((r - (ir << 8)) * w) >> 8);
+        const int32_t si_min = (r_in > 0) ? chord_q8(ri8, dyc + 128) : -1;
+        const int xo = ((so_max + 255) >> 8) + 1;
+        if (si_min > 0) {
+            /* two slivers: the hole in between never gets a pixel */
+            const int xi = (si_min >> 8) - 1;
+            if (xi > 0) {
+                ring_row(b, cx, cy, ro8, ri8, r_in, a0_deg, a1_deg, color, py, cx - xo, cx - xi);
+                ring_row(b, cx, cy, ro8, ri8, r_in, a0_deg, a1_deg, color, py, cx + xi, cx + xo + 1);
+                continue;
             }
         }
-        uint16_t *row = b->dst + (size_t)(py - b->y0) * b->w;
-        for (int i = 0; i < n; i++) {
-            if (!cov[i]) continue;
-            const int px = px0 + i;
-            if (!in_sector(px - cx, py - cy, a0_deg, a1_deg)) continue;
-            row[px - b->x0] = (cov[i] >= 255) ? color : gfx_scale(color, cov[i]);
-        }
+        ring_row(b, cx, cy, ro8, ri8, r_in, a0_deg, a1_deg, color, py, cx - xo, cx + xo + 1);
     }
 }

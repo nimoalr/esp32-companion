@@ -75,11 +75,22 @@ At 60 Hz the frame budget is 16.7 ms, so idle frames fit at either clock.
 
 TE **is wired**: CO5300 TE -> J3 -> `LCD_TE` -> GPIO13 (HWREF and SCH). The
 firmware enables TE in the init sequence and takes a rising-edge interrupt on
-GPIO13. Each frame is rasterised up to the first band, then the panel write
-starts on the next TE edge. Because the write proceeds top to bottom faster than
-the panel's own scan (e.g. 52 rows/ms for a 190 px wide rect at 40 MHz versus
-about 28 rows/ms for the scan) and starts at V-blank, the scan never crosses a
-half-written row, so blinks do not tear.
+GPIO13. Each frame starts on a TE edge; the interrupt also measures the refresh
+period (about 16.7 ms) and the panel's own top-to-bottom scan is assumed to
+span it, one row every `period / 466`.
+
+The dirty rectangles are cut into 16-row bands on a global grid and rendered in
+row order, both eyes' pieces of a band back to back, so the panel write sweeps
+the screen once per frame. A band is pushed only when it cannot tear:
+
+* the scan is already `CONFIG_EYES_SCAN_MARGIN_ROWS` (default 40, covering the
+  V-blank at the top of the frame) below it, or
+* the scan is still above it and the transfer, including everything queued in
+  front of it, finishes before the scan arrives (`bytes * 2 / pclk`).
+
+Meanwhile the raster runs ahead into the other buffers of a ring of four, and
+the bottom half of every band is rasterised by a second task on core 0. The
+console line reports how long each frame spent waiting for the scan.
 
 Fallback: if no TE edges arrive during the first 100 ms after init, the
 firmware logs a warning and paces frames with a 60 Hz `esp_timer` instead.

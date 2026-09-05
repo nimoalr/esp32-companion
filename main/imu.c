@@ -33,7 +33,8 @@ static const char *TAG = "imu";
 #define CMD_WRITE_WOM       0x08
 
 #define ACC_RANGE_8G        (2 << 4)
-#define ACC_ODR_62_5HZ      7
+#define ACC_ODR_125HZ       6
+#define ACC_LPF_MODE3       (3 << 1)   /* 13.37 % of ODR: ~17 Hz at 125 Hz */
 #define ACC_ODR_LP_21HZ     13
 
 static i2c_master_dev_handle_t s_dev;
@@ -99,8 +100,8 @@ esp_err_t imu_init(void)
     ESP_RETURN_ON_FALSE(id == WHOAMI_VAL, ESP_ERR_NOT_FOUND, TAG, "WHO_AM_I 0x%02X, expected 0x%02X", id, WHOAMI_VAL);
 
     ESP_RETURN_ON_ERROR(wr(REG_CTRL7, 0x00), TAG, "ctrl7");
-    ESP_RETURN_ON_ERROR(wr(REG_CTRL2, ACC_RANGE_8G | ACC_ODR_62_5HZ), TAG, "ctrl2");
-    ESP_RETURN_ON_ERROR(wr(REG_CTRL5, 0x01), TAG, "ctrl5");          /* accel LPF, mode 0 */
+    ESP_RETURN_ON_ERROR(wr(REG_CTRL2, ACC_RANGE_8G | ACC_ODR_125HZ), TAG, "ctrl2");
+    ESP_RETURN_ON_ERROR(wr(REG_CTRL5, ACC_LPF_MODE3 | 0x01), TAG, "ctrl5");   /* accel LPF on, ~17 Hz */
     ESP_RETURN_ON_ERROR(wr(REG_CTRL7, 0x01), TAG, "ctrl7");          /* accel on, gyro off */
     return ESP_OK;
 }

@@ -33,7 +33,14 @@
 #define ZZ_RISE      70
 #define ZZ_PERIOD    2600
 
-static uint16_t col_cup, col_cup_in, col_band, col_star, col_x, col_zz;
+/* charge gauge on the rim: same arc as the setup UI's battery screen, thinner */
+#define CHG_R_OUT    232
+#define CHG_THICK    4
+#define CHG_A0       (-150)
+#define CHG_A1       150
+#define CHG_BAND     16         /* dirty rects are cut on the display's band grid */
+
+static uint16_t col_cup, col_cup_in, col_band, col_star, col_x, col_zz, col_chg, col_full, col_track;
 
 static void colours(void)
 {
@@ -45,6 +52,9 @@ static void colours(void)
     col_star = gfx_rgb(255, 220, 60);
     col_x = gfx_rgb(255, 140, 0);
     col_zz = gfx_rgb(160, 160, 170);
+    col_chg = gfx_rgb(70, 210, 100);
+    col_full = gfx_rgb(150, 150, 160);
+    col_track = gfx_rgb(26, 26, 30);
     done = true;
 }
 
@@ -94,9 +104,32 @@ void acc_set_zz(accessories_t *a, bool on, uint32_t now_ms)
     a->zz_t0_ms = now_ms;
 }
 
-bool acc_any(const accessories_t *a)
+/* Props that turn with the face (the rim gauge does not). */
+static bool any_prop(const accessories_t *a)
 {
     return a->head_on || a->ko_on || a->zz_on || a->head_y != HEAD_FROM_Q16;
+}
+
+bool acc_any(const accessories_t *a)
+{
+    return any_prop(a) || a->chg_on;
+}
+
+void acc_set_charge(accessories_t *a, bool on, int pct, bool charging)
+{
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    if (on != a->chg_on || (on && (pct != a->chg_pct || charging != a->chg_charging))) {
+        a->chg_dirty = true;
+    }
+    a->chg_on = on;
+    a->chg_pct = pct;
+    a->chg_charging = charging;
+}
+
+void acc_redraw(accessories_t *a)
+{
+    if (a->chg_on) a->chg_dirty = true;
 }
 
 static int add(acc_rect_t *out, int n, int x0, int y0, int x1, int y1)
@@ -108,6 +141,30 @@ static int add(acc_rect_t *out, int n, int x0, int y0, int x1, int y1)
     if (x0 >= x1 || y0 >= y1 || n >= ACC_MAX_DIRTY) return n;
     out[n] = (acc_rect_t){ x0, y0, x1, y1 };
     return n + 1;
+}
+
+/* The rim ring's footprint in each display band: one wide rect at the top and bottom, two slivers elsewhere. */
+static int add_ring_rects(acc_rect_t *out, int n)
+{
+    const int ro = CHG_R_OUT, ri = CHG_R_OUT - CHG_THICK;
+    for (int y0 = 0; y0 < H; y0 += CHG_BAND) {
+        const int y1 = y0 + CHG_BAND < H ? y0 + CHG_BAND : H;
+        /* nearest and farthest row distances from the centre within the band */
+        int dmin, dmax;
+        if (y1 - 1 < CY) { dmin = CY - (y1 - 1); dmax = CY - y0; }
+        else if (y0 > CY) { dmin = y0 - CY; dmax = y1 - 1 - CY; }
+        else { dmin = 0; dmax = (CY - y0 > y1 - 1 - CY) ? CY - y0 : y1 - 1 - CY; }
+        if (dmin >= ro) continue;
+        const int so = (int)sqrtf((float)(ro * ro - dmin * dmin)) + 2;
+        if (dmax >= ri) {
+            n = add(out, n, CX - so, y0, CX + so + 1, y1);
+        } else {
+            const int si = (int)sqrtf((float)(ri * ri - dmax * dmax)) - 2;
+            n = add(out, n, CX - so, y0, CX - si, y1);
+            n = add(out, n, CX + si, y0, CX + so + 1, y1);
+        }
+    }
+    return n;
 }
 
 /* Headphones bounding box for a given vertical offset (px). */
@@ -135,10 +192,14 @@ int acc_update(accessories_t *a, uint32_t now_ms, acc_rect_t out[ACC_MAX_DIRTY])
 {
     int n = 0;
 
+    if (a->chg_dirty) {
+        a->chg_dirty = false;
+        n = add_ring_rects(out, n);
+    }
     if (a->angle_deg != a->prev_angle_deg) {
         a->prev_angle_deg = a->angle_deg;
-        if (acc_any(a)) {
-            return add(out, n, 0, 0, W, H);   /* everything moves while the face turns */
+        if (any_prop(a)) {
+            return add(out, 0, 0, 0, W, H);   /* everything moves while the face turns */
         }
     }
 
@@ -203,8 +264,29 @@ int acc_update(accessories_t *a, uint32_t now_ms, acc_rect_t out[ACC_MAX_DIRTY])
     return n;
 }
 
+/* True when the whole band lies inside the disc of radius r about the centre (nothing of a rim ring can be in it). */
+static bool inside_disc(const gfx_band_t *b, int r)
+{
+    const int xs[2] = { b->x0, b->x0 + b->w - 1 }, ys[2] = { b->y0, b->y0 + b->rows - 1 };
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 2; j++) {
+            const int dx = xs[i] - CX, dy = ys[j] - CY;
+            if (dx * dx + dy * dy >= r * r) return false;
+        }
+    }
+    return true;
+}
+
 void acc_paint(const accessories_t *a, const gfx_band_t *b, uint32_t now_ms)
 {
+    colours();
+    if (a->chg_on && !inside_disc(b, CHG_R_OUT - CHG_THICK)) {
+        gfx_ring(b, CX, CY, CHG_R_OUT, CHG_THICK, CHG_A0, CHG_A1, col_track);
+        if (a->chg_pct > 0) {
+            gfx_ring(b, CX, CY, CHG_R_OUT, CHG_THICK, CHG_A0, CHG_A0 + ((CHG_A1 - CHG_A0) * a->chg_pct) / 100,
+                     a->chg_charging ? col_chg : col_full);
+        }
+    }
     const int ang = (int)lroundf(a->angle_deg);
     if (a->head_on || a->head_y != HEAD_FROM_Q16) {
         const int dy = a->head_y >> 16;

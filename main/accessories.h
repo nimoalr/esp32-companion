@@ -13,7 +13,7 @@ typedef struct {
     int x0, y0, x1, y1;
 } acc_rect_t;
 
-#define ACC_MAX_DIRTY 6
+#define ACC_MAX_DIRTY 64        /* a charge-ring redraw is one thin rect per 16-row band */
 
 typedef struct {
     /* headphones: slide in from above */
@@ -28,6 +28,9 @@ typedef struct {
     bool zz_on;
     uint32_t zz_t0_ms;
     int zz_prev_y;
+    /* charge gauge on the rim while USB power is present */
+    bool chg_on, chg_charging, chg_dirty;
+    int chg_pct;
     int eye_cx[2], eye_cy;  /* where the X eyes go (upright face) */
     float angle_deg;        /* face rotation, clockwise */
     float prev_angle_deg;
@@ -39,6 +42,10 @@ void acc_set_headphones(accessories_t *a, bool on, uint32_t now_ms);
 void acc_set_knocked_out(accessories_t *a, bool on, uint32_t now_ms);
 void acc_set_zz(accessories_t *a, bool on, uint32_t now_ms);
 void acc_set_angle(accessories_t *a, float deg);
+/* Rim gauge: shown while `on`; the arc length is the battery percentage, green while charging. */
+void acc_set_charge(accessories_t *a, bool on, int pct, bool charging);
+/* The screen was cleared behind our back: repaint the static parts next frame. */
+void acc_redraw(accessories_t *a);
 
 /* Advance animations; returns the rectangles that changed since the last call. */
 int acc_update(accessories_t *a, uint32_t now_ms, acc_rect_t out[ACC_MAX_DIRTY]);
