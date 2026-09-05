@@ -24,7 +24,8 @@ static const char *TAG = "audio";
 #define BIN_BASS_LO     1                   /* 62 Hz */
 #define BIN_BASS_HI     4                   /* 312 Hz */
 #define BIN_MID_HI      32                  /* 2 kHz */
-#define BEAT_MIN_GAP_MS 300                 /* 200 bpm ceiling before the tempo lock stretches it */
+#define BEAT_MIN_GAP_MS 250                 /* 240 bpm ceiling before the tempo lock stretches it */
+#define KICK_LP_HZ      80.f                /* the kick's body; psytrance/techno basslines sit above this */
 #define PRESENCE_FLOOR_LSB 30.f             /* raw RMS below this is room noise (measured ~18 in a quiet room) */
 #define PRESENCE_FULL_LSB  150.f            /* ...and above this it is unmistakably sound */
 
@@ -47,6 +48,10 @@ static float s_tw_cos[FRAME / 2], s_tw_sin[FRAME / 2];
 static float s_re[FRAME], s_im[FRAME];
 static float s_max_bass = 1.f, s_max_mid = 1.f, s_max_high = 1.f, s_max_loud = 1.f;
 static float s_bass_mean, s_bass_prev;
+/* kick detector: 2nd-order low-pass at KICK_LP_HZ on the mono signal, energy per frame */
+static float s_lp_b0, s_lp_b1, s_lp_b2, s_lp_a1, s_lp_a2;
+static float s_lp_x1, s_lp_x2, s_lp_y1, s_lp_y2;
+static float s_kick_mean, s_kick_prev, s_max_kick = 1.f;
 static float s_presence;              /* 0..1: is there real sound, from the raw level (quiet room ~18 LSB) */
 static float s_gap_ms;                /* current tempo estimate as a beat interval, 0 = none */
 static uint32_t s_last_beat_ms;
@@ -56,6 +61,15 @@ static float s_balance;
 
 static void tables_init(void)
 {
+    /* Butterworth low-pass biquad (bilinear transform) */
+    const float w0 = 6.2831853f * KICK_LP_HZ / (float)SAMPLE_RATE;
+    const float cw = cosf(w0), sw = sinf(w0), alpha = sw / (2.f * 0.7071f);
+    const float a0 = 1.f + alpha;
+    s_lp_b0 = (1.f - cw) * 0.5f / a0;
+    s_lp_b1 = (1.f - cw) / a0;
+    s_lp_b2 = s_lp_b0;
+    s_lp_a1 = -2.f * cw / a0;
+    s_lp_a2 = (1.f - alpha) / a0;
     for (int i = 0; i < FRAME; i++) {
         s_win[i] = 0.5f - 0.5f * cosf(6.2831853f * (float)i / (float)(FRAME - 1));
     }
@@ -106,9 +120,14 @@ static inline float agc(float level, float *running_max)
 
 static void analyse(const int16_t *pcm, uint32_t now_ms)
 {
-    float l_e = 0.f, r_e = 0.f;
+    float l_e = 0.f, r_e = 0.f, k_e = 0.f;
     int peak = 0;
     for (int i = 0; i < FRAME; i++) {
+        /* sub-bass energy for the kick detector */
+        const float x = (float)((int)pcm[2 * i] + (int)pcm[2 * i + 1]) * (0.5f / 32768.f);
+        const float y = s_lp_b0 * x + s_lp_b1 * s_lp_x1 + s_lp_b2 * s_lp_x2 - s_lp_a1 * s_lp_y1 - s_lp_a2 * s_lp_y2;
+        s_lp_x2 = s_lp_x1; s_lp_x1 = x; s_lp_y2 = s_lp_y1; s_lp_y1 = y;
+        k_e += y * y;
         const int al = abs((int)pcm[2 * i]), ar = abs((int)pcm[2 * i + 1]);
         if (al > peak) peak = al;
         if (ar > peak) peak = ar;
@@ -152,8 +171,11 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
      */
     uint32_t refractory = BEAT_MIN_GAP_MS;
     if (s_gap_ms > 0.f && (uint32_t)(0.7f * s_gap_ms) > refractory) refractory = (uint32_t)(0.7f * s_gap_ms);
-    const bool beat = bass > 1.7f * s_bass_mean && bass > 1.3f * s_bass_prev && s_presence > 0.25f &&
+    const float kick_e = sqrtf(k_e / (float)FRAME);
+    const bool beat = kick_e > 1.6f * s_kick_mean && kick_e > 1.25f * s_kick_prev && s_presence > 0.25f &&
                       (now_ms - s_last_beat_ms) >= refractory;
+    s_kick_prev = kick_e;
+    s_kick_mean += (kick_e - s_kick_mean) * (1.f / 30.f);      /* ~0.5 s: spans a beat, not a bar */
     s_bass_prev = bass;
     s_bass_mean += (bass - s_bass_mean) * (1.f / 24.f);
     if (beat) {
@@ -196,6 +218,7 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
 
     portENTER_CRITICAL(&s_lock);
     s_feat.active = true;
+    s_feat.kick = agc(kick_e, &s_max_kick) * s_presence;
     s_feat.bass = agc(bass, &s_max_bass) * s_presence;
     s_feat.mid = agc(mid, &s_max_mid) * s_presence;
     s_feat.high = agc(high, &s_max_high) * s_presence;
@@ -298,6 +321,9 @@ esp_err_t audio_start(void)
     portEXIT_CRITICAL(&s_lock);
     s_bass_mean = 0.f;
     s_bass_prev = 0.f;
+    s_kick_mean = s_kick_prev = 0.f;
+    s_lp_x1 = s_lp_x2 = s_lp_y1 = s_lp_y2 = 0.f;
+    s_max_kick = 1e-3f;
     s_presence = 0.f;
     s_gap_ms = 0.f;
     s_last_beat_ms = 0;
