@@ -410,7 +410,8 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
 
     const float bass = sm->dance_bass * music;
     const float loud = sm->dance_loud * music;
-    const float kick = env * music;
+    /* an uncertain rhythm moves him less than a locked one */
+    const float kick = env * music * (0.45f + 0.55f * a->regularity);
     const float side = (float)sm->dance_side;
 
     for (int e = 0; e < 2; e++) {

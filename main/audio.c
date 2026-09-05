@@ -24,7 +24,9 @@ static const char *TAG = "audio";
 #define BIN_BASS_LO     1                   /* 62 Hz */
 #define BIN_BASS_HI     4                   /* 312 Hz */
 #define BIN_MID_HI      32                  /* 2 kHz */
-#define BEAT_MIN_GAP_MS 240                 /* 250 bpm ceiling */
+#define BEAT_MIN_GAP_MS 300                 /* 200 bpm ceiling before the tempo lock stretches it */
+#define PRESENCE_FLOOR_LSB 30.f             /* raw RMS below this is room noise (measured ~18 in a quiet room) */
+#define PRESENCE_FULL_LSB  150.f            /* ...and above this it is unmistakably sound */
 
 static i2s_chan_handle_t s_rx, s_tx;
 
@@ -44,7 +46,9 @@ static float s_win[FRAME];
 static float s_tw_cos[FRAME / 2], s_tw_sin[FRAME / 2];
 static float s_re[FRAME], s_im[FRAME];
 static float s_max_bass = 1.f, s_max_mid = 1.f, s_max_high = 1.f, s_max_loud = 1.f;
-static float s_bass_mean;
+static float s_bass_mean, s_bass_prev;
+static float s_presence;              /* 0..1: is there real sound, from the raw level (quiet room ~18 LSB) */
+static float s_gap_ms;                /* current tempo estimate as a beat interval, 0 = none */
 static uint32_t s_last_beat_ms;
 static uint32_t s_beat_gaps[8];
 static int s_gap_idx, s_gap_n;
@@ -129,8 +133,28 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     high = sqrtf(high);
     const float loud = sqrtf((l_e + r_e) / (2.f * FRAME));
 
-    /* onset: bass energy jumps above its recent mean */
-    const bool beat = bass > 1.45f * s_bass_mean && bass > 0.02f && (now_ms - s_last_beat_ms) >= BEAT_MIN_GAP_MS;
+    /*
+     * Presence: real sound versus room noise, from the raw level. A quiet room reads ~18 LSB RMS,
+     * speech nearby ~100, music at a comfortable level 200-500. Everything downstream is scaled by
+     * this, so silence stays silent instead of being normalised up to full scale by the gain control.
+     */
+    const float raw_lsb = loud * 32768.f;
+    float presence = (raw_lsb - PRESENCE_FLOOR_LSB) / (PRESENCE_FULL_LSB - PRESENCE_FLOOR_LSB);
+    if (presence < 0.f) presence = 0.f;
+    if (presence > 1.f) presence = 1.f;
+    s_presence += (presence - s_presence) * (presence > s_presence ? 0.5f : 0.05f);   /* fast in, slow out */
+
+    /*
+     * Onset: the bass must jump above its recent mean AND rise sharply from the previous frame
+     * (a sustained bass note is not a beat), with real sound present. Once a tempo is locked the
+     * refractory period stretches to 0.7 of the beat interval, which rejects off-beats and the
+     * doubled tempo they produce.
+     */
+    uint32_t refractory = BEAT_MIN_GAP_MS;
+    if (s_gap_ms > 0.f && (uint32_t)(0.7f * s_gap_ms) > refractory) refractory = (uint32_t)(0.7f * s_gap_ms);
+    const bool beat = bass > 1.7f * s_bass_mean && bass > 1.3f * s_bass_prev && s_presence > 0.25f &&
+                      (now_ms - s_last_beat_ms) >= refractory;
+    s_bass_prev = bass;
     s_bass_mean += (bass - s_bass_mean) * (1.f / 24.f);
     if (beat) {
         if (s_last_beat_ms) {
@@ -142,9 +166,11 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     }
     float bpm = 0.f, regularity = 0.f;
     if (s_gap_n >= 4) {
-        uint32_t acc = 0;
-        for (int i = 0; i < s_gap_n; i++) acc += s_beat_gaps[i];
-        const float gap = (float)acc / (float)s_gap_n;
+        /* median interval: one missed or extra beat does not drag the tempo */
+        uint32_t sorted[8];
+        for (int i = 0; i < s_gap_n; i++) sorted[i] = s_beat_gaps[i];
+        for (int i = 1; i < s_gap_n; i++) { const uint32_t v = sorted[i]; int j = i - 1; while (j >= 0 && sorted[j] > v) { sorted[j + 1] = sorted[j]; j--; } sorted[j + 1] = v; }
+        const float gap = (float)sorted[s_gap_n / 2];
         if (gap > 0.f) {
             bpm = 60000.f / gap;
             /* accept intervals that are the mean or half/double of it (off-beats) */
@@ -161,16 +187,19 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
             regularity = dev >= 0.5f ? 0.f : 1.f - 2.f * dev;
         }
     }
+    /* tempo lock for the refractory period: only while the rhythm looks regular and recent */
+    s_gap_ms = (regularity >= 0.5f && bpm >= 50.f && bpm <= 220.f) ? 60000.f / bpm : 0.f;
+    if (now_ms - s_last_beat_ms > 2500) { s_gap_ms = 0.f; s_gap_n = 0; s_gap_idx = 0; }   /* rhythm gone: start over */
     const float tot = l_e + r_e;
     const float bal = tot > 1e-6f ? (r_e - l_e) / tot : 0.f;
     s_balance += (bal - s_balance) * 0.2f;
 
     portENTER_CRITICAL(&s_lock);
     s_feat.active = true;
-    s_feat.bass = agc(bass, &s_max_bass);
-    s_feat.mid = agc(mid, &s_max_mid);
-    s_feat.high = agc(high, &s_max_high);
-    s_feat.loud = agc(loud, &s_max_loud);
+    s_feat.bass = agc(bass, &s_max_bass) * s_presence;
+    s_feat.mid = agc(mid, &s_max_mid) * s_presence;
+    s_feat.high = agc(high, &s_max_high) * s_presence;
+    s_feat.loud = agc(loud, &s_max_loud) * s_presence;
     s_feat.raw_loud = loud * 32768.f;
     s_feat.peak = (int16_t)(peak > 32767 ? 32767 : peak);
     s_feat.balance = s_balance;
@@ -268,6 +297,9 @@ esp_err_t audio_start(void)
     memset(&s_feat, 0, sizeof(s_feat));
     portEXIT_CRITICAL(&s_lock);
     s_bass_mean = 0.f;
+    s_bass_prev = 0.f;
+    s_presence = 0.f;
+    s_gap_ms = 0.f;
     s_last_beat_ms = 0;
     s_gap_n = s_gap_idx = 0;
     s_max_bass = s_max_mid = s_max_high = s_max_loud = 1e-3f;
