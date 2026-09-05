@@ -1,0 +1,35 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "display.c"
+        "touch.c"
+        "raster.c"
+        "eyes.c"
+        "anim.c"
+        "i2c_bus.c"
+        "imu.c"
+        "pmic.c"
+        "power.c"
+        "settings.c"
+        "gfx.c"
+        "font_spleen_8x16.c"
+        "font_spleen_12x24.c"
+        "font_spleen_16x32.c"
+        "imu_cal.c"
+        "ui.c"
+        "audio.c"
+        "accessories.c"
+        "behavior.c"
+    INCLUDE_DIRS "."
+    PRIV_REQUIRES
+        esp_lcd
+        esp_driver_spi
+        esp_driver_gpio
+        esp_driver_i2c
+        esp_timer
+        esp_psram
+        esp_hw_support
+        esp_pm
+        nvs_flash
+        esp_driver_i2s
+)

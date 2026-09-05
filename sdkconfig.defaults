@@ -1,0 +1,36 @@
+# Target and flash (Waveshare ESP32-S3-Touch-AMOLED-1.75: ESP32-S3R8, 16 MB QIO flash)
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# 8 MB octal PSRAM at 80 MHz. The renderer allocates nothing in PSRAM; it is
+# initialised so the memory is accounted for and its free size can be logged.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# Caches: largest instruction/data caches, 64-byte lines
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+
+# -O2
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# 1 ms tick so frame-pacing timeouts are precise
+CONFIG_FREERTOS_HZ=1000
+
+# Power management: dynamic frequency scaling and automatic light sleep when
+# every task is blocked. The render task holds locks while ACTIVE, so this
+# only takes effect in the DROWSY state.
+CONFIG_PM_ENABLE=y
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+CONFIG_PM_SLP_IRAM_OPT=y
+CONFIG_PM_RTOS_IDLE_OPT=y
+
+# Touch: a single point is all tap detection needs
+CONFIG_ESP_LCD_TOUCH_MAX_POINTS=1
+
+# Wi-Fi and Bluetooth are not built at all: the project CMakeLists restricts
+# the build to `main` and its dependencies, so esp_wifi / bt never compile.

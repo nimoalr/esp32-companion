@@ -1,0 +1,391 @@
+#include "display.h"
+
+#include <inttypes.h>
+#include <string.h>
+#include <assert.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "driver/spi_master.h"
+#include "driver/gpio.h"
+#include "esp_heap_caps.h"
+#include "esp_lcd_panel_io.h"
+#include "esp_lcd_panel_ops.h"
+#include "esp_lcd_co5300.h"
+#include "esp_timer.h"
+#include "esp_check.h"
+#include "esp_log.h"
+#include "esp_async_memcpy.h"
+#include "sdkconfig.h"
+
+static const char *TAG = "display";
+/* GDMA memcpy for the PSRAM -> bounce copies. Off: with it installed the TE
+ * interrupt stops arriving (TE edges 0/s, every frame misses vsync); not yet
+ * understood, and the CPU copy is adequate at 80 MHz. */
+#define DISPLAY_ASYNC_MEMCPY 0
+
+/*
+ * Panel init sequence, verbatim from the Waveshare BSP
+ * (waveshare/esp32_s3_touch_amoled_1_75 v3.0.1, lcd_init_cmds[]).
+ * 0x35 0x00 turns the tearing-effect output on (V-blank pulses only).
+ */
+static const co5300_lcd_init_cmd_t s_init_cmds[] = {
+    {0xFE, (uint8_t[]){0x20}, 1, 0},
+    {0x19, (uint8_t[]){0x10}, 1, 0},
+    {0x1C, (uint8_t[]){0xA0}, 1, 0},
+    {0xFE, (uint8_t[]){0x00}, 1, 0},
+    {0xC4, (uint8_t[]){0x80}, 1, 0},
+    {0x3A, (uint8_t[]){0x55}, 1, 0},
+    {0x35, (uint8_t[]){0x00}, 1, 0},
+    {0x53, (uint8_t[]){0x20}, 1, 0},
+    {0x51, (uint8_t[]){0xFF}, 1, 0},
+    {0x63, (uint8_t[]){0xFF}, 1, 0},
+    {0x2A, (uint8_t[]){0x00, 0x06, 0x01, 0xD7}, 4, 0},
+    {0x2B, (uint8_t[]){0x00, 0x00, 0x01, 0xD1}, 4, 600},
+    {0x11, NULL, 0, 600},
+    {0x29, NULL, 0, 0},
+};
+
+static esp_lcd_panel_io_handle_t s_io;
+static esp_lcd_panel_handle_t s_panel;
+
+static uint16_t *s_band[DISPLAY_BANDS];
+static uint32_t s_band_seq;               /* which buffer the next acquire hands out */
+/* Transfers complete in the order they were queued, so a buffer is free once the
+ * completion count has reached the sequence number of its last push. */
+static uint32_t s_issued;                 /* pushes queued */
+static volatile uint32_t s_done;          /* pushes completed (ISR) */
+static uint32_t s_last_issue[DISPLAY_BANDS];
+static SemaphoreHandle_t s_done_sem;      /* counting, one token per completed push */
+
+static SemaphoreHandle_t s_vsync;         /* given by the TE edge (or the fallback timer) */
+static volatile uint32_t s_te_edges;
+static volatile int64_t s_te_last_us;
+static volatile uint32_t s_te_period_us = 16667;
+static int64_t s_last_frame_te_us;
+static bool s_te_active;
+static esp_timer_handle_t s_pace_timer;
+
+static SemaphoreHandle_t s_wake_sem;      /* one-shot timer for precise scan waits */
+static esp_timer_handle_t s_wake_timer;
+
+static volatile uint32_t s_bytes_pushed;
+static SemaphoreHandle_t s_panel_mutex;   /* the esp_lcd SPI io is not thread-safe: pushes and commands take turns */
+static async_memcpy_handle_t s_mcp;       /* GDMA memcpy for PSRAM -> bounce buffer copies */
+static SemaphoreHandle_t s_copy_sem;
+
+static bool IRAM_ATTR on_color_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *edata, void *ctx)
+{
+    BaseType_t woken = pdFALSE;
+    s_done++;
+    xSemaphoreGiveFromISR(s_done_sem, &woken);
+    return woken == pdTRUE;
+}
+
+static void IRAM_ATTR te_isr(void *arg)
+{
+    const int64_t now = esp_timer_get_time();
+    const int64_t d = now - s_te_last_us;
+    if (d > 12000 && d < 25000) {
+        /* smooth the measured refresh period (1/8 per edge) */
+        s_te_period_us += (uint32_t)((int32_t)(d - (int64_t)s_te_period_us) >> 3);
+    }
+    s_te_edges++;
+    s_te_last_us = now;
+    BaseType_t woken = pdFALSE;
+    xSemaphoreGiveFromISR(s_vsync, &woken);
+    if (woken) {
+        portYIELD_FROM_ISR();
+    }
+}
+
+static void pace_timer_cb(void *arg)
+{
+    xSemaphoreGive(s_vsync);
+}
+
+static void wake_timer_cb(void *arg)
+{
+    xSemaphoreGive(s_wake_sem);
+}
+
+esp_err_t display_init(void)
+{
+    for (int i = 0; i < DISPLAY_BANDS; i++) {
+        s_band[i] = heap_caps_malloc(DISPLAY_BAND_BYTES, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+        ESP_RETURN_ON_FALSE(s_band[i], ESP_ERR_NO_MEM, TAG, "no internal DMA memory for band %d", i);
+    }
+    s_panel_mutex = xSemaphoreCreateMutex();
+    s_copy_sem = xSemaphoreCreateBinary();
+    {
+        async_memcpy_config_t mcfg = ASYNC_MEMCPY_DEFAULT_CONFIG();
+        mcfg.backlog = 4;
+        mcfg.dma_burst_size = 64;
+        if (DISPLAY_ASYNC_MEMCPY == 0 || esp_async_memcpy_install_gdma_ahb(&mcfg, &s_mcp) != ESP_OK) {
+            ESP_LOGW(TAG, "no async memcpy: PSRAM frames are copied by the CPU");
+            s_mcp = NULL;
+        }
+    }
+    s_done_sem = xSemaphoreCreateCounting(64, 0);
+    s_vsync = xSemaphoreCreateBinary();
+    s_wake_sem = xSemaphoreCreateBinary();
+    ESP_RETURN_ON_FALSE(s_done_sem && s_vsync && s_wake_sem, ESP_ERR_NO_MEM, TAG, "no memory for semaphores");
+    const esp_timer_create_args_t wargs = { .callback = wake_timer_cb, .name = "scanwait", .dispatch_method = ESP_TIMER_TASK };
+    ESP_RETURN_ON_ERROR(esp_timer_create(&wargs, &s_wake_timer), TAG, "wake timer");
+
+    const spi_bus_config_t bus = CO5300_PANEL_BUS_QSPI_CONFIG(BOARD_LCD_PCLK, BOARD_LCD_DATA0, BOARD_LCD_DATA1,
+                                                              BOARD_LCD_DATA2, BOARD_LCD_DATA3, DISPLAY_DIRECT_MAX);
+    ESP_RETURN_ON_ERROR(spi_bus_initialize(BOARD_LCD_SPI_HOST, &bus, SPI_DMA_CH_AUTO), TAG, "spi bus");
+
+    esp_lcd_panel_io_spi_config_t io_cfg = CO5300_PANEL_IO_QSPI_CONFIG(BOARD_LCD_CS, on_color_done, NULL);
+    io_cfg.pclk_hz = CONFIG_EYES_LCD_PCLK_HZ;
+    io_cfg.trans_queue_depth = 2 * DISPLAY_BANDS;
+    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)BOARD_LCD_SPI_HOST, &io_cfg, &s_io), TAG, "panel io");
+
+    const co5300_vendor_config_t vendor = {
+        .init_cmds = s_init_cmds,
+        .init_cmds_size = sizeof(s_init_cmds) / sizeof(s_init_cmds[0]),
+        .flags.use_qspi_interface = 1,
+    };
+    const esp_lcd_panel_dev_config_t panel_cfg = {
+        .reset_gpio_num = BOARD_LCD_RST,
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
+        .bits_per_pixel = 16,
+        .vendor_config = (void *)&vendor,
+    };
+    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_co5300(s_io, &panel_cfg, &s_panel), TAG, "panel");
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_set_gap(s_panel, BOARD_LCD_X_GAP, BOARD_LCD_Y_GAP), TAG, "gap");
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_reset(s_panel), TAG, "reset");
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_init(s_panel), TAG, "init");
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_disp_on_off(s_panel, true), TAG, "disp on");
+
+    /* TE input: rising edge marks the start of the panel's V-blank. */
+    const gpio_config_t te_cfg = {
+        .pin_bit_mask = BIT64(BOARD_LCD_TE),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_POSEDGE,
+    };
+    ESP_RETURN_ON_ERROR(gpio_config(&te_cfg), TAG, "te gpio");
+    esp_err_t err = gpio_install_isr_service(0);
+    ESP_RETURN_ON_FALSE(err == ESP_OK || err == ESP_ERR_INVALID_STATE, err, TAG, "gpio isr service");
+    ESP_RETURN_ON_ERROR(gpio_isr_handler_add(BOARD_LCD_TE, te_isr, NULL), TAG, "te isr");
+
+    /* Decide the pacing source: wait up to 500 ms for TE to start pulsing. */
+    int waited_ms = 0, toggles = 0, last = gpio_get_level(BOARD_LCD_TE);
+    while (s_te_edges < 2 && waited_ms < 500) {
+        for (int i = 0; i < 200; i++) {            /* 20 ms of polling the pin as a cross-check on the interrupt */
+            const int v = gpio_get_level(BOARD_LCD_TE);
+            if (v != last) { toggles++; last = v; }
+            esp_rom_delay_us(100);
+        }
+        waited_ms += 20;
+    }
+    ESP_LOGI(TAG, "TE pin: %d level changes seen by polling, %" PRIu32 " interrupt edges, level now %d", toggles, s_te_edges, gpio_get_level(BOARD_LCD_TE));
+    s_te_active = s_te_edges >= 2;
+    if (s_te_active) {
+        ESP_LOGI(TAG, "TE detected on GPIO%d (%" PRIu32 " edges after %d ms): frames locked to TE", BOARD_LCD_TE, s_te_edges, waited_ms);
+    } else {
+        gpio_isr_handler_remove(BOARD_LCD_TE);
+        const esp_timer_create_args_t targs = {
+            .callback = pace_timer_cb,
+            .name = "pace60",
+            .dispatch_method = ESP_TIMER_TASK,
+        };
+        ESP_RETURN_ON_ERROR(esp_timer_create(&targs, &s_pace_timer), TAG, "pace timer");
+        ESP_RETURN_ON_ERROR(esp_timer_start_periodic(s_pace_timer, 16667), TAG, "pace timer start");
+        ESP_LOGW(TAG, "no TE edges seen on GPIO%d: pacing frames with a 60 Hz timer", BOARD_LCD_TE);
+    }
+
+    ESP_LOGI(TAG, "CO5300 %dx%d over QSPI at %u MHz, %d x %u B band buffers (%d rows) in internal SRAM",
+             DISPLAY_W, DISPLAY_H, (unsigned)(CONFIG_EYES_LCD_PCLK_HZ / 1000000), DISPLAY_BANDS,
+             (unsigned)DISPLAY_BAND_BYTES, DISPLAY_BAND_ROWS);
+    return ESP_OK;
+}
+
+static void wait_done_reaches(uint32_t seq)
+{
+    while ((int32_t)(seq - s_done) > 0) {
+        xSemaphoreTake(s_done_sem, portMAX_DELAY);
+    }
+}
+
+uint16_t *display_acquire_band(void)
+{
+    const uint32_t b = s_band_seq++ % DISPLAY_BANDS;
+    wait_done_reaches(s_last_issue[b]);
+    return s_band[b];
+}
+
+uint32_t display_push(int x, int y, int w, int h, const uint16_t *band)
+{
+    assert(w > 0 && h > 0 && (size_t)w * (size_t)h <= DISPLAY_BAND_PIXELS);   /* a band buffer holds this much */
+    xSemaphoreTake(s_panel_mutex, portMAX_DELAY);
+    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(s_panel, x, y, x + w, y + h, band));
+    s_issued++;
+    for (int i = 0; i < DISPLAY_BANDS; i++) {
+        if (s_band[i] == band) {
+            s_last_issue[i] = s_issued;
+            break;
+        }
+    }
+    s_bytes_pushed += (uint32_t)w * (uint32_t)h * 2u;
+    const uint32_t seq = s_issued;
+    xSemaphoreGive(s_panel_mutex);
+    return seq;
+}
+
+void display_wait_idle(void)
+{
+    wait_done_reaches(s_issued);
+}
+
+void display_wait_done(uint32_t seq)
+{
+    wait_done_reaches(seq);
+}
+
+uint32_t display_push_direct(int x, int y, int w, int h, const uint16_t *pixels)
+{
+    assert((size_t)w * (size_t)h * 2u <= DISPLAY_DIRECT_MAX);
+    xSemaphoreTake(s_panel_mutex, portMAX_DELAY);
+    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(s_panel, x, y, x + w, y + h, pixels));
+    s_issued++;
+    s_bytes_pushed += (uint32_t)w * (uint32_t)h * 2u;
+    const uint32_t seq = s_issued;
+    xSemaphoreGive(s_panel_mutex);
+    return seq;
+}
+
+static bool IRAM_ATTR on_copy_done(async_memcpy_handle_t mcp, async_memcpy_event_t *event, void *arg)
+{
+    BaseType_t woken = pdFALSE;
+    xSemaphoreGiveFromISR(s_copy_sem, &woken);
+    return woken == pdTRUE;
+}
+
+bool display_copy_start(void *dst, const void *src, size_t bytes)
+{
+    if (!s_mcp) return false;
+    xSemaphoreTake(s_copy_sem, 0);
+    return esp_async_memcpy(s_mcp, dst, (void *)src, bytes, on_copy_done, NULL) == ESP_OK;
+}
+
+void display_copy_wait(void)
+{
+    xSemaphoreTake(s_copy_sem, portMAX_DELAY);
+}
+
+void display_wait_after_te(uint32_t us)
+{
+    if (!s_te_active) return;
+    const int64_t target = s_te_last_us + (int64_t)us;
+    const int64_t wait = target - esp_timer_get_time();
+    if (wait <= 0) return;
+    if (wait < 80) {
+        while (esp_timer_get_time() < target) { }
+        return;
+    }
+    xSemaphoreTake(s_wake_sem, 0);
+    esp_timer_start_once(s_wake_timer, (uint64_t)wait);
+    xSemaphoreTake(s_wake_sem, pdMS_TO_TICKS((uint32_t)(wait / 1000) + 2));
+}
+
+uint32_t display_te_edges(void)
+{
+    return s_te_edges;
+}
+
+uint32_t display_te_period_us(void)
+{
+    return s_te_period_us;
+}
+
+bool display_wait_vsync(uint32_t timeout_ms)
+{
+    /* Drop a stale edge so the frame always starts on a fresh V-blank. */
+    xSemaphoreTake(s_vsync, 0);
+    const bool ok = xSemaphoreTake(s_vsync, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+    s_last_frame_te_us = s_te_last_us;
+    return ok;
+}
+
+#define TE_PERIOD_US   16667
+#define TE_LEAD_US     2500     /* wake this early so light-sleep exit latency and tick jitter are covered */
+
+void display_delay_until_frame(uint32_t period)
+{
+    if (period < 1) {
+        period = 1;
+    }
+    const int64_t now = esp_timer_get_time();
+    const int64_t ref = (s_te_active && s_last_frame_te_us) ? s_last_frame_te_us : now;
+    const int64_t target = ref + (int64_t)period * TE_PERIOD_US - TE_LEAD_US;
+    if (target > now) {
+        vTaskDelay(pdMS_TO_TICKS((uint32_t)((target - now) / 1000)));
+    }
+}
+
+/* QSPI command framing used by the CO5300 driver: opcode 0x02, command in bits 15:8. */
+static void panel_cmd(uint8_t cmd, const uint8_t *param, size_t len)
+{
+    const int lcd_cmd = (0x02 << 24) | ((int)cmd << 8);
+    xSemaphoreTake(s_panel_mutex, portMAX_DELAY);
+    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(s_io, lcd_cmd, param, len));
+    xSemaphoreGive(s_panel_mutex);
+}
+
+void display_set_brightness(uint8_t percent)
+{
+    if (percent > 100) {
+        percent = 100;
+    }
+    const uint8_t v = (uint8_t)((percent * 255u) / 100u);
+    panel_cmd(0x51, &v, 1);
+}
+
+void display_sleep(bool sleep)
+{
+    if (sleep) {
+        panel_cmd(0x28, NULL, 0);           /* Display Off */
+        vTaskDelay(pdMS_TO_TICKS(20));
+        panel_cmd(0x10, NULL, 0);           /* Sleep In */
+        vTaskDelay(pdMS_TO_TICKS(120));
+    } else {
+        panel_cmd(0x11, NULL, 0);           /* Sleep Out */
+        vTaskDelay(pdMS_TO_TICKS(120));
+        display_fill_black();               /* GRAM is not trusted across sleep */
+        panel_cmd(0x29, NULL, 0);           /* Display On */
+    }
+}
+
+bool display_te_active(void)
+{
+    return s_te_active;
+}
+
+void display_fill_black(void)
+{
+    for (int y = 0; y < DISPLAY_H; y += DISPLAY_BAND_ROWS) {
+        int rows = DISPLAY_H - y;
+        if (rows > DISPLAY_BAND_ROWS) {
+            rows = DISPLAY_BAND_ROWS;
+        }
+        uint16_t *b = display_acquire_band();
+        memset(b, 0, (size_t)DISPLAY_W * rows * 2);
+        display_push(0, y, DISPLAY_W, rows, b);
+    }
+    display_wait_idle();
+}
+
+uint32_t display_take_bytes(void)
+{
+    uint32_t v = s_bytes_pushed;
+    s_bytes_pushed = 0;
+    return v;
+}
+
+uint32_t display_pclk_hz(void)
+{
+    return CONFIG_EYES_LCD_PCLK_HZ;
+}
