@@ -51,6 +51,7 @@ typedef struct {
     /* learned battery figures (minutes, -1 unknown) */
     int est_left_min, est_full_min, avg_life_min, avg_charge_min;
     int n_discharge, n_charge;
+    int run_min;            /* minutes into the current discharge / charge stretch */
 } ui_sensors_t;
 
 typedef struct {

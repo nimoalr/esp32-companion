@@ -701,6 +701,7 @@ static void render_task(void *arg)
                 sens.avg_charge_min = bi.avg_charge_min;
                 sens.n_discharge = bi.n_discharge;
                 sens.n_charge = bi.n_charge;
+                sens.run_min = bi.run_min;
             }
             ui_rect_t ur[UI_MAX_DIRTY];
             const int n = ui_update(&c.ui, now_ms, &sens, ur);

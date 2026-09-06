@@ -113,8 +113,16 @@ void battstat_get(int percent, battstat_info_t *out)
     out->n_charge = s_st.nchg;
     out->run_kind = s_st.run_kind;
     out->run_min = s_st.run_minutes;
-    const float rd = rate(s_st.dis, s_st.ndis, NULL);
-    const float rc = rate(s_st.chg, s_st.nchg, NULL);
+    float rd = rate(s_st.dis, s_st.ndis, NULL);
+    float rc = rate(s_st.chg, s_st.nchg, NULL);
+    /* nothing on record yet for the stretch we are in: use the stretch itself once it says something */
+    const int run_moved = s_st.run_kind == 1 ? (int)s_st.run_start_pct - (int)s_st.run_last_pct
+                        : s_st.run_kind == 2 ? (int)s_st.run_last_pct - (int)s_st.run_start_pct : 0;
+    if (run_moved >= MIN_SEG_PCT && s_st.run_minutes >= MIN_SEG_MIN) {
+        const float rr = (float)run_moved / (float)s_st.run_minutes;
+        if (s_st.run_kind == 1 && rd <= 0.f) rd = rr;
+        if (s_st.run_kind == 2 && rc <= 0.f) rc = rr;
+    }
     if (rd > 0.f) {
         out->avg_life_min = (int)(100.f / rd);
         if (percent >= 0) out->est_left_min = (int)((float)percent / rd);

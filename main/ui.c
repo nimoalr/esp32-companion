@@ -515,21 +515,23 @@ static void battery_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *s)
         snprintf(bb, sizeof bb, "no battery");
     }
     snprintf(c, sizeof c, "%s%s", s->charging ? "charging" : "discharging", s->usb ? ", USB" : "");
-    /* learned figures: what this charge should give, and what the last few cycles showed */
+    /*
+     * Learned figures, only the kind that matters now: on battery the time left on this
+     * charge, while charging the time to full; both from the stored stretches (or the
+     * running one while nothing is on record yet).
+     */
     char d[64] = "", e[64] = "";
-    if (s->charging && s->est_full_min >= 0) {
-        snprintf(d, sizeof d, "full in ~%dh%02d", s->est_full_min / 60, s->est_full_min % 60);
-    } else if (!s->usb && s->est_left_min >= 0) {
-        snprintf(d, sizeof d, "~%dh%02d left", s->est_left_min / 60, s->est_left_min % 60);
+    if (s->usb && s->charging) {
+        if (s->est_full_min >= 0) snprintf(d, sizeof d, "full in ~%dh%02d", s->est_full_min / 60, s->est_full_min % 60);
+        else snprintf(d, sizeof d, "measuring the charge rate (%d min)", s->run_min);
+        if (s->avg_charge_min >= 0) snprintf(e, sizeof e, "a refill takes ~%dh%02d (%d cycle%s)", s->avg_charge_min / 60, s->avg_charge_min % 60, s->n_charge, s->n_charge == 1 ? "" : "s");
+    } else if (!s->usb) {
+        if (s->est_left_min >= 0) snprintf(d, sizeof d, "~%dh%02d left", s->est_left_min / 60, s->est_left_min % 60);
+        else snprintf(d, sizeof d, "measuring consumption (%d min)", s->run_min);
+        if (s->avg_life_min >= 0) snprintf(e, sizeof e, "a charge lasts ~%dh%02d (%d cycle%s)", s->avg_life_min / 60, s->avg_life_min % 60, s->n_discharge, s->n_discharge == 1 ? "" : "s");
     } else {
-        snprintf(d, sizeof d, "%s", s->n_discharge || s->n_charge ? "" : "learning battery life...");
-    }
-    if (s->avg_life_min >= 0 && s->avg_charge_min >= 0) {
-        snprintf(e, sizeof e, "charge lasts ~%dh%02d, refill ~%dh%02d", s->avg_life_min / 60, s->avg_life_min % 60, s->avg_charge_min / 60, s->avg_charge_min % 60);
-    } else if (s->avg_life_min >= 0) {
-        snprintf(e, sizeof e, "a charge lasts ~%dh%02d (%d cycle%s)", s->avg_life_min / 60, s->avg_life_min % 60, s->n_discharge, s->n_discharge == 1 ? "" : "s");
-    } else if (s->avg_charge_min >= 0) {
-        snprintf(e, sizeof e, "a refill takes ~%dh%02d (%d cycle%s)", s->avg_charge_min / 60, s->avg_charge_min % 60, s->n_charge, s->n_charge == 1 ? "" : "s");
+        snprintf(d, sizeof d, "charged");
+        if (s->avg_life_min >= 0) snprintf(e, sizeof e, "a charge lasts ~%dh%02d (%d cycle%s)", s->avg_life_min / 60, s->avg_life_min % 60, s->n_discharge, s->n_discharge == 1 ? "" : "s");
     }
     if (strcmp(a, u->text_a) || strcmp(bb, u->text_b) || strcmp(c, u->text_c) || strcmp(d, u->text_d) || strcmp(e, u->text_e)) {
         strcpy(u->text_a, a);
