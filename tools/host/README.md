@@ -33,3 +33,5 @@ Timings are host numbers; use them for ratios, not for absolute budgets.
 `vocode.c` and `words.sh`: an earlier experiment, a 24-band channel vocoder over text-to-speech clips; kept for reference, not used.
 
 `robot.c` and `samples.sh`: the sampled voice. `samples.sh [voice]` speaks a short set of words and interjections with macOS text-to-speech and renders each through several settings of `robot` (speed/pitch up by resampling, optional ring modulation, optional resonant peak, a high-pass for the speaker), one medley per setting under `docs/voice/sample_<voice>_<setting>.wav`, to choose the treatment by ear.
+
+`creature_round.sh`: three short, level-matched Junior auditions alternating words and interjections: the chosen sample treatment, a higher voice with formants preserved, and a metallic variant. Requires FFmpeg with rubberband and Python stdlib in addition to the existing macOS tools. Writes 16 kHz mono WAVs and a timing/level manifest under `docs/voice/`; see [the round's listening guide and clip contract](../../docs/voice/CREATURE_ROUND1.md). Does not regenerate the firmware bank.
