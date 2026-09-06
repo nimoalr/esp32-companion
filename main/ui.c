@@ -117,13 +117,15 @@ static void goto_screen(ui_t *u, ui_screen_t s, uint32_t now_ms)
 
 const char *ui_screen_name(ui_screen_t s)
 {
-    static const char *n[] = { "MENU", "CALIBRATE", "LEVEL", "BRIGHTNESS", "BATTERY", "COLOR", "MICTEST" };
-    return (s <= UI_SCREEN_MICTEST) ? n[s] : "?";
+    static const char *n[] = { "MENU", "CALIBRATE", "LEVEL", "BRIGHTNESS", "BATTERY", "COLOR", "MICCAL" };
+    return (s <= UI_SCREEN_MICCAL) ? n[s] : "?";
 }
 
 /* ---- menu ------------------------------------------------------------------ */
 
-enum { MENU_CALIBRATE, MENU_LEVEL, MENU_BRIGHTNESS, MENU_COLOR, MENU_BATTERY, MENU_MICTEST, MENU_DANCE, MENU_EYES, MENU_COUNT };
+static void miccal_begin(ui_t *u, uint32_t now_ms);
+
+enum { MENU_CALIBRATE, MENU_LEVEL, MENU_BRIGHTNESS, MENU_COLOR, MENU_BATTERY, MENU_MICCAL, MENU_DANCE, MENU_EYES, MENU_COUNT };
 
 static const char *menu_label(const ui_t *u, int i, char *buf, int len)
 {
@@ -133,7 +135,7 @@ static const char *menu_label(const ui_t *u, int i, char *buf, int len)
     case MENU_BRIGHTNESS: snprintf(buf, (size_t)len, "Brightness   %3u%%", u->settings->brightness_active); return buf;
     case MENU_COLOR:      snprintf(buf, (size_t)len, "Eye colour %s", k_eye_palette[u->settings->eye_color % EYE_PALETTE_N].name); return buf;
     case MENU_BATTERY:    return "Battery";
-    case MENU_MICTEST:    return "Mic test";
+    case MENU_MICCAL:     return u->settings->mic.valid ? "Calibrate mics" : "Calibrate mics  !";
     case MENU_DANCE:      return "Dance mode";
     default:              return "Back to eyes";
     }
@@ -188,10 +190,8 @@ static void menu_input(ui_t *u, ui_input_t in, uint32_t now_ms)
         case MENU_BATTERY:
             goto_screen(u, UI_SCREEN_BATTERY, now_ms);
             break;
-        case MENU_MICTEST:
-            goto_screen(u, UI_SCREEN_MICTEST, now_ms);
-            u->text_a[0] = u->text_b[0] = u->text_c[0] = 0;
-            u->arrow_len = 0;
+        case MENU_MICCAL:
+            miccal_begin(u, now_ms);
             break;
         case MENU_DANCE:
             action(u, UI_ACT_DANCE);
@@ -494,52 +494,190 @@ static void color_input(ui_t *u, ui_input_t in, uint32_t now_ms)
 
 /* ---- battery --------------------------------------------------------------- */
 
-/* ---- mic test (temporary) --------------------------------------------------- */
+/* ---- microphone axis wizard --------------------------------------------------- */
 
+/*
+ * Three places, three claps each, no tapping: the wizard listens as soon as a place is
+ * shown (after a short settle so the tap that opened it is not counted) and moves on by
+ * itself. Every accepted clap is logged with its raw figures so a run can be read back
+ * from the serial log. The USB end and the lanyard end give the sign and the scale of
+ * the axis, the front gives the zero.
+ */
 #define MIC_ARROW_MAX 90
+#define MIC_PLACES    3
+#define MIC_CLAPS     3
+#define MIC_SETTLE_MS 1200        /* after entering a place: the opening tap rings in the body */
+#define MIC_GAP_MS    250         /* a clap's echoes may re-trigger; one clap per gap */
+#define MIC_MIN_CONF  0.25f       /* both mics must have heard it */
+#define MIC_MIN_SEP   0.5f        /* samples between the ends, below which the axis is unusable */
 
-static void paint_mictest(const ui_t *u, const gfx_band_t *b)
+static const char *k_mic_title[MIC_PLACES][2] = {
+    { "Clap at the USB end",     "30 cm from the port" },
+    { "Clap at the lanyard end", "30 cm from the holes" },
+    { "Clap in front",           "30 cm, facing the screen" },
+};
+
+static float median3(float a, float b, float c)
 {
-    chrome(b, "MIC TEST", "hold=back");
-    text_center(b, &font_spleen_8x16, 108, "arrow: towards the sound (mic axis)", C.grey);
-    /* axis line and the arrow from the centre, up = + (MIC2 side) */
-    gfx_line(b, CX, CY - MIC_ARROW_MAX - 10, CX, CY + MIC_ARROW_MAX + 10, 1, C.dim);
-    const int len = u->arrow_len;
-    if (len != 0) {
-        const int tip = CY - len;
-        gfx_line(b, CX, CY, CX, tip, 5, C.fg);
-        const int d = len > 0 ? 1 : -1;
-        gfx_line(b, CX, tip, CX - 14, tip + 14 * d, 5, C.fg);
-        gfx_line(b, CX, tip, CX + 14, tip + 14 * d, 5, C.fg);
-    }
-    gfx_disc(b, CX, CY, 4, C.white);
-    text_center(b, &font_spleen_12x24, 340, u->text_a, C.white);
-    text_center(b, &font_spleen_8x16, 372, u->text_b, C.grey);
+    if (a > b) { const float t = a; a = b; b = t; }
+    if (b > c) { const float t = b; b = c; c = t; }
+    if (a > b) { const float t = a; a = b; b = t; }
+    return b;
 }
 
-static void mictest_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *s)
+static void miccal_begin(ui_t *u, uint32_t now_ms)
 {
-    if (u->text_ms && now_ms - u->text_ms < 100) return;
-    u->text_ms = now_ms;
-    char a[40], bb[40];
-    if (!s->mic_on) {
-        snprintf(a, sizeof a, "mics starting...");
-        bb[0] = 0;
+    u->mic_step = 0;
+    u->mic_n = 0;
+    u->mic_ok = false;
+    u->mic_step_ms = now_ms;
+    u->arrow_len = 0;
+    u->text_a[0] = u->text_b[0] = 0;
+    u->cal_msg[0] = 0;
+    goto_screen(u, UI_SCREEN_MICCAL, now_ms);
+    ESP_LOGI(TAG, "miccal: start");
+}
+
+static bool miccal_compute(const float lag[MIC_PLACES][MIC_CLAPS], mic_cal_t *out, char *err, size_t errlen)
+{
+    const float usb = median3(lag[0][0], lag[0][1], lag[0][2]);
+    const float lan = median3(lag[1][0], lag[1][1], lag[1][2]);
+    const float front = median3(lag[2][0], lag[2][1], lag[2][2]);
+    const float sep = lan - usb;
+    memset(out, 0, sizeof *out);
+    out->sep = sep;
+    if (fabsf(sep) < MIC_MIN_SEP) {
+        snprintf(err, errlen, "ends alike: %.2f vs %.2f", usb, lan);
+        return false;
+    }
+    /* zero: the front clap, sanity-checked against the midpoint of the two ends */
+    const float mid = 0.5f * (usb + lan);
+    out->offset = fabsf(front - mid) < 0.5f * fabsf(sep) ? 0.5f * (front + mid) : mid;
+    out->gain = 2.f / sep;               /* an end clap lands at +-1 */
+    out->valid = true;
+    return true;
+}
+
+static void paint_miccal(const ui_t *u, const gfx_band_t *b)
+{
+    char line[48];
+    if (u->mic_step < MIC_PLACES) {
+        snprintf(line, sizeof line, "MICS %d/%d", u->mic_step + 1, MIC_PLACES);
+        chrome(b, line, "hold=back");
+        text_center(b, &font_spleen_12x24, CAL_BODY_Y, k_mic_title[u->mic_step][0], C.white);
+        text_center(b, &font_spleen_12x24, CAL_BODY_Y + 30, k_mic_title[u->mic_step][1], C.grey);
+        /* one cell per clap: [#..] */
+        char bar[MIC_CLAPS + 3];
+        bar[0] = '[';
+        for (int i = 0; i < MIC_CLAPS; i++) bar[1 + i] = i < u->mic_n ? '#' : '.';
+        bar[MIC_CLAPS + 1] = ']';
+        bar[MIC_CLAPS + 2] = 0;
+        text_center(b, &font_spleen_16x32, CAL_BAR_Y, bar, C.fg);
+        text_center(b, &font_spleen_8x16, CAL_VAL_Y + 4, u->cal_msg, C.grey);
+        text_center(b, &font_spleen_8x16, CAL_VAL_Y + 24, u->text_b, C.grey);
     } else {
-        snprintf(a, sizeof a, "lag %+.2f  conf %.2f", s->dir_lag, s->dir_conf);
-        snprintf(bb, sizeof bb, "level %d LSB   dir %+.2f", s->mic_rms, s->dir);
+        chrome(b, "MICS", u->mic_ok ? "tap=save  hold=back" : "tap=retry  hold=back");
+        if (u->mic_ok) {
+            /* live check: the arrow follows the claps through the new calibration, up = lanyard end */
+            gfx_line(b, CX, CY - MIC_ARROW_MAX - 10, CX, CY + MIC_ARROW_MAX + 10, 1, C.dim);
+            const int len = u->arrow_len;
+            if (len != 0) {
+                const int tip = CY - len;
+                gfx_line(b, CX, CY, CX, tip, 5, C.fg);
+                const int d = len > 0 ? 1 : -1;
+                gfx_line(b, CX, tip, CX - 14, tip + 14 * d, 5, C.fg);
+                gfx_line(b, CX, tip, CX + 14, tip + 14 * d, 5, C.fg);
+            }
+            gfx_disc(b, CX, CY, 4, C.white);
+            text_center(b, &font_spleen_8x16, 104, "clap to check: up = lanyard end", C.grey);
+            snprintf(line, sizeof line, "ends %.2f apart  zero %+.2f", u->mic_result.sep, u->mic_result.offset);
+            text_center(b, &font_spleen_8x16, 344, line, C.grey);
+            text_center(b, &font_spleen_12x24, 364, u->text_a, C.white);
+        } else {
+            text_center(b, &font_spleen_16x32, CAL_BODY_Y, "FAILED", C.bad);
+            text_center(b, &font_spleen_12x24, CAL_BODY_Y + 56, u->cal_msg, C.white);
+            text_center(b, &font_spleen_8x16, CAL_BODY_Y + 92, "clap louder, closer to the axis", C.grey);
+        }
     }
-    int len = (int)(s->dir * MIC_ARROW_MAX);
-    if (!s->mic_on || s->dir_conf < 0.2f) len = 0;
-    if (len != u->arrow_len) {
-        u->arrow_len = len;
-        dirty_add(u, CX - 20, CY - MIC_ARROW_MAX - 12, CX + 20, CY + MIC_ARROW_MAX + 12);
+}
+
+static void miccal_input(ui_t *u, ui_input_t in, uint32_t now_ms)
+{
+    if (in == UI_IN_LONG || in == UI_IN_RIGHT) {
+        goto_screen(u, UI_SCREEN_MENU, now_ms);
+        return;
     }
-    if (strcmp(a, u->text_a) || strcmp(bb, u->text_b)) {
-        strcpy(u->text_a, a);
-        strcpy(u->text_b, bb);
-        dirty_add(u, 40, 340, W - 40, 390);
+    if (in != UI_IN_TAP || u->mic_step < MIC_PLACES) return;
+    if (u->mic_ok) {
+        u->settings->mic = u->mic_result;
+        action(u, UI_ACT_SAVE);
+        action(u, UI_ACT_MICCAL);
+        ESP_LOGI(TAG, "miccal: saved offset %+.2f gain %+.2f sep %.2f", u->mic_result.offset, u->mic_result.gain, u->mic_result.sep);
+        goto_screen(u, UI_SCREEN_MENU, now_ms);
+    } else {
+        miccal_begin(u, now_ms);
     }
+}
+
+static void miccal_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *s)
+{
+    /* a new transient since last time? */
+    const bool fresh = s->mic_on && s->dir_n != u->mic_seen_n;
+    u->mic_seen_n = s->dir_n;
+    const bool accept = fresh && s->dir_conf >= MIC_MIN_CONF && now_ms - u->mic_step_ms > MIC_SETTLE_MS &&
+                        now_ms - u->mic_clap_ms > MIC_GAP_MS;
+    if (fresh) {
+        ESP_LOGI(TAG, "miccal: %s %d clap %d: lag %+.2f conf %.2f L %d R %d%s",
+                 u->mic_step < MIC_PLACES ? "place" : "check", u->mic_step + 1, u->mic_n + 1, s->dir_lag, s->dir_conf,
+                 s->mic_rms_l, s->mic_rms_r, accept ? "" : " (ignored)");
+    }
+    if (u->mic_step >= MIC_PLACES) {
+        if (accept && u->mic_ok) {
+            u->mic_clap_ms = now_ms;
+            float d = (s->dir_lag - u->mic_result.offset) * u->mic_result.gain;
+            if (d > 1.f) d = 1.f;
+            if (d < -1.f) d = -1.f;
+            u->arrow_len = (int)(d * MIC_ARROW_MAX);
+            snprintf(u->text_a, sizeof u->text_a, "lag %+.2f  ->  %+.2f", s->dir_lag, d);
+            dirty_all(u);
+        }
+        return;
+    }
+    char msg[48];
+    if (!s->mic_on) snprintf(msg, sizeof msg, "mics starting...");
+    else if (now_ms - u->mic_step_ms <= MIC_SETTLE_MS) snprintf(msg, sizeof msg, "get ready...");
+    else snprintf(msg, sizeof msg, "listening   L %d  R %d", s->mic_rms_l, s->mic_rms_r);
+    if (now_ms - u->text_ms > 100 && strcmp(msg, u->cal_msg)) {
+        u->text_ms = now_ms;
+        snprintf(u->cal_msg, sizeof u->cal_msg, "%s", msg);
+        dirty_add(u, 40, CAL_VAL_Y, W - 40, CAL_VAL_Y + 24);
+    }
+    if (!accept) return;
+    u->mic_clap_ms = now_ms;
+    u->mic_lag[u->mic_step][u->mic_n++] = s->dir_lag;
+    snprintf(u->text_b, sizeof u->text_b, "clap %d: lag %+.2f conf %.2f", u->mic_n, s->dir_lag, s->dir_conf);
+    dirty_add(u, 40, CAL_VAL_Y + 20, W - 40, CAL_VAL_Y + 44);
+    dirty_add(u, 80, CAL_BAR_Y, W - 80, CAL_BAR_Y + 32);
+    if (u->mic_n < MIC_CLAPS) return;
+    u->mic_n = 0;
+    u->mic_step++;
+    u->mic_step_ms = now_ms;
+    u->text_b[0] = 0;
+    if (u->mic_step == MIC_PLACES) {
+        char err[48];
+        u->mic_ok = miccal_compute(u->mic_lag, &u->mic_result, err, sizeof err);
+        if (!u->mic_ok) snprintf(u->cal_msg, sizeof u->cal_msg, "%s", err);
+        u->text_a[0] = 0;
+        u->arrow_len = 0;
+        ESP_LOGI(TAG, "miccal: usb %+.2f %+.2f %+.2f | lanyard %+.2f %+.2f %+.2f | front %+.2f %+.2f %+.2f -> %s%s",
+                 u->mic_lag[0][0], u->mic_lag[0][1], u->mic_lag[0][2], u->mic_lag[1][0], u->mic_lag[1][1], u->mic_lag[1][2],
+                 u->mic_lag[2][0], u->mic_lag[2][1], u->mic_lag[2][2], u->mic_ok ? "ok" : "FAILED: ", u->mic_ok ? "" : err);
+        if (u->mic_ok) {
+            ESP_LOGI(TAG, "miccal: sep %.2f samples (%s mic is at the USB end), offset %+.2f, gain %+.2f",
+                     u->mic_result.sep, u->mic_result.sep > 0.f ? "R/MIC2" : "L/MIC1", u->mic_result.offset, u->mic_result.gain);
+        }
+    }
+    dirty_all(u);
 }
 
 static void paint_battery(const ui_t *u, const gfx_band_t *b)
@@ -623,9 +761,9 @@ void ui_input(ui_t *u, ui_input_t in, uint32_t now_ms)
     case UI_SCREEN_CALIBRATE:  calibrate_input(u, in, now_ms); break;
     case UI_SCREEN_BRIGHTNESS: brightness_input(u, in, now_ms); break;
     case UI_SCREEN_COLOR:      color_input(u, in, now_ms); break;
+    case UI_SCREEN_MICCAL:     miccal_input(u, in, now_ms); break;
     case UI_SCREEN_LEVEL:
     case UI_SCREEN_BATTERY:
-    case UI_SCREEN_MICTEST:
         if (in == UI_IN_LONG || in == UI_IN_RIGHT) goto_screen(u, UI_SCREEN_MENU, now_ms);
         break;
     }
@@ -637,7 +775,7 @@ int ui_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *sens, ui_rect_t out[
     case UI_SCREEN_CALIBRATE: calibrate_update(u, now_ms, sens); break;
     case UI_SCREEN_LEVEL:     level_update(u, now_ms, sens); break;
     case UI_SCREEN_BATTERY:   battery_update(u, now_ms, sens); break;
-    case UI_SCREEN_MICTEST:   mictest_update(u, now_ms, sens); break;
+    case UI_SCREEN_MICCAL:    miccal_update(u, now_ms, sens); break;
     default: break;
     }
     const int n = u->ndirty;
@@ -655,7 +793,7 @@ void ui_paint(const ui_t *u, const gfx_band_t *band)
     case UI_SCREEN_BRIGHTNESS: paint_brightness(u, band); break;
     case UI_SCREEN_COLOR:      paint_color(u, band); break;
     case UI_SCREEN_BATTERY:    paint_battery(u, band); break;
-    case UI_SCREEN_MICTEST:    paint_mictest(u, band); break;
+    case UI_SCREEN_MICCAL:     paint_miccal(u, band); break;
     }
 }
 

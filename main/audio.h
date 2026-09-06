@@ -15,4 +15,6 @@
 esp_err_t audio_start(void);
 void audio_stop(void);
 bool audio_running(void);
+/* Map raw arrival-time differences to the direction value: dir = (lag - offset) * gain. */
+void audio_set_dir_cal(const mic_cal_t *cal);
 void audio_get_features(audio_features_t *out);

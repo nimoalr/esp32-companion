@@ -30,7 +30,7 @@ typedef enum {
     UI_SCREEN_BRIGHTNESS,
     UI_SCREEN_BATTERY,
     UI_SCREEN_COLOR,
-    UI_SCREEN_MICTEST,      /* temporary: where does the sound come from along the mic axis */
+    UI_SCREEN_MICCAL,       /* microphone axis wizard: claps from three places */
 } ui_screen_t;
 
 typedef enum {
@@ -40,6 +40,7 @@ typedef enum {
     UI_ACT_BRIGHTNESS,      /* apply g_settings.brightness_active now */
     UI_ACT_DANCE,           /* leave the UI into the dance mode */
     UI_ACT_COLOR,           /* apply g_settings.eye_color now */
+    UI_ACT_MICCAL,          /* apply g_settings.mic now */
 } ui_action_t;
 
 typedef struct {
@@ -53,10 +54,11 @@ typedef struct {
     int est_left_min, est_full_min, avg_life_min, avg_charge_min;
     int n_discharge, n_charge;
     int run_min;            /* minutes into the current discharge / charge stretch */
-    /* microphones (mic test page) */
+    /* microphones (mic wizard) */
     bool mic_on;
     float dir, dir_conf, dir_lag;
-    int mic_rms;
+    int mic_rms, mic_rms_l, mic_rms_r;
+    int dir_n;
 } ui_sensors_t;
 
 typedef struct {
@@ -94,8 +96,16 @@ typedef struct {
     int prev_ball_x, prev_ball_y;
     float pitch, roll;
     char level_text[32];
-    /* mic test */
+    /* mic wizard */
     int arrow_len;          /* px, signed: + = up */
+    int mic_step;           /* 0..2 place index, 3 = result */
+    int mic_n;              /* claps collected in the current place */
+    int mic_seen_n;         /* transient counter last consumed */
+    uint32_t mic_step_ms;   /* when the current place started (claps ignored for a moment) */
+    uint32_t mic_clap_ms;   /* last accepted clap */
+    float mic_lag[3][3];
+    mic_cal_t mic_result;
+    bool mic_ok;
     /* brightness / battery */
     char text_a[40], text_b[40], text_c[40], text_d[64], text_e[64];
     uint32_t text_ms;

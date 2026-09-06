@@ -416,7 +416,7 @@ static void leave_ui(render_ctx_t *c, uint32_t now_ms)
 /* Keep the microphones running exactly while the DANCE expression is showing. */
 static void sync_audio(render_ctx_t *c, bool want)
 {
-    want = (want && c->mode == MODE_EYES) || (c->mode == MODE_UI && c->ui.screen == UI_SCREEN_MICTEST);
+    want = (want && c->mode == MODE_EYES) || (c->mode == MODE_UI && c->ui.screen == UI_SCREEN_MICCAL);
     if (want && !audio_running()) {
         if (audio_start() != ESP_OK) {
             ESP_LOGW(TAG, "microphones unavailable");
@@ -445,6 +445,9 @@ static void run_ui_actions(render_ctx_t *c, uint32_t now_ms)
             break;
         case UI_ACT_COLOR:
             eyes_set_base_color(&c->eyes, settings_eye_rgb());
+            break;
+        case UI_ACT_MICCAL:
+            audio_set_dir_cal(&g_settings.mic);
             break;
         case UI_ACT_EXIT:
             leave_ui(c, now_ms);
@@ -707,7 +710,10 @@ static void render_task(void *arg)
             sens.dir = af.dir;
             sens.dir_conf = af.dir_conf;
             sens.dir_lag = af.dir_lag;
+            sens.dir_n = af.dir_n;
             sens.mic_rms = (int)af.raw_loud;
+            sens.mic_rms_l = (int)af.rms_l;
+            sens.mic_rms_r = (int)af.rms_r;
             ui_rect_t ur[UI_MAX_DIRTY];
             const int n = ui_update(&c.ui, now_ms, &sens, ur);
             for (int i = 0; i < n; i++) {
@@ -773,10 +779,10 @@ static void render_task(void *arg)
             const uint32_t elapsed_ms = (uint32_t)((now_us - stats_t0) / 1000);
             pmic_battery_t b;
             power_battery(&b);
-            char audio_s[128] = "";
+            char audio_s[160] = "";
             if (af.active) {
-                snprintf(audio_s, sizeof audio_s, " | audio rms %.0f kick %.2f ratio %.2f, beats %" PRIu32 " %d bpm conf %.2f, dir %+.2f lag %+.2f c %.2f",
-                         af.raw_loud, af.kick, af.bass_ratio, af.beat_count, (int)af.bpm, af.tempo_conf, af.dir, af.dir_lag, af.dir_conf);
+                snprintf(audio_s, sizeof audio_s, " | audio rms %.0f kick %.2f ratio %.2f, beats %" PRIu32 " %d bpm conf %.2f, L %.0f R %.0f dir %+.2f clap %u lag %+.2f c %.2f",
+                         af.raw_loud, af.kick, af.bass_ratio, af.beat_count, (int)af.bpm, af.tempo_conf, af.rms_l, af.rms_r, af.dir, af.dir_n, af.dir_lag, af.dir_conf);
             }
             ESP_LOGI(TAG, "%s %s [%s, energy %.2f]: %" PRIu32 " fps | raster %" PRIu32 " us avg, %" PRIu32 " us max | push %" PRIu32 " us | %" PRIu32 " B/frame, %" PRIu32 " rect(s) | pace %s%s (%" PRIu32 " TE/s) | bri %d%% | batt %u mV %d%%%s%s%s | stack %u B free",
                      power_state_name(state), c.mode == MODE_UI ? ui_screen_name(c.ui.screen) : anim_name(c.sm.id),
@@ -808,6 +814,7 @@ void app_main(void)
              esp_get_idf_version(), (int)esp_reset_reason(), (int)esp_sleep_get_wakeup_cause());
 
     ESP_ERROR_CHECK(settings_init());
+    audio_set_dir_cal(&g_settings.mic);
     battstat_init();
     ESP_ERROR_CHECK(i2c_bus_init());
     ESP_ERROR_CHECK(display_init());

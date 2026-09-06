@@ -64,9 +64,18 @@ esp_err_t settings_init(void)
     if (nvs_get_blob(h, "cal2", &cal, &len) == ESP_OK && len == sizeof(cal) && cal.valid) {
         g_settings.cal = cal;
     }
+    mic_cal_t mic;
+    len = sizeof(mic);
+    if (nvs_get_blob(h, "mic1", &mic, &len) == ESP_OK && len == sizeof(mic) && mic.valid) {
+        g_settings.mic = mic;
+    }
     nvs_close(h);
-    ESP_LOGI(TAG, "loaded: brightness %u%% / %u%%, calibration %s", g_settings.brightness_active,
-             g_settings.brightness_aod, g_settings.cal.valid ? "present" : "absent");
+    ESP_LOGI(TAG, "loaded: brightness %u%% / %u%%, accel calibration %s, mic calibration %s", g_settings.brightness_active,
+             g_settings.brightness_aod, g_settings.cal.valid ? "present" : "absent", g_settings.mic.valid ? "present" : "absent");
+    if (g_settings.mic.valid) {
+        ESP_LOGI(TAG, "mic axis: offset %+.2f gain %+.2f (ends %.2f samples apart)", g_settings.mic.offset,
+                 g_settings.mic.gain, g_settings.mic.sep);
+    }
     return ESP_OK;
 }
 
@@ -79,6 +88,7 @@ esp_err_t settings_save(void)
     if (err == ESP_OK) err = nvs_set_u8(h, "bri_aod", g_settings.brightness_aod);
     if (err == ESP_OK) err = nvs_set_u8(h, "eye_col", g_settings.eye_color);
     if (err == ESP_OK) err = nvs_set_blob(h, "cal2", &g_settings.cal, sizeof(g_settings.cal));
+    if (err == ESP_OK) err = nvs_set_blob(h, "mic1", &g_settings.mic, sizeof(g_settings.mic));
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
     ESP_RETURN_ON_ERROR(err, TAG, "save");

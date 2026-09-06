@@ -5,12 +5,14 @@
 #include <stdint.h>
 #include "esp_err.h"
 #include "imu_cal.h"
+#include "audio_features.h"
 
 typedef struct {
     uint8_t brightness_active;   /* percent, ACTIVE state */
     uint8_t brightness_aod;      /* percent, DROWSY (always-on) state */
     uint8_t eye_color;           /* index into k_eye_palette */
     imu_cal_t cal;               /* cal.valid == false until the wizard has run */
+    mic_cal_t mic;               /* microphone axis, same rule */
 } settings_t;
 
 extern settings_t g_settings;
