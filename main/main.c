@@ -416,7 +416,7 @@ static void leave_ui(render_ctx_t *c, uint32_t now_ms)
 /* Keep the microphones running exactly while the DANCE expression is showing. */
 static void sync_audio(render_ctx_t *c, bool want)
 {
-    want = want && c->mode == MODE_EYES;
+    want = (want && c->mode == MODE_EYES) || (c->mode == MODE_UI && c->ui.screen == UI_SCREEN_MICTEST);
     if (want && !audio_running()) {
         if (audio_start() != ESP_OK) {
             ESP_LOGW(TAG, "microphones unavailable");
@@ -703,6 +703,11 @@ static void render_task(void *arg)
                 sens.n_charge = bi.n_charge;
                 sens.run_min = bi.run_min;
             }
+            sens.mic_on = audio_running();
+            sens.dir = af.dir;
+            sens.dir_conf = af.dir_conf;
+            sens.dir_lag = af.dir_lag;
+            sens.mic_rms = (int)af.raw_loud;
             ui_rect_t ur[UI_MAX_DIRTY];
             const int n = ui_update(&c.ui, now_ms, &sens, ur);
             for (int i = 0; i < n; i++) {

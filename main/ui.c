@@ -117,13 +117,13 @@ static void goto_screen(ui_t *u, ui_screen_t s, uint32_t now_ms)
 
 const char *ui_screen_name(ui_screen_t s)
 {
-    static const char *n[] = { "MENU", "CALIBRATE", "LEVEL", "BRIGHTNESS", "BATTERY", "COLOR" };
-    return (s <= UI_SCREEN_COLOR) ? n[s] : "?";
+    static const char *n[] = { "MENU", "CALIBRATE", "LEVEL", "BRIGHTNESS", "BATTERY", "COLOR", "MICTEST" };
+    return (s <= UI_SCREEN_MICTEST) ? n[s] : "?";
 }
 
 /* ---- menu ------------------------------------------------------------------ */
 
-enum { MENU_CALIBRATE, MENU_LEVEL, MENU_BRIGHTNESS, MENU_COLOR, MENU_BATTERY, MENU_DANCE, MENU_EYES, MENU_COUNT };
+enum { MENU_CALIBRATE, MENU_LEVEL, MENU_BRIGHTNESS, MENU_COLOR, MENU_BATTERY, MENU_MICTEST, MENU_DANCE, MENU_EYES, MENU_COUNT };
 
 static const char *menu_label(const ui_t *u, int i, char *buf, int len)
 {
@@ -133,6 +133,7 @@ static const char *menu_label(const ui_t *u, int i, char *buf, int len)
     case MENU_BRIGHTNESS: snprintf(buf, (size_t)len, "Brightness   %3u%%", u->settings->brightness_active); return buf;
     case MENU_COLOR:      snprintf(buf, (size_t)len, "Eye colour %s", k_eye_palette[u->settings->eye_color % EYE_PALETTE_N].name); return buf;
     case MENU_BATTERY:    return "Battery";
+    case MENU_MICTEST:    return "Mic test";
     case MENU_DANCE:      return "Dance mode";
     default:              return "Back to eyes";
     }
@@ -186,6 +187,11 @@ static void menu_input(ui_t *u, ui_input_t in, uint32_t now_ms)
             break;
         case MENU_BATTERY:
             goto_screen(u, UI_SCREEN_BATTERY, now_ms);
+            break;
+        case MENU_MICTEST:
+            goto_screen(u, UI_SCREEN_MICTEST, now_ms);
+            u->text_a[0] = u->text_b[0] = u->text_c[0] = 0;
+            u->arrow_len = 0;
             break;
         case MENU_DANCE:
             action(u, UI_ACT_DANCE);
@@ -488,6 +494,54 @@ static void color_input(ui_t *u, ui_input_t in, uint32_t now_ms)
 
 /* ---- battery --------------------------------------------------------------- */
 
+/* ---- mic test (temporary) --------------------------------------------------- */
+
+#define MIC_ARROW_MAX 90
+
+static void paint_mictest(const ui_t *u, const gfx_band_t *b)
+{
+    chrome(b, "MIC TEST", "hold=back");
+    text_center(b, &font_spleen_8x16, 108, "arrow: towards the sound (mic axis)", C.grey);
+    /* axis line and the arrow from the centre, up = + (MIC2 side) */
+    gfx_line(b, CX, CY - MIC_ARROW_MAX - 10, CX, CY + MIC_ARROW_MAX + 10, 1, C.dim);
+    const int len = u->arrow_len;
+    if (len != 0) {
+        const int tip = CY - len;
+        gfx_line(b, CX, CY, CX, tip, 5, C.fg);
+        const int d = len > 0 ? 1 : -1;
+        gfx_line(b, CX, tip, CX - 14, tip + 14 * d, 5, C.fg);
+        gfx_line(b, CX, tip, CX + 14, tip + 14 * d, 5, C.fg);
+    }
+    gfx_disc(b, CX, CY, 4, C.white);
+    text_center(b, &font_spleen_12x24, 340, u->text_a, C.white);
+    text_center(b, &font_spleen_8x16, 372, u->text_b, C.grey);
+}
+
+static void mictest_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *s)
+{
+    if (u->text_ms && now_ms - u->text_ms < 100) return;
+    u->text_ms = now_ms;
+    char a[40], bb[40];
+    if (!s->mic_on) {
+        snprintf(a, sizeof a, "mics starting...");
+        bb[0] = 0;
+    } else {
+        snprintf(a, sizeof a, "lag %+.2f  conf %.2f", s->dir_lag, s->dir_conf);
+        snprintf(bb, sizeof bb, "level %d LSB   dir %+.2f", s->mic_rms, s->dir);
+    }
+    int len = (int)(s->dir * MIC_ARROW_MAX);
+    if (!s->mic_on || s->dir_conf < 0.2f) len = 0;
+    if (len != u->arrow_len) {
+        u->arrow_len = len;
+        dirty_add(u, CX - 20, CY - MIC_ARROW_MAX - 12, CX + 20, CY + MIC_ARROW_MAX + 12);
+    }
+    if (strcmp(a, u->text_a) || strcmp(bb, u->text_b)) {
+        strcpy(u->text_a, a);
+        strcpy(u->text_b, bb);
+        dirty_add(u, 40, 340, W - 40, 390);
+    }
+}
+
 static void paint_battery(const ui_t *u, const gfx_band_t *b)
 {
     chrome(b, "BATTERY", "hold=back");
@@ -571,6 +625,7 @@ void ui_input(ui_t *u, ui_input_t in, uint32_t now_ms)
     case UI_SCREEN_COLOR:      color_input(u, in, now_ms); break;
     case UI_SCREEN_LEVEL:
     case UI_SCREEN_BATTERY:
+    case UI_SCREEN_MICTEST:
         if (in == UI_IN_LONG || in == UI_IN_RIGHT) goto_screen(u, UI_SCREEN_MENU, now_ms);
         break;
     }
@@ -582,6 +637,7 @@ int ui_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *sens, ui_rect_t out[
     case UI_SCREEN_CALIBRATE: calibrate_update(u, now_ms, sens); break;
     case UI_SCREEN_LEVEL:     level_update(u, now_ms, sens); break;
     case UI_SCREEN_BATTERY:   battery_update(u, now_ms, sens); break;
+    case UI_SCREEN_MICTEST:   mictest_update(u, now_ms, sens); break;
     default: break;
     }
     const int n = u->ndirty;
@@ -599,6 +655,7 @@ void ui_paint(const ui_t *u, const gfx_band_t *band)
     case UI_SCREEN_BRIGHTNESS: paint_brightness(u, band); break;
     case UI_SCREEN_COLOR:      paint_color(u, band); break;
     case UI_SCREEN_BATTERY:    paint_battery(u, band); break;
+    case UI_SCREEN_MICTEST:    paint_mictest(u, band); break;
     }
 }
 

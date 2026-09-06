@@ -53,6 +53,8 @@ static float s_lp_b0, s_lp_b1, s_lp_b2, s_lp_a1, s_lp_a2;
 static float s_lp_x1, s_lp_x2, s_lp_y1, s_lp_y2;
 static float s_kick_mean, s_kick_prev, s_max_kick = 1.f;
 static float s_bass_ratio;
+static float s_dir, s_dir_conf, s_dir_lag;
+#define DIR_MAX_LAG 3           /* ~40 mm of microphone spacing is about two samples at 16 kHz */
 static float s_presence;              /* 0..1: is there real sound, from the raw level (quiet room ~18 LSB) */
 static float s_gap_ms;                /* current tempo estimate as a beat interval, 0 = none */
 static uint32_t s_last_beat_ms;
@@ -187,6 +189,42 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
         }
         s_last_beat_ms = now_ms;
     }
+    /*
+     * Direction along the microphone axis: cross-correlate the two channels over a few
+     * samples of lag and refine the peak with a parabola. Only on frames with real sound.
+     */
+    if (s_presence > 0.3f) {
+        float c[2 * DIR_MAX_LAG + 1], ll = 0.f, rr = 0.f;
+        for (int i = 0; i < FRAME; i++) {
+            const float l = (float)pcm[2 * i], r = (float)pcm[2 * i + 1];
+            ll += l * l; rr += r * r;
+        }
+        int best = 0;
+        for (int lag = -DIR_MAX_LAG; lag <= DIR_MAX_LAG; lag++) {
+            float acc = 0.f;
+            const int i0 = lag < 0 ? -lag : 0, i1 = lag > 0 ? FRAME - lag : FRAME;
+            for (int i = i0; i < i1; i++) acc += (float)pcm[2 * i] * (float)pcm[2 * (i + lag) + 1];
+            c[lag + DIR_MAX_LAG] = acc;
+            if (acc > c[best + DIR_MAX_LAG]) best = lag;
+        }
+        const float norm = sqrtf(ll * rr) + 1.f;
+        const float peak = c[best + DIR_MAX_LAG] / norm;
+        if (peak > 0.3f) {
+            float lagf = (float)best;
+            if (best > -DIR_MAX_LAG && best < DIR_MAX_LAG) {
+                const float ym = c[best + DIR_MAX_LAG - 1], y0 = c[best + DIR_MAX_LAG], yp = c[best + DIR_MAX_LAG + 1];
+                const float den = ym - 2.f * y0 + yp;
+                if (den < 0.f) lagf += 0.5f * (ym - yp) / den;
+            }
+            s_dir_lag = lagf;
+            s_dir_conf = peak;
+            s_dir += (lagf / (float)DIR_MAX_LAG - s_dir) * 0.15f;
+        }
+    } else {
+        s_dir *= 0.98f;                  /* fade back to centre in silence */
+        s_dir_conf *= 0.98f;
+    }
+
     /* sub-bass share of the sound: music with a kick has plenty, conversation almost none */
     const float ratio = loud > 1e-5f ? kick_e / loud : 0.f;
     s_bass_ratio += (ratio - s_bass_ratio) * (1.f / 60.f);
@@ -246,6 +284,9 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     s_feat.regularity = regularity;
     s_feat.tempo_conf = tempo_conf;
     s_feat.bass_ratio = s_bass_ratio;
+    s_feat.dir = s_dir;
+    s_feat.dir_conf = s_dir_conf;
+    s_feat.dir_lag = s_dir_lag;
     portEXIT_CRITICAL(&s_lock);
 }
 
@@ -339,6 +380,7 @@ esp_err_t audio_start(void)
     s_bass_prev = 0.f;
     s_kick_mean = s_kick_prev = 0.f;
     s_bass_ratio = 0.f;
+    s_dir = s_dir_conf = s_dir_lag = 0.f;
     s_lp_x1 = s_lp_x2 = s_lp_y1 = s_lp_y2 = 0.f;
     s_max_kick = 1e-3f;
     s_presence = 0.f;

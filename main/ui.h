@@ -30,6 +30,7 @@ typedef enum {
     UI_SCREEN_BRIGHTNESS,
     UI_SCREEN_BATTERY,
     UI_SCREEN_COLOR,
+    UI_SCREEN_MICTEST,      /* temporary: where does the sound come from along the mic axis */
 } ui_screen_t;
 
 typedef enum {
@@ -52,6 +53,10 @@ typedef struct {
     int est_left_min, est_full_min, avg_life_min, avg_charge_min;
     int n_discharge, n_charge;
     int run_min;            /* minutes into the current discharge / charge stretch */
+    /* microphones (mic test page) */
+    bool mic_on;
+    float dir, dir_conf, dir_lag;
+    int mic_rms;
 } ui_sensors_t;
 
 typedef struct {
@@ -89,6 +94,8 @@ typedef struct {
     int prev_ball_x, prev_ball_y;
     float pitch, roll;
     char level_text[32];
+    /* mic test */
+    int arrow_len;          /* px, signed: + = up */
     /* brightness / battery */
     char text_a[40], text_b[40], text_c[40], text_d[64], text_e[64];
     uint32_t text_ms;
