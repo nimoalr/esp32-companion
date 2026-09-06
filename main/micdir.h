@@ -39,6 +39,7 @@ typedef struct {
     float balance;          /* 0..1: the quieter mic's peak over the louder one's */
     float corr;             /* 0..1: normalised correlation of the two edges at the best lag */
     int peak;               /* the louder mic's peak in the edge window, LSB */
+    float level_db;         /* L over R in the edge window, dB (positive = L louder) */
 } micdir_result_t;
 
 bool micdir_frame(micdir_t *d, const int16_t *pcm, int frame, int peak, micdir_result_t *out);

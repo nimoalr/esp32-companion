@@ -56,7 +56,7 @@ typedef struct {
     int run_min;            /* minutes into the current discharge / charge stretch */
     /* microphones (mic wizard) */
     bool mic_on;
-    float dir, dir_conf, dir_lag, dir_corr;
+    float dir, dir_conf, dir_lag, dir_corr, dir_level_db;
     int dir_peak;
     int mic_rms, mic_rms_l, mic_rms_r;
     int dir_n;
@@ -108,6 +108,7 @@ typedef struct {
     int16_t mic_prev_acc[3];
     uint32_t mic_prev_acc_ms;
     float mic_lag[3][3];
+    float mic_db[3][3];
     mic_cal_t mic_result;
     bool mic_ok;
     /* brightness / battery */

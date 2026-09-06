@@ -60,6 +60,7 @@ static float s_dir_off = 0.f, s_dir_gain = 0.5f;   /* raw lag -> -1..+1; the wiz
 static micdir_t s_micdir;
 static float s_dir_corr;
 static int s_dir_peak;
+static float s_dir_level_db;
 static float s_presence;              /* 0..1: is there real sound, from the raw level (quiet room ~18 LSB) */
 static float s_gap_ms;                /* current tempo estimate as a beat interval, 0 = none */
 static uint32_t s_last_beat_ms;
@@ -215,6 +216,7 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
         meas_conf = tr.balance;
         s_dir_corr = tr.corr;
         s_dir_peak = tr.peak;
+        s_dir_level_db = tr.level_db;
     }
     if (!measured && raw_lsb > 60.f) {
         float c[2 * DIR_MAX_LAG + 1], ll = 0.f, rr = 0.f;
@@ -324,6 +326,7 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     s_feat.dir_n = s_micdir.n;
     s_feat.dir_corr = s_dir_corr;
     s_feat.dir_peak = s_dir_peak;
+    s_feat.dir_level_db = s_dir_level_db;
     s_feat.dir_loud = s_micdir.loud;
     s_feat.dir_pre = s_micdir.pre;
     portEXIT_CRITICAL(&s_lock);
@@ -423,6 +426,7 @@ esp_err_t audio_start(void)
     micdir_reset(&s_micdir);
     s_dir_corr = 0.f;
     s_dir_peak = 0;
+    s_dir_level_db = 0.f;
     s_lp_x1 = s_lp_x2 = s_lp_y1 = s_lp_y2 = 0.f;
     s_max_kick = 1e-3f;
     s_presence = 0.f;

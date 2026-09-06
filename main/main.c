@@ -713,6 +713,7 @@ static void render_task(void *arg)
             sens.dir_n = af.dir_n;
             sens.dir_corr = af.dir_corr;
             sens.dir_peak = af.dir_peak;
+            sens.dir_level_db = af.dir_level_db;
             sens.mic_rms = (int)af.raw_loud;
             sens.mic_rms_l = (int)af.rms_l;
             sens.mic_rms_r = (int)af.rms_r;

@@ -528,17 +528,19 @@ typedef struct {
     uint16_t peak;
     uint8_t place, idx, bal_pct, corr_pct;
     int8_t why;             /* -1 accepted, else index into k_mic_why */
+    int8_t db;              /* L over R, dB */
 } mic_event_t;
 static mic_event_t s_mic_log[MIC_LOG_N];
 static int s_mic_log_n;
 static float s_mic_run_lag[MIC_PLACES][MIC_CLAPS];
+static float s_mic_run_db[MIC_PLACES][MIC_CLAPS];
 static mic_cal_t s_mic_run_result;
 static bool s_mic_run_done, s_mic_run_ok;
 static char s_mic_run_err[48];
 static const char *k_mic_why[] = { "settling", "echo of the last clap", "device being handled", "too quiet",
                                    "uneven between the mics", "edges do not match" };
 
-static void mic_log_event(uint32_t ms, int place, int idx, float lag, float bal, float corr, int peak, int why)
+static void mic_log_event(uint32_t ms, int place, int idx, float lag, float bal, float corr, int peak, float db, int why)
 {
     if (s_mic_log_n >= MIC_LOG_N) {
         memmove(&s_mic_log[0], &s_mic_log[1], sizeof(mic_event_t) * (MIC_LOG_N - 1));
@@ -553,6 +555,7 @@ static void mic_log_event(uint32_t ms, int place, int idx, float lag, float bal,
     e->bal_pct = (uint8_t)(bal * 100.f + 0.5f);
     e->corr_pct = (uint8_t)(corr * 100.f + 0.5f);
     e->why = (int8_t)why;
+    e->db = (int8_t)(db < -99.f ? -99.f : db > 99.f ? 99.f : db);
 }
 
 void ui_miccal_dump(void)
@@ -561,13 +564,16 @@ void ui_miccal_dump(void)
     ESP_LOGI(TAG, "miccal replay: %d transient(s) of the last run", s_mic_log_n);
     for (int i = 0; i < s_mic_log_n; i++) {
         const mic_event_t *e = &s_mic_log[i];
-        ESP_LOGI(TAG, "  t+%lus %s %d clap %d: lag %+.2f bal %.2f corr %.2f peak %u%s%s",
+        ESP_LOGI(TAG, "  t+%lus %s %d clap %d: lag %+.2f L/R %+d dB corr %.2f peak %u%s%s",
                  (unsigned long)((e->ms - s_mic_log[0].ms) / 1000), e->place < MIC_PLACES ? "place" : "check",
-                 e->place + 1, e->idx, e->lag_x100 / 100.f, e->bal_pct / 100.f, e->corr_pct / 100.f, e->peak,
+                 e->place + 1, e->idx, e->lag_x100 / 100.f, e->db, e->corr_pct / 100.f, e->peak,
                  e->why >= 0 ? " ignored: " : "", e->why >= 0 ? k_mic_why[e->why] : "");
     }
     if (s_mic_run_done) {
-        ESP_LOGI(TAG, "  usb %+.2f %+.2f %+.2f | lanyard %+.2f %+.2f %+.2f | front %+.2f %+.2f %+.2f -> %s%s",
+        ESP_LOGI(TAG, "  L/R dB: usb %+.0f %+.0f %+.0f | lanyard %+.0f %+.0f %+.0f | front %+.0f %+.0f %+.0f",
+                 s_mic_run_db[0][0], s_mic_run_db[0][1], s_mic_run_db[0][2], s_mic_run_db[1][0], s_mic_run_db[1][1],
+                 s_mic_run_db[1][2], s_mic_run_db[2][0], s_mic_run_db[2][1], s_mic_run_db[2][2]);
+        ESP_LOGI(TAG, "  lag: usb %+.2f %+.2f %+.2f | lanyard %+.2f %+.2f %+.2f | front %+.2f %+.2f %+.2f -> %s%s",
                  s_mic_run_lag[0][0], s_mic_run_lag[0][1], s_mic_run_lag[0][2], s_mic_run_lag[1][0], s_mic_run_lag[1][1],
                  s_mic_run_lag[1][2], s_mic_run_lag[2][0], s_mic_run_lag[2][1], s_mic_run_lag[2][2],
                  s_mic_run_ok ? "ok" : "FAILED: ", s_mic_run_ok ? "" : s_mic_run_err);
@@ -720,10 +726,10 @@ static void miccal_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *s)
     }
     const bool accept = fresh && why < 0;
     if (fresh) {
-        mic_log_event(now_ms, u->mic_step, u->mic_n + 1, s->dir_lag, s->dir_conf, s->dir_corr, s->dir_peak, why);
-        ESP_LOGI(TAG, "miccal: %s %d clap %d: lag %+.2f bal %.2f corr %.2f peak %d L %d R %d%s%s",
-                 u->mic_step < MIC_PLACES ? "place" : "check", u->mic_step + 1, u->mic_n + 1, s->dir_lag, s->dir_conf,
-                 s->dir_corr, s->dir_peak, s->mic_rms_l, s->mic_rms_r, why >= 0 ? " ignored: " : "", why >= 0 ? k_mic_why[why] : "");
+        mic_log_event(now_ms, u->mic_step, u->mic_n + 1, s->dir_lag, s->dir_conf, s->dir_corr, s->dir_peak, s->dir_level_db, why);
+        ESP_LOGI(TAG, "miccal: %s %d clap %d: lag %+.2f L/R %+.1f dB corr %.2f peak %d%s%s",
+                 u->mic_step < MIC_PLACES ? "place" : "check", u->mic_step + 1, u->mic_n + 1, s->dir_lag, s->dir_level_db,
+                 s->dir_corr, s->dir_peak, why >= 0 ? " ignored: " : "", why >= 0 ? k_mic_why[why] : "");
     }
     if (u->mic_step >= MIC_PLACES) {
         if (accept && u->mic_ok) {
@@ -748,8 +754,9 @@ static void miccal_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *s)
     }
     if (!accept) return;
     u->mic_clap_ms = now_ms;
-    u->mic_lag[u->mic_step][u->mic_n++] = s->dir_lag;
-    snprintf(u->text_b, sizeof u->text_b, "clap %d: lag %+.2f corr %.2f", u->mic_n, s->dir_lag, s->dir_corr);
+    u->mic_lag[u->mic_step][u->mic_n] = s->dir_lag;
+    u->mic_db[u->mic_step][u->mic_n++] = s->dir_level_db;
+    snprintf(u->text_b, sizeof u->text_b, "clap %d: lag %+.2f  L/R %+.0f dB", u->mic_n, s->dir_lag, s->dir_level_db);
     dirty_add(u, 40, CAL_VAL_Y + 20, W - 40, CAL_VAL_Y + 44);
     dirty_add(u, 80, CAL_BAR_Y, W - 80, CAL_BAR_Y + 32);
     if (u->mic_n < MIC_CLAPS) return;
@@ -762,6 +769,7 @@ static void miccal_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *s)
         u->mic_ok = miccal_compute(u->mic_lag, &u->mic_result, err, sizeof err);
         if (!u->mic_ok) snprintf(u->cal_msg, sizeof u->cal_msg, "%s", err);
         memcpy(s_mic_run_lag, u->mic_lag, sizeof s_mic_run_lag);
+        memcpy(s_mic_run_db, u->mic_db, sizeof s_mic_run_db);
         s_mic_run_result = u->mic_result;
         s_mic_run_ok = u->mic_ok;
         s_mic_run_done = true;

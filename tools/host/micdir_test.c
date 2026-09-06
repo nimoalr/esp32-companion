@@ -8,11 +8,25 @@
 #define FRAME 256
 #define FS 16000.f
 
+static int g_noise;     /* 0: tone burst, 1: band-limited noise burst */
+#define NOISE_N 128
+static float g_nz[NOISE_N];
+
+/* the burst's waveform at time t_ms after its onset: a tone, or a fixed noise burst (sinc-interpolated) */
 static float clap(float t_ms, float amp)
 {
     if (t_ms < 0.f) return 0.f;
     const float rise = 1.f - expf(-t_ms / 0.12f);
-    return amp * rise * expf(-t_ms / 2.5f) * sinf(2.f * (float)M_PI * 2500.f * t_ms / 1000.f + 0.4f);
+    const float env = amp * rise * expf(-t_ms / 2.5f);
+    if (!g_noise) return env * sinf(2.f * (float)M_PI * 2500.f * t_ms / 1000.f + 0.4f);
+    /* band-limited (0.9 x Nyquist) noise sampled at a fractional position */
+    const float pos = t_ms * FS / 1000.f;
+    float v = 0.f;
+    for (int n = 0; n < NOISE_N; n++) {
+        const float x = (float)M_PI * (pos - (float)n) * 0.9f;
+        v += g_nz[n] * (fabsf(x) < 1e-4f ? 1.f : sinf(x) / x);
+    }
+    return env * v;
 }
 
 static int run(float delay, float bg, float onset_ms, int frames, float amp_l, float amp_r, int verbose)
@@ -52,6 +66,10 @@ int main(int argc, char **argv)
 {
     const int verbose = argc > 1 ? atoi(argv[1]) : 0;
     int fails = 0;
+    unsigned seed = 7;
+    for (int n = 0; n < NOISE_N; n++) g_nz[n] = (float)(rand_r(&seed) % 2001) / 1000.f - 1.f;
+    for (g_noise = 0; g_noise < 2; g_noise++) {
+    printf("-- %s bursts\n", g_noise ? "noise" : "tone");
     const float delays[] = { -1.9f, -1.2f, -0.5f, 0.f, 0.4f, 1.f, 1.9f };
     const float bgs[] = { 0.f, 400.f, 1200.f };
     const float onsets[] = { 21.f, 31.7f, 31.95f, 32.05f, 56.f };   /* frame 0 is a warm-up: nothing is timed before the tail history exists */
@@ -61,6 +79,7 @@ int main(int argc, char **argv)
                 fails += !run(delays[a], bgs[b], onsets[c], 6, 12000.f, 9000.f, verbose);
                 fails += !run(delays[a], bgs[b], onsets[c], 6, 40000.f, 45000.f, verbose);   /* clipping */
             }
+    }
     printf("%d failures\n", fails);
     return fails != 0;
 }

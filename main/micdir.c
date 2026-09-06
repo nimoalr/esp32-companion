@@ -102,6 +102,7 @@ bool micdir_frame(micdir_t *d, const int16_t *pcm, int frame, int peak, micdir_r
                     out->balance = lo / hi;
                     out->corr = best_v < 0.f ? 0.f : best_v;
                     out->peak = (int)hi;
+                    out->level_db = 20.f * log10f((float)pk[0] / (float)pk[1]);
                     d->n++;
                     timed = true;
                     timed_at = k;

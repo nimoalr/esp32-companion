@@ -32,6 +32,7 @@ typedef struct {
     float dir_lag;          /* arrival-time difference of the last transient in samples (+ = MIC1 first) */
     float dir_corr;         /* 0..1: how alike the two mics' edges were for the last transient */
     int dir_peak;           /* the last transient's peak, LSB */
+    float dir_level_db;     /* the last transient: MIC1 over MIC2, dB (positive = MIC1 louder) */
     uint16_t dir_n;         /* transients (claps, knocks) timed since the mics started */
     uint16_t dir_loud;      /* loud frames that were not onsets (diagnostic) */
     int16_t dir_pre;        /* pre-onset level of the last loud frame, % of its peak (diagnostic) */
