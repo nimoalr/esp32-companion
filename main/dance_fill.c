@@ -43,21 +43,21 @@ void dance_fill_disco(dance_fill_t *f, float turns)
             float diffuse=fmaxf(0.f,-.4f*nx-.5f*ny+.768f*nz);
             float spec=fmaxf(0.f,-.22f*nx-.27f*ny+.937f*nz);
             float s2=spec*spec,s4=s2*s2,s8=s4*s4;
-            int level=(int)(3.f+12.f*diffuse+22.f*s8*s8*s8);
+            int level=(int)(DANCE_FILL_DIM+12.f*diffuse+22.f*s8*s8*s8);
             shade[r][c]=(uint8_t)(level>31?31:level);
         }
     }
     for (int i=0;i<4096;i++) {
-        if(latitude[i]==255) { f->tex[i]=0; continue; }
+        if(latitude[i]==255) { f->tex[i]=DANCE_FILL_DIM; continue; }
         const unsigned u=(unsigned)(longitude[i]+offset+8192);
-        f->tex[i]=edge[i] || (u&255)<24 ? 1 : shade[latitude[i]][(u>>8)&15];
+        f->tex[i]=edge[i] || (u&255)<24 ? DANCE_FILL_DIM : shade[latitude[i]][(u>>8)&15];
     }
     /* A suspension thread above the sphere, not a floating checkerboard. */
     for(int y=1;y<8;y++) { f->tex[y*64+31]=10; f->tex[y*64+32]=10; }
 }
 void dance_fill_spots(dance_fill_t *f,int n,const float *x,const float *y,float width)
 {
-    memset(f->tex,1,sizeof f->tex);
+    memset(f->tex,DANCE_FILL_DIM,sizeof f->tex);
     if(n>3)n=3;
     for(int k=0;k<n;k++) {
         const int source_x=k&1 ? 55 : 8, source_y=3;

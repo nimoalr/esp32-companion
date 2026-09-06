@@ -19,6 +19,9 @@ Start-Process docs/dance/dance-show.mp4
 
 ## Visual changes
 
+- All eye fills retain the spectrum analyzer's dim eye silhouette (lightness
+  level 4/31), including unused space around the circular mirror ball. The
+  baseline is baked into the small texture, with no extra outline drawing pass.
 - Mirror balls have a circular silhouette, a suspension thread, curved facet
   rows, perspective around the sides, and reflections that move coherently
   as the sphere rotates under a fixed light.

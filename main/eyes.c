@@ -749,7 +749,7 @@ static void params_to_shape(eyes_t *e, int which, const EyeParams *p, raster_sha
         s->fx_sy=e->fx==RASTER_FX_DISCO?s->fx_sx:(int32_t)((32LL<<32)/(s->hh>0?s->hh:1));
         s->fx_mix = (int)(e->fx_mix * 256.f);
         s->bar_lit = 31;
-        s->bar_dim = 4;
+        s->bar_dim = DANCE_FILL_DIM;
         s->lut2 = e->lut2[which];
         /* bars: eight across the eye in its own frame, rising from its bottom edge (local +hh) */
         s->bar_w = s->hw / 4;

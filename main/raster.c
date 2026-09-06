@@ -513,7 +513,8 @@ static inline uint32_t IRAM_ATTR bar_walk_level(const raster_shape_t *s, bar_wal
         }
     } else {
         const int u=w->u>>16,v=w->v>>16;
-        level=(unsigned)u<64 && (unsigned)v<64 ? s->fx_tex[v*64+u] : 0;
+        /* A circular texture can leave unused space in a tall eye. Keep its silhouette there too. */
+        level=(unsigned)u<64 && (unsigned)v<64 ? s->fx_tex[v*64+u] : s->bar_dim;
         w->u+=w->du;w->v+=w->dv;
     }
     /* the mix against the plain fill */
