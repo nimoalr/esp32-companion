@@ -120,7 +120,7 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
     }
     /* during the dance a touch is a move: cheer, never complain */
     else if (in->dancing && (in->tap_count != pv->tap_count || in->stroke_count != pv->stroke_count) && !in->in_ui) {
-        if (free && chance(p, 40)) {
+        if (free && chance(p, 30)) {
             static const int w[] = { CLIP_HOORAY, CLIP_COME_ON, CLIP_BRAVO, CLIP_OOH_LA_LA, CLIP_YUMMY };
             if (chance(p, 50)) say_gesture(out, chance(p, 50) ? VOICE_HAPPY : VOICE_LAUGH, 1.f, false);
             else say_word(out, pick(p, w, 5), 1.f, false);
@@ -249,8 +249,8 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
             else say_word(out, CLIP_EXCUSE_ME, level, false);
         }
     }
-    /* a finger resting: a purr, once per touch */
-    else if (in->finger && in->power == 0 && !in->in_ui) {
+    /* a finger resting: a purr, once per touch (not during the dance: nothing touches the dance) */
+    else if (in->finger && in->power == 0 && !in->in_ui && !in->dancing) {
         if (!pv->finger) { p->finger_since_ms = now_ms; p->purred = false; }
         else if (!p->purred && (int32_t)(now_ms - p->finger_since_ms) > 1500 && !in->speaking) {
             p->purred = true;

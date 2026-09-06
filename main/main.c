@@ -686,7 +686,7 @@ static void render_task(void *arg)
             eyes_set_env(&c.eyes, 1, &bo.env[1]);
             /* a finger resting on the screen: the eyes settle on it and stop wandering (Vector's focus) */
             uint16_t fx, fy;
-            const bool finger = touch_pressed(&fx, &fy);
+            const bool finger = touch_pressed(&fx, &fy) && c.sm.id != ANIM_DANCE;   /* the dance is not to be stared out of */
             eyes_set_attention(&c.eyes, finger, fx, fy);
             /* mood: a tired character is dimmer and paler, an energetic one glows */
             const float energy = behavior_energy(&c.beh);
@@ -716,7 +716,7 @@ static void render_task(void *arg)
                 .beh = c.beh.state,
                 .anim = c.sm.id,
                 .energy = behavior_energy(&c.beh),
-                .finger = c.mode == MODE_EYES && touch_pressed(&fx, &fy),
+                .finger = c.mode == MODE_EYES && c.sm.id != ANIM_DANCE && touch_pressed(&fx, &fy),
                 .tap_count = c.tap_count,
                 .usb = pb.vbus,
                 .batt_pct = pb.present ? pb.percent : -1,

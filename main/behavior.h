@@ -104,8 +104,6 @@ typedef struct {
     uint32_t strokes_seen;
     uint32_t last_stroke_ms;
     int poked_eye;              /* 0 none, 1 left, 2 right, during BEH_POKED */
-    uint32_t dance_eye_ms;      /* an eye tapped during the dance: that eye squints for a moment */
-    int dance_eye;
     uint32_t mood_tick_ms;
     uint32_t rng;
     uint32_t taps_seen;
