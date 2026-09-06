@@ -69,7 +69,7 @@ typedef struct {
     float detune;               /* multiplier */
     float ph1, ph2, phv, pht;   /* oscillator, vibrato and trill phases, 0..1 */
     float lp;                   /* filter state */
-    float nz;                   /* noise filter state */
+    float nz, nz2;              /* noise filter states */
     float gain;                 /* volume for this utterance (energy) */
     bool stopping;              /* release requested (loops) */
     float fade;                 /* 1 -> 0 on stop */

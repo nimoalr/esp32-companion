@@ -4,7 +4,8 @@
 #include <string.h>
 
 /* base pitch of each register, Hz */
-static const float k_base_hz[3] = { 196.f, 294.f, 440.f };
+/* the speaker is two centimetres across: nothing below ~300 Hz carries, so the registers sit high */
+static const float k_base_hz[3] = { 330.f, 440.f, 587.f };
 
 #define P(...) { __VA_ARGS__ }
 const voice_gesture_t k_voice_gestures[VOICE_COUNT] = {
@@ -79,7 +80,7 @@ void voice_start(voice_t *v, voice_id_t id, float level)
     v->len = (int)(v->g->dur_ms * (1.f + 0.1f * frand(v)) * (VOICE_RATE / 1000.f));
     v->detune = 1.f + 0.03f * frand(v);
     v->ph1 = v->ph2 = v->phv = v->pht = 0.f;
-    v->lp = v->nz = 0.f;
+    v->lp = v->nz = v->nz2 = 0.f;
     v->gain = level < 0.f ? 0.f : level > 1.f ? 1.f : level;
     v->stopping = false;
     v->fade = 1.f;
@@ -161,8 +162,10 @@ int voice_render(voice_t *v, int16_t *out, int n)
         /* oscillators: a fundamental with a little second harmonic for colour, and the partner */
         float s = sine(v->ph1) + 0.25f * sine(v->ph1 * 2.f) + g->partner * sine(v->ph2);
         if (g->noise > 0.f) {
-            v->nz += (frand(v) - v->nz) * 0.35f;         /* brownish breath */
-            s += g->noise * 2.f * v->nz;
+            /* breath: noise darkened by two poles so it sits under the tone instead of hissing over it */
+            v->nz += (frand(v) - v->nz) * 0.12f;
+            v->nz2 += (v->nz - v->nz2) * 0.12f;
+            s += g->noise * 6.f * v->nz2;
         }
         /* filter and output */
         v->lp += (s - v->lp) * lp_k;
