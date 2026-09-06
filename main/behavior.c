@@ -82,7 +82,7 @@ static void feel_mood(behavior_t *b, const behavior_in_t *in, uint32_t now_ms)
     if (now_ms - b->mood_tick_ms < 1000) return;
     b->mood_tick_ms = now_ms;
     float e = b->energy, v = b->valence;
-    if (b->shake > 0.08f) { e += 0.03f; if (b->state != BEH_MUSIC && !in->dancing) v -= 0.04f; }
+    if (b->shake > 0.08f) { e += 0.03f; if (b->state != BEH_MUSIC && !in->dancing) v -= 0.06f; }
     if (in->user_interacting) e += 0.015f;
     if (in->audio.active && in->audio.speech) { e += 0.01f; v += 0.01f; }
     switch (b->state) {
@@ -303,10 +303,12 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
                 in->audio.bass_ratio >= MUSIC_BASS_RATIO * 0.6f) {
                 b->music_quiet_since_ms = now_ms;
             }
-            if (tapped || !in->audio.active || now_ms - b->music_quiet_since_ms >= MUSIC_QUIET_MS) {
+            /* touch never stops the dance: a poke is a bounce, a stroke a shimmy, an eye poke a wink */
+            if (tapped) out->dance_flourish = in->poke_eye ? 3 : 1;
+            else if (stroked) out->dance_flourish = 2;
+            if (!in->audio.active || now_ms - b->music_quiet_since_ms >= MUSIC_QUIET_MS) {
                 enter(b, BEH_IDLE, now_ms);
-                /* a tap means "enough", so stay off the music for a good while */
-                b->next_sniff_ms = now_ms + (tapped ? 6u : 1u) * CONFIG_EYES_SNIFF_INTERVAL_S * 1000u;
+                b->next_sniff_ms = now_ms + CONFIG_EYES_SNIFF_INTERVAL_S * 1000u;
             }
             break;
         case BEH_LISTENING:
@@ -345,6 +347,11 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
             else if (face_down) enter(b, BEH_FACE_DOWN, now_ms);
             else if (out->event == BEH_EV_BODY_TAP) enter(b, BEH_STARTLED, now_ms);
             else if (b->rhythm_since_ms && now_ms - b->rhythm_since_ms > 4000) enter(b, BEH_CARRIED, now_ms);
+            else if (in->dancing) {
+                /* the dance he was put in by hand: same rule, touch is a move */
+                if (tapped) out->dance_flourish = in->poke_eye ? 3 : 1;
+                else if (stroked) out->dance_flourish = 2;
+            }
             else if (stroked && in->stroke_forehead) {
                 enter(b, BEH_PETTED, now_ms);
             }

@@ -154,7 +154,7 @@ before any of it goes into firmware.
   becomes vertical bars driven by the 16 FFT bands, rising from the bottom
   lid. This is a fill mode in the rasteriser (a per-column height test on
   the solid core), pixel-identical edges, a few percent of frame cost.
-* **Hearts** for the loving mood: a new shape kind. A heart is two discs and
+* **Hearts** for the loving mood, and for petting (strokes across the forehead already put him in the love face with a purr; the heart eyes go there): a new shape kind. A heart is two discs and
   a wedge, so its rows are one or two spans, and it beats by scaling with a
   60-100 bpm envelope. The eye system already animates size, so the beat is a
   modulator like the dance's.

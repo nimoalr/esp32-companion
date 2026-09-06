@@ -27,6 +27,8 @@ typedef struct {
     bool speaking;              /* the mouth is busy */
     bool speech;                /* someone is talking */
     behavior_event_t event;     /* one-shot handling event */
+    bool dancing;               /* the dance is on: touches are moves, not pokes */
+    uint32_t stroke_count;
     int chattiness;             /* 0 quiet .. 3 talkative */
 } persona_in_t;
 

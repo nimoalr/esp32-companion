@@ -118,6 +118,14 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
             else say_gesture(out, VOICE_WAKE, 0.8f, true);
         } else if (pv->power == 1 && in->power == 0 && chance(p, 50)) say_gesture(out, VOICE_HM, 0.7f, false);
     }
+    /* during the dance a touch is a move: cheer, never complain */
+    else if (in->dancing && (in->tap_count != pv->tap_count || in->stroke_count != pv->stroke_count) && !in->in_ui) {
+        if (free && chance(p, 40)) {
+            static const int w[] = { CLIP_HOORAY, CLIP_COME_ON, CLIP_BRAVO, CLIP_OOH_LA_LA, CLIP_YUMMY };
+            if (chance(p, 50)) say_gesture(out, chance(p, 50) ? VOICE_HAPPY : VOICE_LAUGH, 1.f, false);
+            else say_word(out, pick(p, w, 5), 1.f, false);
+        }
+    }
     /* a flurry of pokes gets a complaint before anything else */
     else if (in->tap_count != pv->tap_count && in->power == 0 && !in->in_ui && poke_flurry(p, now_ms) && chance(p, 60)) {
         static const int w[] = { CLIP_DO_NOT_TOUCH_ME, CLIP_EXCUSE_ME, CLIP_HOW_RUDE, CLIP_NOPE };
@@ -134,7 +142,7 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
             for (int i = 0; i < p->dizzy_n; i++) if ((int32_t)(now_ms - p->dizzy_ms[i]) < 120000) n++;
             if (p->dizzy_n < 4) p->dizzy_ms[p->dizzy_n++] = now_ms;
             else { memmove(p->dizzy_ms, p->dizzy_ms + 1, sizeof(uint32_t) * 3); p->dizzy_ms[3] = now_ms; }
-            out->feel = -0.12f;
+            out->feel = -0.2f;
             if (n == 0) say_gesture(out, VOICE_PROTEST, 1.f, true);
             else if (n == 1) say_word(out, chance(p, 50) ? CLIP_HOW_RUDE : CLIP_DO_NOT_TOUCH_ME, 1.f, true);
             else {

@@ -677,6 +677,7 @@ static void render_task(void *arg)
             }
             bi.have_accel = power_last_accel(bi.accel, &bi.accel_ms);
             behavior_update(&c.beh, &bi, now_ms, &bo);
+            if (bo.dance_flourish && c.sm.id == ANIM_DANCE) anim_dance_flourish(&c.sm, bo.dance_flourish, now_ms);
             const anim_id_t want = bo.override_anim >= 0 ? (anim_id_t)bo.override_anim : c.user_anim;
             if (want != c.sm.id && state == POWER_ACTIVE) {
                 anim_set(&c.sm, &c.eyes, want, now_ms);
@@ -722,6 +723,8 @@ static void render_task(void *arg)
                 .speaking = speech_busy(),
                 .speech = af.active && af.speech,
                 .valence = behavior_valence(&c.beh),
+                .dancing = c.sm.id == ANIM_DANCE,
+                .stroke_count = c.stroke_count,
                 .event = c.mode == MODE_EYES ? bo.event : BEH_EV_NONE,
                 .chattiness = g_settings.chattiness,
             };

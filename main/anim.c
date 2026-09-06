@@ -376,6 +376,12 @@ static void apply_modulators(anim_sm_t *sm, eyes_t *eyes, const anim_def_t *d, u
  *   stereo balance  -> the gaze turns toward the louder side
  *   silence         -> back to neutral, then heavy lids after a while
  */
+void anim_dance_flourish(anim_sm_t *sm, int kind, uint32_t now_ms)
+{
+    sm->dance_flourish = kind;
+    sm->dance_flourish_ms = now_ms;
+}
+
 static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
 {
     const audio_features_t *a = &sm->audio;
@@ -414,16 +420,28 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
     const float kick = env * music * (0.45f + 0.55f * a->regularity);
     const float side = (float)sm->dance_side;
 
+    /* a flourish: a move layered on the beat for a moment, from a poke or a stroke */
+    float fl_bounce = 0.f, fl_shimmy = 0.f, fl_wink = 0.f;
+    if (sm->dance_flourish) {
+        const float t = (float)(now_ms - sm->dance_flourish_ms) / 1000.f;
+        const float fade = t < 1.4f ? 1.f - t / 1.4f : 0.f;
+        if (fade <= 0.f) sm->dance_flourish = 0;
+        else if (sm->dance_flourish == 1) fl_bounce = fade * fabsf(sinf(t * 18.f));
+        else if (sm->dance_flourish == 2) fl_shimmy = fade * sinf(t * 22.f);
+        else fl_wink = t < 0.9f ? 1.f : 0.f;
+    }
+
     for (int e = 0; e < 2; e++) {
         eye_pose_t *m = &eyes->mod[e];
-        m->sy = (int32_t)((0.28f * bass + 0.10f * kick) * 65536.f);
-        m->sx = (int32_t)((0.10f * bass - 0.08f * kick) * 65536.f);
-        m->dy = (int32_t)((-16.f * kick) * 65536.f);
-        m->dx = (int32_t)((7.f * kick * side + 9.f * sm->dance_bal * music) * 65536.f);
-        m->slant = (int32_t)((0.22f * kick * side) * 65536.f);
-        m->angle = (int32_t)((9.f * kick * side) * 65536.f);
-        m->curve = (int32_t)((0.55f * loud) * 65536.f);
+        m->sy = (int32_t)((0.28f * bass + 0.10f * kick + 0.12f * fl_bounce) * 65536.f);
+        m->sx = (int32_t)((0.10f * bass - 0.08f * kick + 0.06f * fl_bounce) * 65536.f);
+        m->dy = (int32_t)((-16.f * kick - 22.f * fl_bounce) * 65536.f);
+        m->dx = (int32_t)((7.f * kick * side + 9.f * sm->dance_bal * music + 14.f * fl_shimmy) * 65536.f);
+        m->slant = (int32_t)((0.22f * kick * side + 0.3f * fl_shimmy) * 65536.f);
+        m->angle = (int32_t)((9.f * kick * side + 12.f * fl_shimmy) * 65536.f);
+        m->curve = (int32_t)((0.55f * loud + 0.3f * fl_bounce) * 65536.f);
         m->lid_bottom = (int32_t)((0.05f * loud) * 65536.f);
+        if (fl_wink > 0.f && e == 1) m->lid_top = (int32_t)(0.8f * 65536.f);
         /* quiet for a long time: lids sag */
         if (quiet_ms > 8000) {
             float sag = (float)(quiet_ms - 8000) / 6000.f;

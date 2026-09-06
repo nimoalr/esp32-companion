@@ -568,6 +568,8 @@ static void eye_effective_params(int which, EyeState *s, const eye_pose_t *mod, 
     c.sy = clamp_q16(c.sy, Q16(0.02), Q16(2.0));
     c.lid_top = clamp_q16(c.lid_top, 0, Q16_ONE);
     c.lid_bottom = clamp_q16(c.lid_bottom, 0, Q16_ONE);
+    /* the lids never cross: a top lid pushed down by a poke stops at the bottom one */
+    if (c.lid_top + c.lid_bottom > Q16(0.96)) c.lid_top = Q16(0.96) - c.lid_bottom;
     c.curve = clamp_q16(c.curve, -Q16_ONE, Q16_ONE);
     c.bend = clamp_q16(c.bend, -Q16_ONE, Q16_ONE);
     /* attending: a touch more open */
