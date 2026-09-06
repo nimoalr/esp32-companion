@@ -407,8 +407,8 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
     /* --- outputs --- */
     switch (b->state) {
     case BEH_DIZZY:       out->override_anim = ANIM_DIZZY; break;
-    case BEH_KNOCKED_OUT: out->knocked_out = true; out->override_anim = ANIM_SLEEPING; break;
-    case BEH_GROGGY:      out->override_anim = ANIM_SLEEPY; break;
+    case BEH_KNOCKED_OUT: out->knocked_out = true; out->override_anim = ANIM_KNOCKED_OUT; break;
+    case BEH_GROGGY:      out->override_anim = ANIM_RECOVERING; break;
     case BEH_FACE_DOWN:   out->override_anim = ANIM_SLEEPING; out->zz = true; break;
     case BEH_WAKING:      out->override_anim = ANIM_SURPRISED; break;
     case BEH_MUSIC:       out->override_anim = ANIM_DANCE; break;

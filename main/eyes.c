@@ -88,7 +88,7 @@ static inline int32_t q16_mul(int32_t a, int32_t b)
 
 static inline int32_t q16_div(int32_t a, int32_t b)
 {
-    return (int32_t)(((int64_t)a << 16) / b);
+    return (int32_t)(((int64_t)a * Q16_ONE) / b);
 }
 
 static inline int32_t clamp_q16(int32_t v, int32_t lo, int32_t hi)
@@ -229,8 +229,8 @@ void eyes_set_attention(eyes_t *e, bool on, int x_px, int y_px)
 {
     e->attend = on;
     if (on) {
-        e->attend_tx = clamp_q16(q16_mul((x_px - BOARD_LCD_H_RES / 2) << 16, ATTEND_GAIN), -(ATTEND_MAX_X << 16), ATTEND_MAX_X << 16);
-        e->attend_ty = clamp_q16(q16_mul((y_px - BOARD_LCD_V_RES / 2) << 16, ATTEND_GAIN), -(ATTEND_MAX_Y << 16), ATTEND_MAX_Y << 16);
+        e->attend_tx = clamp_q16(q16_mul((x_px - BOARD_LCD_H_RES / 2) * Q16_ONE, ATTEND_GAIN), -(ATTEND_MAX_X << 16), ATTEND_MAX_X << 16);
+        e->attend_ty = clamp_q16(q16_mul((y_px - BOARD_LCD_V_RES / 2) * Q16_ONE, ATTEND_GAIN), -(ATTEND_MAX_Y << 16), ATTEND_MAX_Y << 16);
     } else {
         e->attend_tx = e->attend_ty = 0;
     }
@@ -389,6 +389,7 @@ void eyes_init(eyes_t *e, uint32_t now_ms)
     e->tint_dur_ms = 1;
     e->mood_lum = e->mood_sat = Q16_ONE;
     e->face_scale = Q16_ONE;
+    e->shape_gate[0] = e->shape_gate[1] = Q16_ONE;
     eyes_set_base_color(e, EYE_COLOR);
     hot_tables_init(e);
     update_color(e, now_ms);
@@ -428,6 +429,7 @@ void eyes_clear_mod(eyes_t *e)
     e->tint_mod_hue = 0;
     e->tint_mod_lum = 0;
     e->face_mod_dx = e->face_mod_dy = e->face_mod_scale = 0;
+    e->shape_gate[0] = e->shape_gate[1] = Q16_ONE;
 }
 
 void eyes_set_env(eyes_t *e, int eye, const eye_pose_t *delta)
@@ -489,6 +491,12 @@ static void eye_ease(EyeState *s, uint32_t now_ms)
 static void idle_blink(eyes_idle_t *idle, uint32_t now_ms, int32_t *bh, int32_t *bw)
 {
     *bh = *bw = Q16_ONE;
+    /* Authored collapse/recovery eyelids must not fight an unrelated idle blink. */
+    if (idle->blink_interval_scale == 0) {
+        idle->blinking = false;
+        idle->next_blink_ms = now_ms + BLINK_MIN_MS;
+        return;
+    }
     if (!idle->blinking) {
         if ((int32_t)(now_ms - idle->next_blink_ms) < 0) {
             return;
@@ -502,7 +510,7 @@ static void idle_blink(eyes_idle_t *idle, uint32_t now_ms, int32_t *bh, int32_t 
     if (el >= BLINK_TOTAL_MS) {
         idle->blinking = false;
         uint32_t gap = rng_range(idle, BLINK_MIN_MS, BLINK_MAX_MS);
-        gap = (uint32_t)q16_mul((int32_t)gap << 16, idle->blink_interval_scale) >> 16;
+        gap = (uint32_t)(((uint64_t)gap * (uint32_t)idle->blink_interval_scale) >> 16);
         idle->next_blink_ms = now_ms + gap;
         return;
     }
@@ -698,6 +706,7 @@ static void rotate_about_centre(const eyes_t *e, int32_t x, int32_t y, int32_t *
 
 static void params_to_shape(eyes_t *e, int which, const EyeParams *p, raster_shape_t *s)
 {
+    s->path_n = 0;
     int32_t hx = p->hot_x, hy = p->hot_y;
     if (e->face_rot) {
         /* the eye's centre swings around the screen centre with the face */
@@ -763,6 +772,7 @@ static void params_to_shape(eyes_t *e, int which, const EyeParams *p, raster_sha
         s->hot_g2l = e->hot_g2l;
         s->lut2 = e->lut2[which];
     }
+    if (e->symbol[which] != EYE_SYMBOL_NONE) eye_symbol_shape(s, e->symbol[which], e->symbol_split, e->reel_pos[which]);
     raster_shape_finalize(s, BOARD_LCD_H_RES, BOARD_LCD_V_RES);
 }
 
@@ -793,6 +803,14 @@ void eyes_update(eyes_t *e, uint32_t now_ms, raster_shape_t out[2])
         EyeState *s = &e->eye[i];
         eye_ease(s, now_ms);
         eye_effective_params(i, s, &e->mod[i], &e->env[i], &f, &p[i]);
+        /* A narrow sliver hides silhouette swaps, preserving placement and colour. */
+        if (e->shape_gate[i] < Q16_ONE) {
+            const int32_t gate = clamp_q16(e->shape_gate[i], Q16(0.025), Q16_ONE);
+            p[i].h = q16_mul(p[i].h, gate);
+            if (p[i].h < Q16(4)) p[i].h = Q16(4);
+            for (int c = 0; c < 4; c++) p[i].rad[c] = p[i].rady[c] = p[i].h/2;
+            p[i].lid_top = p[i].lid_bottom = p[i].bend = p[i].curve = p[i].slant = p[i].slant_b = 0;
+        }
     }
     /* closing eyes line up on a common height */
     if (f.bh < Q16_ONE) {

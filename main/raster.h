@@ -29,6 +29,11 @@ enum { RASTER_FX_NONE = 0, RASTER_FX_BARS, RASTER_FX_DISCO, RASTER_FX_SPOTS };
 #define RASTER_G2L_N 272    /* 256 + the largest dither offset */
 #define RASTER_DITHER_MAX 16
 
+/* Optional fixed-size polygon contours for symbol eyes. Edges are precomputed
+ * once per frame; row rasterization uses comparisons and fixed-point multiplies. */
+#define RASTER_PATH_EDGES 64
+typedef struct { int32_t y0, y1, x0, slope; } raster_edge_t;
+
 typedef struct {
     bool visible;
     /* Geometry, Q16 pixels, screen coordinates */
@@ -81,7 +86,14 @@ typedef struct {
     /* Pixel bounding box, [x0, x1) x [y0, y1), already clipped to the screen */
     int px0, py0, px1, py1;
     const uint16_t *lut;    /* 256-entry coverage -> RGB565 (byte order as sent) */
+    int path_n;            /* 0 = ordinary analytic eye; otherwise even-odd contours */
+    raster_edge_t path[RASTER_PATH_EDGES];
+    int32_t path_x0, path_y0, path_x1, path_y1;
 } raster_shape_t;
+
+/* Append a closed contour of screen-space Q16 vertices. Start with path_n = 0.
+ * Returns false if the fixed edge budget would be exceeded. */
+bool raster_path_add(raster_shape_t *s, const int32_t (*xy)[2], int n);
 
 /* Fill in the derived fields (reciprocals, float mirror, flags) and the pixel bounding box from the geometry. */
 void raster_shape_finalize(raster_shape_t *s, int screen_w, int screen_h);

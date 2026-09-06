@@ -7,7 +7,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 R="$HERE/../../main"
 name=$1
 shift || { echo "usage: build.sh <harness> [cflags]"; exit 1; }
-SRCS="$R/raster.c $R/eyes.c $R/anim.c $R/gfx.c $R/font_spleen_8x16.c $R/font_spleen_12x24.c $R/font_spleen_16x32.c $R/accessories.c $R/behavior.c $R/imu_cal.c"
+SRCS="$R/raster.c $R/eyes.c $R/eye_symbols.c $R/anim.c $R/gfx.c $R/font_spleen_8x16.c $R/font_spleen_12x24.c $R/font_spleen_16x32.c $R/accessories.c $R/behavior.c $R/imu_cal.c"
 case "$name" in
     ui_harness) SRCS="$SRCS $R/ui.c" ;;
     imu_cal_test) SRCS="$R/imu_cal.c" ;;

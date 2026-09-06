@@ -1,6 +1,7 @@
 #include "anim.h"
 
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include "esp_log.h"
@@ -198,6 +199,136 @@ static const anim_kf_t kf_dance[] = {
     { 0, 250, NEUTRAL_POSE, NEUTRAL_POSE, 0 },
 };
 
+/* ---- character performances: glance, thought, reaction, then a readable hold ---- */
+#define SMUG_L(dx) PX(1.06, 0.88, 0.22, 0.00, -0.08, 0.28, dx, -3, -4, 0.02, 1.1, 1.1, 1, 1)
+#define SMUG_R(dx) PX(1.00, 0.82, 0.40, 0.00, 0.04, 0.12, dx, 1, 3, 0.02, 1, 1, 1, 1)
+static const anim_kf_t kf_smug[] = {
+    { 0, 340, SMUG_L(8), SMUG_R(8), 0 },
+    { 1900, 420, SMUG_L(0), SMUG_R(0), 0 },
+};
+
+/* Narrow together, check one side, then the other: distinct from a raised eyebrow. */
+#define SUSP(dx) PX(0.98, 0.76, 0.36, 0.08, 0, 0.04, dx, 2, 0, 0.02, 0.8, 0.8, 1, 1)
+static const anim_kf_t kf_suspicious[] = {
+    { 0, 300, SUSP(0), SUSP(0), 0 },
+    { 450, 450, SUSP(-17), SUSP(-17), 0 },
+    { 2100, 560, SUSP(17), SUSP(17), 0 },
+    { 4100, 420, SUSP(0), SUSP(0), 0 },
+};
+
+/* A little brace before the focused stare; no angry red tint. */
+#define FOCUS_L PX(1.03, 0.78, 0.12, 0.04, 0.23, 0.04, 4, -3, 3, -0.02, 1, 0.5, 1, 0.8)
+#define FOCUS_R PX(1.03, 0.78, 0.12, 0.04, -0.23, 0.04, -4, -3, -3, -0.02, 0.5, 1, 0.8, 1)
+static const anim_kf_t kf_determined[] = {
+    { 0, 110, SQUINT_POSE, SQUINT_POSE, 0 },
+    { 160, 240, FOCUS_L, FOCUS_R, SNAP },
+};
+
+/* Round, close-set eyes looking up; the inner lid corners lift gently. */
+#define PLEASE_L(dy) PXE(1.03, 1.18, 0.04, 0.02, -0.18, -0.03, 8, dy, -4, -0.02, 1.35, 1.35, 1.2, 1.2, 1.5, 1.5, 1.4, 1.4, 0)
+#define PLEASE_R(dy) PXE(1.03, 1.18, 0.04, 0.02, 0.18, -0.03, -8, dy, 4, -0.02, 1.35, 1.35, 1.2, 1.2, 1.5, 1.5, 1.4, 1.4, 0)
+static const anim_kf_t kf_pleading[] = {
+    { 0, 450, PLEASE_L(-7), PLEASE_R(-7), 0 },
+    { 1700, 600, PLEASE_L(-12), PLEASE_R(-12), 0 },
+};
+
+/* Check whether anyone is watching, grin, then wink. Long quiet hold afterward. */
+#define IMP(dx) PX(1.04, 0.88, 0.16, 0.00, 0, 0.34, dx, 0, 0, 0, 1.15, 1.15, 0.8, 0.8)
+static const anim_kf_t kf_mischievous[] = {
+    { 0, 260, IMP(-12), IMP(-12), 0 },
+    { 600, 220, IMP(12), IMP(12), SNAP },
+    { 1100, 260, IMP(0), IMP(0), 0 },
+    { 1580, 110, IMP(0), CLOSED_POSE, 0 },
+    { 1860, 240, IMP(0), IMP(0), 0 },
+};
+
+/* Caught looking: recoil, glance down, one eye dares a quick peek back. */
+#define EMB_L PX(0.98, 0.76, 0.14, 0.04, -0.08, 0, -13, 15, -6, 0.02, 1, 1, 1.2, 1.2)
+#define EMB_R PX(0.98, 0.70, 0.20, 0.04, 0.08, 0, -13, 17, 5, 0.02, 1, 1, 1.2, 1.2)
+static const anim_kf_t kf_embarrassed[] = {
+    { 0, 150, P(0.95, 1.08, 0, 0, 0, 0, 0, -4), P(0.95, 1.08, 0, 0, 0, 0, 0, -4), SNAP },
+    { 320, 420, EMB_L, EMB_R, 0 },
+    { 1950, 240, EMB_L, PX(1.02, 0.96, 0.06, 0, 0, 0, -4, 3, 1, 0, 1.2, 1.2, 1.2, 1.2), 0 },
+    { 2600, 360, EMB_L, EMB_R, 0 },
+};
+
+/* An exhale: close, sink slightly, reopen into a soft smile. */
+#define RELAXED PX(1.04, 0.86, 0.04, 0.02, 0, 0.26, 0, 5, 0, 0, 1.2, 1.2, 1, 1)
+static const anim_kf_t kf_relieved[] = {
+    { 0, 200, P(1.08, 0.05, 0, 0, 0, 0, 0, 5), P(1.08, 0.05, 0, 0, 0, 0, 0, 5), 0 },
+    { 460, 650, RELAXED, RELAXED, 0 },
+};
+
+/* Notice -> dismiss -> wait, WHAT? -> inspect. */
+static const anim_kf_t kf_double_take[] = {
+    { 0, 200, LOOK(-12, 0), LOOK(-12, 0), 0 },
+    { 430, 170, NEUTRAL_POSE, NEUTRAL_POSE, 0 },
+    { 680, 150, PX(1.17, 1.26, 0, 0, 0, 0, -18, -8, -5, 0, 1.25, 1.25, 1.25, 1.25),
+                PX(1.08, 1.15, 0, 0, 0, 0, -18, -5, -2, 0, 1.2, 1.2, 1.2, 1.2), SNAP },
+    { 1500, 440, PX(1.08, 1.10, 0, 0, 0, 0, -10, -4, -5, 0, 1.2, 1.2, 1.2, 1.2),
+                 PX(1.00, 0.82, 0.20, 0.02, -0.15, 0, -10, 4, 0, 0.04, 1, 1, 1, 1), 0 },
+};
+
+/* Over-shaken: the actual eyes crumple, rather than being replaced by X glyphs.
+ * Round narrow capsules, unequal height/tilt, and only a 1.5 px settling breath. */
+#define KO_L PX(1.08, 0.14, 0, 0, 0, 0, -2, 12, 12, 0, 1.6, 1.6, 1.6, 1.6)
+#define KO_R PX(1.02, 0.10, 0, 0, 0, 0, 2, 17, -9, 0, 1.6, 1.6, 1.6, 1.6)
+static const anim_kf_t kf_knocked_out[] = {
+    { 0, 120, P(1.04, 0.58, 0.18, 0.08, 0, 0, 0, 4), P(1.00, 0.72, 0.20, 0.04, 0, 0, 0, 2), 0 },
+    { 170, 410, KO_L, KO_R, 0 },
+};
+
+/* Three-second recovery: left peeks, right catches up, blink, find the horizon. */
+#define GROG_L PX(1.00, 0.86, 0.32, 0.04, -0.10, 0, 0, 6, -3, 0.05, 1, 1, 1.2, 1.2)
+#define GROG_R PX(1.00, 0.80, 0.38, 0.04, 0.10, 0, 0, 9, 3, 0.05, 1, 1, 1.2, 1.2)
+static const anim_kf_t kf_recovering[] = {
+    { 0, 200, KO_L, KO_R, 0 },
+    { 260, 500, GROG_L, KO_R, 0 },
+    { 900, 500, GROG_L, GROG_R, 0 },
+    { 1600, 130, CLOSED_POSE, CLOSED_POSE, 0 },
+    { 1820, 480, P(1, 1, 0.14, 0, 0, 0, 0, 3), P(1, 1, 0.18, 0, 0, 0, 0, 4), 0 },
+    { 2450, 500, NEUTRAL_POSE, NEUTRAL_POSE, 0 },
+};
+
+/* Playful actions, not emotional resting poses. Silhouettes use the same eye
+ * placement/colour; their entrances and exits close through a sliver. */
+#define SYMBOL_POSE P(1.02, 0.84, 0, 0, 0, 0, 0, 0)
+static const anim_kf_t kf_symbols[] = {{0, 280, SYMBOL_POSE, SYMBOL_POSE, 0}};
+static const anim_kf_t kf_nod[] = {
+    {0, 160, NEUTRAL_POSE, NEUTRAL_POSE, 0},
+    {300, 210, P(1.06,0.82,0,0,0,0,0,14), P(1.06,0.82,0,0,0,0,0,14), 0},
+    {590, 200, P(0.98,1.08,0,0,0,0,0,-8), P(0.98,1.08,0,0,0,0,0,-8), SNAP},
+    {900, 190, P(1.04,0.92,0,0,0,0,0,9), P(1.04,0.92,0,0,0,0,0,9), 0},
+    {1250, 350, NEUTRAL_POSE, NEUTRAL_POSE, 0},
+};
+static const anim_kf_t kf_peekaboo[] = {
+    {0, 220, CLOSED_POSE, CLOSED_POSE, 0},
+    {700, 400, P(0.94,0.76,0.12,0,0,0,-8,2), CLOSED_POSE, 0},
+    {1350, 150, EXCITED_POSE, EXCITED_POSE, SNAP},
+    {2000, 320, HAPPY_POSE, HAPPY_POSE, 0},
+    {3200, 480, NEUTRAL_POSE, NEUTRAL_POSE, 0},
+};
+static const anim_kf_t kf_loading[] = {
+    {0, 180, CLOSED_POSE, CLOSED_POSE, 0},
+    {260, 300, P(0.52,0.15,0,0,0,0,0,0), P(0.52,0.15,0,0,0,0,0,0), 0},
+    {3800, 180, CLOSED_POSE, CLOSED_POSE, 0},
+    {4100, 380, NEUTRAL_POSE, NEUTRAL_POSE, SNAP},
+};
+static const anim_kf_t kf_boop[] = {
+    {0, 200, NEUTRAL_POSE, NEUTRAL_POSE, 0},
+    {450, 120, P(1.24,0.40,0,0,0,0,0,12), P(1.24,0.40,0,0,0,0,0,12), SNAP},
+    {650, 180, P(0.92,1.25,0,0,0,0,0,-7), P(0.92,1.25,0,0,0,0,0,-7), SNAP},
+    {940, 280, P(1.08,0.90,0,0,0,0,0,4), P(1.08,0.90,0,0,0,0,0,4), 0},
+    {1400, 400, NEUTRAL_POSE, NEUTRAL_POSE, 0},
+};
+static const anim_kf_t kf_sneeze[] = {
+    {0, 420, P(0.95,0.92,0.24,0,0,0,0,-5), P(0.95,0.92,0.24,0,0,0,0,-5), 0},
+    {650, 350, P(0.91,1.18,0.12,0,0,0,0,-12), P(0.91,1.18,0.12,0,0,0,0,-12), 0},
+    {1180, 100, P(1.25,0.045,0,0,0,0,0,16), P(1.25,0.045,0,0,0,0,0,16), SNAP},
+    {1420, 360, SQUINT_POSE, SQUINT_POSE, 0},
+    {2100, 600, NEUTRAL_POSE, NEUTRAL_POSE, 0},
+};
+
 /*
  * tint: hue shift (deg), blend toward a colour (0xRRGGBB, weight 0..1), saturation and lightness
  * multipliers. The base hue stays the character's identity; expressions only lean on it.
@@ -249,6 +380,26 @@ static const anim_def_t k_anims[ANIM_COUNT] = {
                              SINE(F_DY, BOTH, 2.0, 3200, 0, 0), SINE(F_FACE_SCALE, LEFT, 0.015, 3200, 270, 0)),
     [ANIM_SQUINT]      = DEF("SQUINT",      kf_squint,      0,    1.4, 1.2, 0.4, T(0, 0, 0, 0.95, 0.92), NOMOD),
     [ANIM_DANCE]       = DEF("DANCE",       kf_dance,       0,    1.0, 1.0, 0.5, TNONE, NOMOD),
+    [ANIM_SMUG]        = DEF("SMUG", kf_smug, 4800, 1.4, 1.2, 0.2, TNONE, NOMOD),
+    [ANIM_SUSPICIOUS]  = DEF("SUSPICIOUS", kf_suspicious, 5700, 1.8, 1.1, 0.0, TNONE, NOMOD),
+    [ANIM_DETERMINED]  = DEF("DETERMINED", kf_determined, 0, 1.6, 0.8, 0.2, T(0, 0, 0, 1.05, 1.08), NOMOD),
+    [ANIM_PLEADING]    = DEF("PLEADING", kf_pleading, 0, 1.4, 1.4, 0.2, T(0, 0, 0, 0.93, 1.08),
+                            SINE(F_DY, BOTH, 1.5, 2400, 0, 0)),
+    [ANIM_MISCHIEVOUS] = DEF("MISCHIEVOUS", kf_mischievous, 5400, 1.5, 1.0, 0.15, T(0, 0, 0, 1, 1.06), NOMOD),
+    [ANIM_EMBARRASSED] = DEF("EMBARRASSED", kf_embarrassed, 5400, 1.3, 1.2, 0.15, T(0, PINK, 0.18, 0.95, 0.96), NOMOD),
+    [ANIM_RELIEVED]    = DEF("RELIEVED", kf_relieved, 0, 1.7, 1.5, 0.35, T(0, 0, 0, 0.95, 1.02), NOMOD),
+    [ANIM_DOUBLE_TAKE] = DEF("DOUBLE_TAKE", kf_double_take, 5200, 1.4, 0.9, 0.0, TNONE, NOMOD),
+    [ANIM_KNOCKED_OUT] = DEF("KNOCKED_OUT", kf_knocked_out, 0, 0.0, 1.0, 0.0, T(0, 0, 0, 0.80, 0.78),
+                            SINE(F_DY, BOTH, 1.5, 2800, 0, 0)),
+    [ANIM_RECOVERING]  = DEF("RECOVERING", kf_recovering, 0, 0.0, 1.0, 0.0, T(0, 0, 0, 0.93, 0.96), NOMOD),
+    [ANIM_HEARTS]      = DEF("HEARTS", kf_symbols, 0, 1.8, 1.0, 0.1, T(0, PINK, 0.45, 1, 1.06), NOMOD),
+    [ANIM_HEARTBREAK]  = DEF("HEARTBREAK", kf_symbols, 5600, 0.0, 1.0, 0.0, T(0, PINK, 0.38, 0.9, 0.98), NOMOD),
+    [ANIM_HIGH_ROLLER] = DEF("HIGH_ROLLER", kf_symbols, 6200, 0.0, 1.0, 0.0, T(0, 0xFFD040, 0.32, 1, 1.1), NOMOD),
+    [ANIM_NOD]         = DEF("NOD", kf_nod, 4700, 1.0, 1.0, 0.15, TNONE, NOMOD),
+    [ANIM_PEEKABOO]    = DEF("PEEKABOO", kf_peekaboo, 5200, 0.0, 1.0, 0.0, TNONE, NOMOD),
+    [ANIM_LOADING]     = DEF("LOADING", kf_loading, 6200, 0.0, 1.0, 0.0, TNONE, NOMOD),
+    [ANIM_BOOP]        = DEF("BOOP", kf_boop, 4500, 1.0, 1.0, 0.1, TNONE, NOMOD),
+    [ANIM_SNEEZE]      = DEF("SNEEZE", kf_sneeze, 5300, 0.0, 1.0, 0.0, TNONE, NOMOD),
 };
 
 const char *anim_name(anim_id_t id)
@@ -269,6 +420,11 @@ static void anim_enter(anim_sm_t *sm, eyes_t *eyes, anim_id_t id, uint32_t now_m
     const anim_def_t *d = &k_anims[id];
     sm->id = id;
     sm->t_enter_ms = now_ms;
+    sm->t_change_ms = now_ms;
+    for (int e = 0; e < 2; e++) sm->previous_symbol[e] = eyes->symbol[e];
+    sm->previous_split = eyes->symbol_split;
+    for (int e = 0; e < 2; e++) sm->previous_reel[e] = eyes->reel_pos[e];
+    for (int e = 0; e < 2; e++) sm->previous_gate[e] = eyes->shape_gate[e];
     sm->next_kf = 0;
     sm->jit_t0_ms = now_ms;
     for (int e = 0; e < 2; e++) {
@@ -295,6 +451,7 @@ static void anim_enter(anim_sm_t *sm, eyes_t *eyes, anim_id_t id, uint32_t now_m
 
 void anim_init(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
 {
+    memset(sm, 0, sizeof *sm);
     sm->rng = 0xA5A5F00Du ^ now_ms;
     anim_enter(sm, eyes, ANIM_NEUTRAL, now_ms);
     anim_update(sm, eyes, now_ms);
@@ -522,6 +679,85 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
     eyes_set_idle_rates(eyes, (int32_t)((1.0f - 0.4f * loud) * 65536.f), Q16_ONE, Q16(0.5));
 }
 
+static int32_t ramp(uint32_t t, uint32_t start, uint32_t length)
+{
+    if (t <= start) return 0;
+    if (t-start >= length) return Q16_ONE;
+    return ease_in_out_q16((int32_t)((uint64_t)(t-start)*Q16_ONE/length));
+}
+
+static void apply_performance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
+{
+    const uint32_t el = now_ms-sm->t_enter_ms;
+    eyes->symbol[0] = eyes->symbol[1] = EYE_SYMBOL_NONE;
+    eyes->symbol_split = 0;
+    if (sm->id == ANIM_HEARTS || sm->id == ANIM_HEARTBREAK) {
+        eyes->symbol[0] = eyes->symbol[1] = EYE_SYMBOL_HEART;
+        const uint32_t beat = el % 1000;
+        /* Two taps of a heartbeat followed by a rest, not a continuous sine wobble. */
+        const float p = beat < 180 ? sinf((float)beat*3.14159265f/180.f)
+                       : beat >= 230 && beat < 370 ? 0.55f*sinf((float)(beat-230)*3.14159265f/140.f) : 0.f;
+        float pulse = p;
+        if (sm->id == ANIM_HEARTBREAK) {
+            int32_t opening = ramp(el, 750, 850);
+            opening -= (int32_t)((int64_t)opening*ramp(el, 3200, 900) >> 16);
+            if (opening) eyes->symbol[0] = eyes->symbol[1] = EYE_SYMBOL_BROKEN;
+            eyes->symbol_split = opening/5;
+            pulse *= 1.f-(float)opening/Q16_ONE;
+            eyes->tint_mod_lum -= opening/8;
+        }
+        for (int e = 0; e < 2; e++) {
+            eyes->mod[e].sx += (int32_t)(0.09f*pulse*Q16_ONE);
+            eyes->mod[e].sy += (int32_t)(0.11f*pulse*Q16_ONE);
+        }
+    } else if (sm->id == ANIM_HIGH_ROLLER) {
+        for (int e = 0; e < 2; e++) {
+            const uint32_t stop = e ? 3350 : 2400;
+            const int turns = e ? 18 : 12;
+            eyes->symbol[e] = EYE_SYMBOL_REEL;
+            eyes->reel_pos[e] = turns*ramp(el, 400, stop-400);
+            if (el >= stop && el < stop+400) {
+                const float t = (float)(el-stop)/400.f;
+                eyes->reel_pos[e] += (int32_t)(0.065f*sinf(t*6.2831853f)*(1.f-t)*Q16_ONE);
+            }
+            /* Close across the loop seam before rewinding the reel strip. */
+            if (el < 180) eyes->shape_gate[e] = (int32_t)((int64_t)eyes->shape_gate[e]*ramp(el,0,180) >> 16);
+            if (el > 6020) eyes->shape_gate[e] = Q16_ONE-ramp(el,6020,180);
+        }
+        if (el >= 3750 && el < 4250) {
+            const float t = (float)(el-3750)/500.f;
+            const float bounce = sinf(t*6.2831853f)*(1.f-t);
+            eyes->face_mod_dy = (int32_t)(-9.f*bounce*Q16_ONE);
+            eyes->face_mod_scale = (int32_t)(0.08f*fabsf(bounce)*Q16_ONE);
+        }
+    } else if (sm->id == ANIM_LOADING && el >= 500 && el < 3980) {
+        const int32_t angle = (int32_t)((uint64_t)((el-500)%900)*360*Q16_ONE/900);
+        eyes->mod[0].angle = angle; eyes->mod[1].angle = -angle;
+    }
+    if (sm->id == ANIM_PEEKABOO || sm->id == ANIM_LOADING || sm->id == ANIM_SNEEZE) {
+        const uint32_t end = sm->id == ANIM_PEEKABOO ? 3700 : sm->id == ANIM_LOADING ? 4500 : 2800;
+        eyes_set_idle_rates(eyes, el < end ? 0 : Q16_ONE, Q16_ONE, el < end ? 0 : Q16(0.2));
+    }
+
+    /* Cross an actual selection change by closing the old silhouette, swapping
+     * only while thin, then reopening the new one. Ordinary poses still morph. */
+    const uint32_t change = now_ms-sm->t_change_ms;
+    if (change < 280) {
+        for (int e = 0; e < 2; e++) {
+            if (sm->previous_symbol[e] == eyes->symbol[e] && sm->previous_gate[e] == Q16_ONE) continue;
+            const int32_t gate = change < 120
+                ? (int32_t)((int64_t)sm->previous_gate[e]*(Q16_ONE-ramp(change,0,120)) >> 16)
+                : ramp(change,120,160);
+            eyes->shape_gate[e] = (int32_t)((int64_t)eyes->shape_gate[e]*gate >> 16);
+            if (change < 120) {
+                eyes->symbol[e] = sm->previous_symbol[e];
+                eyes->symbol_split = sm->previous_split;
+                eyes->reel_pos[e] = sm->previous_reel[e];
+            }
+        }
+    }
+}
+
 void anim_update(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
 {
     const anim_def_t *d = &k_anims[sm->id];
@@ -540,9 +776,14 @@ void anim_update(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
     }
 
     eyes_clear_mod(eyes);
+    /* The selectable recovery demo returns to ordinary idle motion after its blink. */
+    if (sm->id == ANIM_RECOVERING && el >= 3000) {
+        eyes_set_idle_rates(eyes, Q16_ONE, Q16_ONE, Q16(0.5));
+    }
     if (sm->id == ANIM_DANCE) {
         apply_dance(sm, eyes, now_ms);
     } else {
         apply_modulators(sm, eyes, d, now_ms);
     }
+    apply_performance(sm, eyes, now_ms);
 }

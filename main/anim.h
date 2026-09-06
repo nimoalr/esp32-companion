@@ -28,12 +28,36 @@ typedef enum {
     ANIM_SLEEPING,
     ANIM_SQUINT,
     ANIM_DANCE,             /* procedural, driven by audio_features_t */
+    /* Append new IDs: existing tap/selection IDs keep their values. */
+    ANIM_SMUG,
+    ANIM_SUSPICIOUS,
+    ANIM_DETERMINED,
+    ANIM_PLEADING,
+    ANIM_MISCHIEVOUS,
+    ANIM_EMBARRASSED,
+    ANIM_RELIEVED,
+    ANIM_DOUBLE_TAKE,
+    ANIM_KNOCKED_OUT,
+    ANIM_RECOVERING,
+    ANIM_HEARTS,
+    ANIM_HEARTBREAK,
+    ANIM_HIGH_ROLLER,
+    ANIM_NOD,
+    ANIM_PEEKABOO,
+    ANIM_LOADING,
+    ANIM_BOOP,
+    ANIM_SNEEZE,
     ANIM_COUNT
 } anim_id_t;
 
 typedef struct {
     anim_id_t id;
     uint32_t t_enter_ms;    /* start of the current pass through the keyframes */
+    uint32_t t_change_ms;   /* actual selection change, independent of loop wraps */
+    eye_symbol_t previous_symbol[2];
+    int32_t previous_split;
+    int32_t previous_reel[2];
+    int32_t previous_gate[2];
     int next_kf;            /* index of the next keyframe to apply */
     /* jitter modulator state */
     int32_t jit_from[2][EYE_POSE_FIELDS], jit_to[2][EYE_POSE_FIELDS];

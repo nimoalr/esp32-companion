@@ -687,7 +687,7 @@ static void render_task(void *arg)
             /* a finger resting on the screen: the eyes settle on it and stop wandering (Vector's focus) */
             uint16_t fx, fy;
             const bool finger = touch_pressed(&fx, &fy) && c.sm.id != ANIM_DANCE;   /* the dance is not to be stared out of */
-            eyes_set_attention(&c.eyes, finger, fx, fy);
+            eyes_set_attention(&c.eyes, finger && c.sm.id != ANIM_KNOCKED_OUT && c.sm.id != ANIM_RECOVERING, fx, fy);
             /* mood: a tired character is dimmer and paler, an energetic one glows */
             const float energy = behavior_energy(&c.beh);
             eyes_set_mood(&c.eyes, (int32_t)((0.85f + 0.15f * energy) * 65536.f), (int32_t)((0.90f + 0.10f * energy) * 65536.f));
@@ -698,7 +698,7 @@ static void render_task(void *arg)
                 power_battery(&b);
                 acc_set_charge(&c.acc, b.vbus, b.present ? b.percent : 0, b.charging);
             }
-            acc_set_knocked_out(&c.acc, bo.knocked_out, now_ms);
+            acc_set_knocked_out(&c.acc, bo.knocked_out || c.sm.id == ANIM_KNOCKED_OUT, now_ms);
             acc_set_zz(&c.acc, bo.zz || c.sm.id == ANIM_SLEEPING, now_ms);
         }
         sync_audio(&c, (c.sm.id == ANIM_DANCE && bo.override_anim < 0) || bo.want_mic);
@@ -811,9 +811,6 @@ static void render_task(void *arg)
         } else {
             anim_update(&c.sm, &c.eyes, now_ms);
             eyes_update(&c.eyes, now_ms, c.shapes);
-            if (bo.knocked_out) {
-                c.shapes[0].visible = c.shapes[1].visible = false;   /* X eyes are drawn as accessories */
-            }
 
             /* Dirty rects: union of each eye's previous and current bounding box. */
             for (int i = 0; i < 2; i++) {

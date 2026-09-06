@@ -11,6 +11,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "raster.h"
+#include "eye_symbols.h"
 
 /* What the renderer draws. All lengths Q16 pixels, fractions Q16 in [0, 1]. */
 typedef struct {
@@ -86,7 +87,7 @@ typedef struct {
     uint32_t next_blink_ms;
     uint32_t blink_t0_ms;
     bool blinking;
-    int32_t blink_interval_scale;      /* Q16; > ONE = rarer blinks */
+    int32_t blink_interval_scale;      /* Q16; > ONE = rarer blinks; 0 = authored lids, no idle blink */
     int32_t blink_speed_scale;         /* Q16; > ONE = slower close/open */
     /* gaze darts */
     int32_t dart_scale;                /* Q16 amplitude scale; 0 = eyes hold still */
@@ -104,6 +105,10 @@ typedef struct {
     eye_pose_t mod[2];                 /* per-frame additive modulation (wobble, bounce, beat); deltas */
     eye_pose_t env[2];                 /* environment layer (gravity gaze), set by the behaviour code; deltas */
     eyes_idle_t idle;
+    eye_symbol_t symbol[2];           /* optional silhouette, driven by animation */
+    int32_t symbol_split;             /* Q16 separation of broken-heart halves */
+    int32_t reel_pos[2];              /* Q16 vertical reel position in symbol pitches */
+    int32_t shape_gate[2];            /* Q16 height gate for silhouette changes */
     bool face_rot;                     /* whole face rotated about the screen centre */
     float face_deg;
     int32_t face_cos, face_sin;        /* Q16 */

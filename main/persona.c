@@ -74,6 +74,20 @@ static void react_to_anim(persona_t *p, anim_id_t a, float level, persona_say_t 
     case ANIM_ANNOYED:   say_gesture(o, VOICE_ANNOYED, level, false); break;
     case ANIM_SQUINT:    say_word(o, CLIP_I_AM_WATCHING_YOU, level, false); break;
     case ANIM_NEUTRAL:   say_word(o, CLIP_OKAY, level, false); break;
+    case ANIM_SMUG:      say_word(o, CLIP_NICE_TRY, level, false); break;
+    case ANIM_SUSPICIOUS: say_word(o, CLIP_I_AM_WATCHING_YOU, level, false); break;
+    case ANIM_DETERMINED: say_word(o, CLIP_COME_ON, level, false); break;
+    case ANIM_PLEADING:  say_word(o, CLIP_OH_PLEASE, level, false); break;
+    case ANIM_MISCHIEVOUS: say_word(o, CLIP_PEEKABOO, level, false); break;
+    case ANIM_EMBARRASSED: say_word(o, CLIP_OOPSIE, level, false); break;
+    case ANIM_RELIEVED:  say_word(o, CLIP_OKAY, level, false); break;
+    case ANIM_DOUBLE_TAKE: say_word(o, CLIP_SERIOUSLY, level, false); break;
+    case ANIM_HEARTS:    say_word(o, CLIP_OOH_LA_LA, level, false); break;
+    case ANIM_HEARTBREAK: say_word(o, CLIP_OH_NO, level, false); break;
+    case ANIM_HIGH_ROLLER: say_word(o, CLIP_BINGO, level, false); break;
+    case ANIM_NOD:       say_word(o, CLIP_OKAY, level, false); break;
+    case ANIM_PEEKABOO:  say_word(o, CLIP_PEEKABOO, level, false); break;
+    case ANIM_BOOP:      say_word(o, CLIP_OOPSIE, level, false); break;
     default: break;
     }
 }

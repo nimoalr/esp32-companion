@@ -45,7 +45,54 @@ static inline int32_t IRAM_ATTR sqrt_q16(uint32_t v)
 }
 
 /* Span-list edits. Lists hold at most RASTER_MAX_SPANS intervals, sorted and disjoint. */
-#define RASTER_MAX_SPANS 4
+#define RASTER_MAX_SPANS 8
+
+bool raster_path_add(raster_shape_t *s, const int32_t (*xy)[2], int n)
+{
+    if (n < 3 || n + s->path_n > RASTER_PATH_EDGES) return false;
+    if (!s->path_n) {
+        s->path_x0 = s->path_y0 = INT32_MAX;
+        s->path_x1 = s->path_y1 = INT32_MIN;
+    }
+    for (int i = 0; i < n; i++) {
+        int32_t x0 = xy[i][0], y0 = xy[i][1];
+        int32_t x1 = xy[(i+1)%n][0], y1 = xy[(i+1)%n][1];
+        if (x0 < s->path_x0) s->path_x0 = x0;
+        if (x0 > s->path_x1) s->path_x1 = x0;
+        if (y0 < s->path_y0) s->path_y0 = y0;
+        if (y0 > s->path_y1) s->path_y1 = y0;
+        if (y0 == y1) continue;
+        if (y0 > y1) {
+            const int32_t x = x0, y = y0; x0 = x1; y0 = y1; x1 = x; y1 = y;
+        }
+        const int64_t slope = (int64_t)(x1-x0) * Q16_ONE / (y1-y0);
+        /* Nearly horizontal edges can have a slope outside Q16 range. Store
+         * no more than the useful screen span per 1/65536 px of vertical travel. */
+        s->path[s->path_n++] = (raster_edge_t){y0, y1, x0,
+            slope > INT32_MAX ? INT32_MAX : slope < INT32_MIN ? INT32_MIN : (int32_t)slope};
+    }
+    return true;
+}
+
+static int IRAM_ATTR path_spans(const raster_shape_t *s, int32_t y, span_t *out)
+{
+    int32_t cross[2 * RASTER_MAX_SPANS];
+    int n = 0;
+    for (int i = 0; i < s->path_n; i++) {
+        const raster_edge_t *edge = &s->path[i];
+        if (y < edge->y0 || y >= edge->y1) continue;
+        if (n == 2 * RASTER_MAX_SPANS) break;
+        const int32_t x = edge->x0 + (int32_t)(((int64_t)(y-edge->y0)*edge->slope) >> 16);
+        int j = n++;
+        while (j && cross[j-1] > x) { cross[j] = cross[j-1]; j--; }
+        cross[j] = x;
+    }
+    int count = 0;
+    for (int i = 0; i+1 < n; i += 2) {
+        if (cross[i] < cross[i+1]) out[count++] = (span_t){cross[i], cross[i+1]};
+    }
+    return count;
+}
 
 /* Remove the open interval (a, b) from the list. */
 static inline int IRAM_ATTR spans_remove(span_t *sp, int n, int32_t a, int32_t b)
@@ -590,7 +637,8 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
     const int32_t ybase = py << 16;
 
     for (int k = 0; k < 4; k++) {
-        ns[k] = s->rot ? shape_spans_rot(s, ybase + k_sub_off[k], sp[k]) : shape_spans(s, ybase + k_sub_off[k], sp[k]);
+        ns[k] = s->path_n ? path_spans(s, ybase + k_sub_off[k], sp[k])
+                         : s->rot ? shape_spans_rot(s, ybase + k_sub_off[k], sp[k]) : shape_spans(s, ybase + k_sub_off[k], sp[k]);
         total += ns[k];
         if (ns[k] > 1) {
             multi = true;
@@ -779,6 +827,14 @@ void raster_shapes_over(uint16_t *dst, int x0, int y0, int w, int rows, const ra
 
 void raster_shape_finalize(raster_shape_t *s, int screen_w, int screen_h)
 {
+    if (s->path_n) {
+        int x0 = (s->path_x0 >> 16) - 1, y0 = (s->path_y0 >> 16) - 1;
+        int x1 = ((s->path_x1 + 65535) >> 16) + 1, y1 = ((s->path_y1 + 65535) >> 16) + 1;
+        s->px0 = x0 < 0 ? 0 : x0; s->py0 = y0 < 0 ? 0 : y0;
+        s->px1 = x1 > screen_w ? screen_w : x1; s->py1 = y1 > screen_h ? screen_h : y1;
+        s->visible = s->px0 < s->px1 && s->py0 < s->py1;
+        return;
+    }
     if (s->slant > -RCP_MIN_Q16 && s->slant < RCP_MIN_Q16) s->slant = 0;
     if (s->bend > -RCP_MIN_Q16 && s->bend < RCP_MIN_Q16) s->bend = 0;
     s->slant_rcp = s->slant ? (int32_t)((1LL << 32) / s->slant) : 0;
