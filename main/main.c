@@ -456,9 +456,6 @@ static void run_ui_actions(render_ctx_t *c, uint32_t now_ms)
             break;
         case UI_ACT_MICCAL:
             audio_set_dir_cal(&g_settings.mic);
-    ESP_ERROR_CHECK(speech_init());
-    speech_set_register((voice_register_t)g_settings.voice_register);
-    speech_set_volume(g_settings.volume);
             break;
         case UI_ACT_VOICE:
             speech_set_register((voice_register_t)g_settings.voice_register);
@@ -850,6 +847,9 @@ void app_main(void)
 
     ESP_ERROR_CHECK(settings_init());
     audio_set_dir_cal(&g_settings.mic);
+    ESP_ERROR_CHECK(speech_init());
+    speech_set_register((voice_register_t)g_settings.voice_register);
+    speech_set_volume(g_settings.volume);
     battstat_init();
     ESP_ERROR_CHECK(i2c_bus_init());
     ESP_ERROR_CHECK(display_init());

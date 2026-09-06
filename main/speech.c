@@ -106,6 +106,7 @@ esp_err_t speech_init(void)
 
 static bool post(const req_t *r, bool interrupt)
 {
+    if (!s_q) return false;
     if (s_busy && !interrupt) return false;
     if (interrupt) xQueueReset(s_q);
     return xQueueSend(s_q, r, 0) == pdTRUE;
