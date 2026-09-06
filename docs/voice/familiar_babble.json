@@ -1,0 +1,284 @@
+{
+  "sample_rate": 16000,
+  "channels": 1,
+  "bits": 16,
+  "voice": "Junior",
+  "rate": 165,
+  "markup": "[[pmod 60]]",
+  "treatment": "robot speed=1.55 ring=0 depth=0 peak=0; 320 Hz high-pass",
+  "macos": "26.6.2",
+  "gap_ms": 450,
+  "purr_grain_start": 960,
+  "purr_grain_samples": 1600,
+  "purr_hop_samples": 800,
+  "groups": {
+    "A_murmurs": {
+      "file": "familiar_A_murmurs.wav",
+      "samples": 73730,
+      "sha256": "e162d80c6be2dad22fa50d847838c3798de55297f25421429eb16a24f1e9f40e",
+      "clips": [
+        {
+          "name": "hello",
+          "prompt": "hello",
+          "start_s": 0.0,
+          "duration_s": 0.349,
+          "samples": 5580,
+          "adpcm_bytes": 2790,
+          "peak_dbfs": -8.29,
+          "rms_dbfs": -18.42
+        },
+        {
+          "name": "a_idle",
+          "prompt": "ooh, mm hmm",
+          "start_s": 0.799,
+          "duration_s": 0.81,
+          "samples": 12958,
+          "adpcm_bytes": 6479,
+          "peak_dbfs": -4.69,
+          "rms_dbfs": -18.42
+        },
+        {
+          "name": "a_curious",
+          "prompt": "hmm, ooh?",
+          "start_s": 2.059,
+          "duration_s": 0.612,
+          "samples": 9790,
+          "adpcm_bytes": 4895,
+          "peak_dbfs": -7.99,
+          "rms_dbfs": -18.42
+        },
+        {
+          "name": "a_happy",
+          "prompt": "ooh, wee!",
+          "start_s": 3.12,
+          "duration_s": 0.595,
+          "samples": 9516,
+          "adpcm_bytes": 4758,
+          "peak_dbfs": -9.65,
+          "rms_dbfs": -18.42
+        },
+        {
+          "name": "whatever",
+          "prompt": "whatever",
+          "start_s": 4.165,
+          "duration_s": 0.443,
+          "samples": 7086,
+          "adpcm_bytes": 3543,
+          "peak_dbfs": -4.38,
+          "rms_dbfs": -18.42
+        }
+      ]
+    },
+    "B_bips": {
+      "file": "familiar_B_bips.wav",
+      "samples": 70082,
+      "sha256": "2431d3758d11cbab279ab4379b8689cce1589bb1aa7fbd35f2a366e9e09ed9b6",
+      "clips": [
+        {
+          "name": "hello",
+          "prompt": "hello",
+          "start_s": 0.0,
+          "duration_s": 0.349,
+          "samples": 5580,
+          "adpcm_bytes": 2790,
+          "peak_dbfs": -8.29,
+          "rms_dbfs": -18.42
+        },
+        {
+          "name": "b_idle",
+          "prompt": "bip boop",
+          "start_s": 0.799,
+          "duration_s": 0.409,
+          "samples": 6552,
+          "adpcm_bytes": 3276,
+          "peak_dbfs": -6.08,
+          "rms_dbfs": -18.42
+        },
+        {
+          "name": "b_curious",
+          "prompt": "boo bee?",
+          "start_s": 1.658,
+          "duration_s": 0.403,
+          "samples": 6444,
+          "adpcm_bytes": 3222,
+          "peak_dbfs": -9.13,
+          "rms_dbfs": -18.42
+        },
+        {
+          "name": "b_happy",
+          "prompt": "bip, bip, wheee!",
+          "start_s": 2.511,
+          "duration_s": 0.976,
+          "samples": 15620,
+          "adpcm_bytes": 7810,
+          "peak_dbfs": -5.94,
+          "rms_dbfs": -18.42
+        },
+        {
+          "name": "whatever",
+          "prompt": "whatever",
+          "start_s": 3.937,
+          "duration_s": 0.443,
+          "samples": 7086,
+          "adpcm_bytes": 3543,
+          "peak_dbfs": -4.38,
+          "rms_dbfs": -18.42
+        }
+      ]
+    },
+    "C_chatter": {
+      "file": "familiar_C_chatter.wav",
+      "samples": 79082,
+      "sha256": "5e3935965919a049475b241acd128b2cd7996e896350a41c1cd9af9783cc710d",
+      "clips": [
+        {
+          "name": "hello",
+          "prompt": "hello",
+          "start_s": 0.0,
+          "duration_s": 0.349,
+          "samples": 5580,
+          "adpcm_bytes": 2790,
+          "peak_dbfs": -8.29,
+          "rms_dbfs": -18.42
+        },
+        {
+          "name": "c_idle",
+          "prompt": "doodle bee dah",
+          "start_s": 0.799,
+          "duration_s": 0.603,
+          "samples": 9652,
+          "adpcm_bytes": 4826,
+          "peak_dbfs": -6.28,
+          "rms_dbfs": -18.42
+        },
+        {
+          "name": "c_curious",
+          "prompt": "wibble dibble?",
+          "start_s": 1.852,
+          "duration_s": 0.604,
+          "samples": 9662,
+          "adpcm_bytes": 4831,
+          "peak_dbfs": -7.46,
+          "rms_dbfs": -18.42
+        },
+        {
+          "name": "c_happy",
+          "prompt": "bada bee, bada boo!",
+          "start_s": 2.906,
+          "duration_s": 1.144,
+          "samples": 18302,
+          "adpcm_bytes": 9151,
+          "peak_dbfs": -5.83,
+          "rms_dbfs": -18.42
+        },
+        {
+          "name": "whatever",
+          "prompt": "whatever",
+          "start_s": 4.5,
+          "duration_s": 0.443,
+          "samples": 7086,
+          "adpcm_bytes": 3543,
+          "peak_dbfs": -4.38,
+          "rms_dbfs": -18.42
+        }
+      ]
+    },
+    "reactions": {
+      "file": "familiar_reactions.wav",
+      "samples": 137072,
+      "sha256": "f44856d3f42e0fa373b34da6b951adad2e6d6020360174fc86d99a1e3b7c0630",
+      "clips": [
+        {
+          "name": "hello",
+          "prompt": "hello",
+          "start_s": 0.0,
+          "duration_s": 0.349,
+          "samples": 5580,
+          "adpcm_bytes": 2790,
+          "peak_dbfs": -8.29,
+          "rms_dbfs": -18.42
+        },
+        {
+          "name": "curious",
+          "prompt": "hmm?",
+          "start_s": 0.799,
+          "duration_s": 0.317,
+          "samples": 5076,
+          "adpcm_bytes": 2538,
+          "peak_dbfs": -8.91,
+          "rms_dbfs": -18.42
+        },
+        {
+          "name": "delight",
+          "prompt": "ooh!",
+          "start_s": 1.566,
+          "duration_s": 0.264,
+          "samples": 4220,
+          "adpcm_bytes": 2110,
+          "peak_dbfs": -10.59,
+          "rms_dbfs": -18.42
+        },
+        {
+          "name": "surprise",
+          "prompt": "aah!",
+          "start_s": 2.28,
+          "duration_s": 0.285,
+          "samples": 4556,
+          "adpcm_bytes": 2278,
+          "peak_dbfs": -5.08,
+          "rms_dbfs": -18.42
+        },
+        {
+          "name": "annoyed",
+          "prompt": "ugh",
+          "start_s": 3.014,
+          "duration_s": 0.271,
+          "samples": 4330,
+          "adpcm_bytes": 2165,
+          "peak_dbfs": -6.84,
+          "rms_dbfs": -18.42
+        },
+        {
+          "name": "laugh",
+          "prompt": "ha ha ha",
+          "start_s": 3.735,
+          "duration_s": 0.409,
+          "samples": 6540,
+          "adpcm_bytes": 3270,
+          "peak_dbfs": -5.76,
+          "rms_dbfs": -18.42
+        },
+        {
+          "name": "sleepy",
+          "prompt": "aah, hmm",
+          "start_s": 4.594,
+          "duration_s": 0.63,
+          "samples": 10084,
+          "adpcm_bytes": 5042,
+          "peak_dbfs": -4.68,
+          "rms_dbfs": -18.42
+        },
+        {
+          "name": "purr",
+          "prompt": "looped voiced grain from hmm; 24 Hz amplitude flutter",
+          "start_s": 5.674,
+          "duration_s": 2.0,
+          "samples": 32000,
+          "adpcm_bytes": 16000,
+          "peak_dbfs": -11.34,
+          "rms_dbfs": -22.5
+        },
+        {
+          "name": "whatever",
+          "prompt": "whatever",
+          "start_s": 8.124,
+          "duration_s": 0.443,
+          "samples": 7086,
+          "adpcm_bytes": 3543,
+          "peak_dbfs": -4.38,
+          "rms_dbfs": -18.42
+        }
+      ]
+    }
+  }
+}

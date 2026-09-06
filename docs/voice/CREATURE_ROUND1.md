@@ -1,8 +1,9 @@
 # One creature: audition round 1
 
-Status: awaiting a listening choice. The owner previously chose
-`sample_Junior_B_pitched_more.wav`; **A below uses that treatment**. The letters
-in this round are new. No new treatment has been put in the firmware.
+Status: **the owner chose A — Familiar**. This confirms the previous choice,
+`sample_Junior_B_pitched_more.wav`. The letters in this round are new.
+The existing firmware word bank already uses this treatment. Babble and mood
+performances are the next audition; see [Familiar babbles](FAMILIAR_BABBLES.md).
 
 Each medley alternates a word phrase with an interjection, using the same Junior
 voice and processing for both. Judge whether each pair belongs to one creature,
