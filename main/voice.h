@@ -62,27 +62,6 @@ typedef struct {
     bool loop;                  /* keeps going until voice_stop */
 } voice_gesture_t;
 
-/*
- * A spoken word is a track of 10 ms frames extracted from speech on the host
- * (tools/host/speak.c) and said by the same synthesiser: pitch movement, loudness,
- * the two vowel formants and whether the frame is voiced. Five bytes per frame.
- */
-typedef struct {
-    int8_t st4;                 /* pitch, quarter semitones from the register's base */
-    uint8_t level;              /* 0..255 loudness */
-    uint8_t f1;                 /* first formant, Hz / 8 */
-    uint8_t f2;                 /* second formant, Hz / 16 */
-    uint8_t voiced;             /* 0 = noise (consonant), 1 = tone */
-} voice_frame_t;
-
-typedef struct {
-    const char *name;
-    int nframes;
-    const voice_frame_t *frames;
-} voice_word_t;
-
-#define VOICE_FRAME_MS 10
-
 typedef struct {
     uint32_t rng;
     voice_register_t reg;
@@ -103,10 +82,6 @@ typedef struct {
     float gain;
     bool stopping;
     float fade;
-    /* spoken word */
-    const voice_word_t *word;   /* NULL while a gesture plays */
-    int wpos;                   /* samples into the word */
-    float wenv;                 /* smoothed loudness */
 } voice_t;
 
 
@@ -118,8 +93,6 @@ void voice_set_register(voice_t *v, voice_register_t reg);
 void voice_start(voice_t *v, voice_id_t id, float level);
 /* Compose and start a random babble: 1-4 syllables. energy 0..1 sets tempo and pitch spread. */
 void voice_babble(voice_t *v, float level, float energy);
-/* Say a word track; level 0..1 as for voice_start. */
-void voice_speak(voice_t *v, const voice_word_t *w, float level);
 /* Ask a looping utterance to end (short fade); others are left to finish. */
 void voice_stop(voice_t *v);
 bool voice_active(const voice_t *v);

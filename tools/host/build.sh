@@ -13,7 +13,6 @@ case "$name" in
     imu_cal_test) SRCS="$R/imu_cal.c" ;;
     micdir_test) SRCS="$R/micdir.c" ;;
     voice_render) SRCS="$R/voice.c" ;;
-    speak) SRCS="$R/voice.c" ;;
 esac
 src="$HERE/$name.c"
 [ -f "$src" ] || src="$HERE/drafts/$name.c"
