@@ -39,7 +39,7 @@
 
 const char *behavior_state_name(behavior_state_t s)
 {
-    static const char *n[] = { "idle", "dizzy", "knocked-out", "groggy", "face-down", "waking", "music", "unimpressed" };
+    static const char *n[] = { "idle", "dizzy", "knocked-out", "groggy", "face-down", "waking", "music", "unimpressed", "listening" };
     return s <= BEH_UNIMPRESSED ? n[s] : "?";
 }
 
@@ -179,6 +179,12 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
                 b->next_sniff_ms = now_ms + (tapped ? 6u : 1u) * CONFIG_EYES_SNIFF_INTERVAL_S * 1000u;
             }
             break;
+        case BEH_LISTENING:
+            if (shaking_hard) { enter(b, BEH_DIZZY, now_ms); break; }
+            if (face_down) { enter(b, BEH_FACE_DOWN, now_ms); break; }
+            if (in->audio.active && in->audio.speech) b->speech_last_ms = now_ms;
+            if (!in->audio.active || now_ms - b->speech_last_ms > 2000 || tapped) enter(b, BEH_IDLE, now_ms);
+            break;
         case BEH_UNIMPRESSED:
             if (in_state >= 4500 || tapped) {
                 enter(b, BEH_IDLE, now_ms);
@@ -189,7 +195,11 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
         default:
             if (shaking_hard) enter(b, BEH_DIZZY, now_ms);
             else if (face_down) enter(b, BEH_FACE_DOWN, now_ms);
-            else if (b->sniffing && music_detected(&in->audio)) {
+            else if (in->audio.active && in->audio.speech && !in->user_interacting) {
+                b->speech_last_ms = now_ms;
+                enter(b, BEH_LISTENING, now_ms);
+            }
+            else if (in->audio.active && music_detected(&in->audio)) {
                 b->sniffing = false;
                 b->music_quiet_since_ms = now_ms;
                 /* roll the reaction against his mood */
@@ -217,7 +227,9 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
     } else {
         b->sniffing = false;
     }
-    out->want_mic = b->sniffing || b->state == BEH_MUSIC;
+    /* on the charger the microphones simply stay on: nothing to save, and he hears people talking */
+    out->want_mic = b->sniffing || b->state == BEH_MUSIC || b->state == BEH_LISTENING ||
+                    (in->usb && in->mic_available && (b->state == BEH_IDLE || b->state == BEH_UNIMPRESSED));
 
     /* --- outputs --- */
     switch (b->state) {
@@ -228,6 +240,7 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
     case BEH_WAKING:      out->override_anim = ANIM_SURPRISED; break;
     case BEH_MUSIC:       out->override_anim = ANIM_DANCE; break;
     case BEH_UNIMPRESSED: out->override_anim = ANIM_ANNOYED; break;
+    case BEH_LISTENING:   out->override_anim = ANIM_CURIOUS; break;
     default: break;
     }
 
@@ -257,8 +270,11 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
     }
 
     /* gravity gaze: the eyes slide toward the low side (not while spinning or out cold) */
-    if (in->have_accel && (b->state == BEH_IDLE || b->state == BEH_MUSIC || b->state == BEH_WAKING)) {
-        float bx = -b->gx, by = -b->gy;
+    /* the voice: the eyes drift toward the talker along the mic axis (+ = the lanyard end = the top) */
+    const float want_voice = (b->state == BEH_LISTENING && in->audio.active) ? in->audio.dir : 0.f;
+    b->voice_dir += (want_voice - b->voice_dir) * 0.05f;
+    if (in->have_accel && (b->state == BEH_IDLE || b->state == BEH_MUSIC || b->state == BEH_WAKING || b->state == BEH_LISTENING)) {
+        float bx = -b->gx, by = -b->gy - b->voice_dir * 0.8f;
         if (bx > 1.f) bx = 1.f;
         if (bx < -1.f) bx = -1.f;
         if (by > 1.f) by = 1.f;

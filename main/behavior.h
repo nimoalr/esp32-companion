@@ -20,6 +20,7 @@ typedef struct {
     bool mic_available;         /* board has working mics */
     bool user_interacting;      /* touch in the last few seconds */
     uint32_t tap_count;         /* running count of taps; a tap during a music reaction ends it */
+    bool usb;                   /* on the charger: the microphones can stay on */
 } behavior_in_t;
 
 typedef struct {
@@ -39,6 +40,7 @@ typedef enum {
     BEH_WAKING,
     BEH_MUSIC,
     BEH_UNIMPRESSED,
+    BEH_LISTENING,              /* someone is talking: look their way */
 } behavior_state_t;
 
 typedef struct {
@@ -54,6 +56,8 @@ typedef struct {
     uint32_t sniff_start_ms;
     bool sniffing;
     uint32_t music_quiet_since_ms;
+    uint32_t speech_last_ms;    /* last frame with speech */
+    float voice_dir;            /* smoothed direction of the voice along the mic axis */
     /* mood */
     float energy;               /* 0..1, drifts; fed by handling and touch */
     uint32_t mood_tick_ms;

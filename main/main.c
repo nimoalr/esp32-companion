@@ -650,6 +650,11 @@ static void render_task(void *arg)
         if (c.mode == MODE_EYES) {
             behavior_in_t bi = { .cal = &g_settings.cal, .audio = af, .mic_available = c.mic_ok,
                                  .user_interacting = (int32_t)(now_ms - touch_last_activity_ms()) < 3000, .tap_count = c.tap_count };
+            {
+                pmic_battery_t ub;
+                power_battery(&ub);
+                bi.usb = ub.vbus;
+            }
             bi.have_accel = power_last_accel(bi.accel, &bi.accel_ms);
             behavior_update(&c.beh, &bi, now_ms, &bo);
             const anim_id_t want = bo.override_anim >= 0 ? (anim_id_t)bo.override_anim : c.user_anim;
@@ -695,6 +700,7 @@ static void render_task(void *arg)
                 .usb = pb.vbus,
                 .batt_pct = pb.present ? pb.percent : -1,
                 .speaking = speech_busy(),
+                .speech = af.active && af.speech,
                 .chattiness = g_settings.chattiness,
             };
             persona_say_t say;
@@ -846,10 +852,10 @@ static void render_task(void *arg)
                 }
                 usb_prev = b.vbus;
             }
-            char audio_s[224] = "";
+            char audio_s[256] = "";
             if (af.active) {
-                snprintf(audio_s, sizeof audio_s, " | audio rms %.0f kick %.2f ratio %.2f, beats %" PRIu32 " %d bpm conf %.2f, L %.0f R %.0f dir %+.2f clap %u lag %+.2f bal %.2f corr %.2f pk %d (loud %u pre %d%%)",
-                         af.raw_loud, af.kick, af.bass_ratio, af.beat_count, (int)af.bpm, af.tempo_conf, af.rms_l, af.rms_r, af.dir, af.dir_n, af.dir_lag, af.dir_conf, af.dir_corr, af.dir_peak, af.dir_loud, af.dir_pre);
+                snprintf(audio_s, sizeof audio_s, " | audio rms %.0f kick %.2f ratio %.2f, beats %" PRIu32 " %d bpm conf %.2f, speech %d/%.2f, L %.0f R %.0f dir %+.2f clap %u lag %+.2f bal %.2f corr %.2f pk %d (loud %u pre %d%%)",
+                         af.raw_loud, af.kick, af.bass_ratio, af.beat_count, (int)af.bpm, af.tempo_conf, af.speech, af.speech_depth, af.rms_l, af.rms_r, af.dir, af.dir_n, af.dir_lag, af.dir_conf, af.dir_corr, af.dir_peak, af.dir_loud, af.dir_pre);
             }
             ESP_LOGI(TAG, "%s %s [%s, energy %.2f]: %" PRIu32 " fps | raster %" PRIu32 " us avg, %" PRIu32 " us max | push %" PRIu32 " us | %" PRIu32 " B/frame, %" PRIu32 " rect(s) | pace %s%s (%" PRIu32 " TE/s) | bri %d%% | batt %u mV %d%%%s%s%s | stack %u B free",
                      power_state_name(state), c.mode == MODE_UI ? ui_screen_name(c.ui.screen) : anim_name(c.sm.id),

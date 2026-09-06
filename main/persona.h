@@ -24,6 +24,7 @@ typedef struct {
     bool usb;
     int batt_pct;               /* -1 unknown */
     bool speaking;              /* the mouth is busy */
+    bool speech;                /* someone is talking */
     int chattiness;             /* 0 quiet .. 3 talkative */
 } persona_in_t;
 
@@ -50,6 +51,9 @@ typedef struct {
     uint32_t dizzy_ms[4];       /* recent shakings, for the escalation */
     int dizzy_n;
     uint32_t low_batt_ms;
+    uint32_t talk_since_ms;     /* the current conversation started */
+    uint32_t talk_last_ms;      /* last frame of it */
+    bool answered;
 } persona_t;
 
 void persona_init(persona_t *p, uint32_t now_ms, uint32_t seed);

@@ -182,6 +182,20 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
             react_to_anim(p, in->anim, level, out);
         }
     }
+    /* someone talking: a short answer when a conversation starts, then quiet (it is not about him) */
+    else if (in->speech && in->power == 0 && !in->in_ui) {
+        if ((int32_t)(now_ms - p->talk_last_ms) > 60000) { p->talk_since_ms = now_ms; p->answered = false; }
+        p->talk_last_ms = now_ms;
+        if (!p->answered && (int32_t)(now_ms - p->talk_since_ms) > 1200 && free) {
+            p->answered = true;
+            const int r = (int)(rnd(p) % 100u);
+            if (r < 45) say_gesture(out, VOICE_HM, level, false);
+            else if (r < 65) say_word(out, CLIP_REALLY, level, false);
+            else if (r < 80) say_word(out, CLIP_AHA, level, false);
+            else if (r < 90) say_word(out, CLIP_OH_REALLY, level, false);
+            else say_word(out, CLIP_EXCUSE_ME, level, false);
+        }
+    }
     /* a finger resting: a purr, once per touch */
     else if (in->finger && in->power == 0 && !in->in_ui) {
         if (!pv->finger) { p->finger_since_ms = now_ms; p->purred = false; }

@@ -73,6 +73,10 @@ static float s_dir_corr;
 static int s_dir_peak;
 static float s_dir_level_db;
 static float s_presence;              /* 0..1: is there real sound, from the raw level (quiet room ~18 LSB) */
+/* speech: the mid band's envelope pulses at syllable rate (3-8 Hz) */
+static float s_sp_fast, s_sp_slow, s_sp_mod;
+static int s_sp_on, s_sp_off;
+static bool s_speech;
 static float s_gap_ms;                /* current tempo estimate as a beat interval, 0 = none */
 static uint32_t s_last_beat_ms;
 static uint32_t s_beat_gaps[8];
@@ -334,6 +338,24 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     portENTER_CRITICAL(&s_lock);
     s_feat.active = true;
     s_feat.kick = agc(kick_e, &s_max_kick) * s_presence;
+    /*
+     * Speech: someone talking makes the mid band (300 Hz - 3 kHz) pulse at syllable rate,
+     * 3-8 Hz, without a steady tempo and with almost no sub-bass. The envelope's deviation
+     * from its one-second mean, relative to that mean, is the modulation depth; it must hold
+     * for ~0.6 s to count and stays counted for 1.5 s after the last syllable.
+     */
+    s_sp_fast += (mid - s_sp_fast) * 0.6f;              /* ~10 Hz */
+    s_sp_slow += (s_sp_fast - s_sp_slow) * 0.1f;        /* ~1 Hz */
+    s_sp_mod += (fabsf(s_sp_fast - s_sp_slow) - s_sp_mod) * 0.08f;
+    const float sp_depth = s_sp_slow > 1e-4f ? s_sp_mod / s_sp_slow : 0.f;
+    const bool talky = s_presence > 0.15f && sp_depth > 0.35f && mid > bass && tempo_conf < 0.5f && s_bass_ratio < 0.15f;
+    if (talky) { if (s_sp_on < 60) s_sp_on++; s_sp_off = 0; }
+    else { if (s_sp_on > 0) s_sp_on--; if (s_sp_off < 1000) s_sp_off++; }
+    if (!s_speech && s_sp_on >= 35) s_speech = true;
+    if (s_speech && s_sp_off >= 90) s_speech = false;
+    s_feat.speech = s_speech;
+    s_feat.speech_depth = sp_depth;
+
     s_feat.bass = agc(bass, &s_max_bass) * s_presence;
     s_feat.mid = agc(mid, &s_max_mid) * s_presence;
     s_feat.high = agc(high, &s_max_high) * s_presence;
@@ -497,6 +519,9 @@ esp_err_t audio_start(void)
     s_lp_x1 = s_lp_x2 = s_lp_y1 = s_lp_y2 = 0.f;
     s_max_kick = 1e-3f;
     s_presence = 0.f;
+    s_sp_fast = s_sp_slow = s_sp_mod = 0.f;
+    s_sp_on = s_sp_off = 0;
+    s_speech = false;
     s_gap_ms = 0.f;
     s_last_beat_ms = 0;
     s_gap_n = s_gap_idx = 0;
