@@ -1,7 +1,7 @@
 # Playing with the round display
 
 Ten eight-second scenes use the circular edge as somewhere to hide, lean, fall
-or collide. They are appended to the tap/swipe selector as IDs 41–50; all older
+or collide. They are appended to the animation API as IDs 41–50; all older
 IDs are unchanged. Each scene returns to the center before looping.
 
 [Watch all ten together](rim.mp4) · [Animated GIF](rim.gif)
@@ -31,9 +31,10 @@ Start-Process .\docs\expressions\rim.mp4
 Start-Process .\docs\expressions\cautious_peek.mp4
 ```
 
-These are authored actions, independent of mood. The existing selector plays
-them; no spontaneous action scheduler is introduced. The separate personality
-layer can trigger any of them through `anim_set()`.
+These are authored actions, independent of mood, previewable here and available
+through `anim_set()`. PR #1 replaced manual expression cycling with pokes and
+petting. This rebase preserves that touch behavior and the existing idle choices;
+the new actions still need to be selected by the personality layer.
 
 ## Geometry and transitions
 

@@ -60,10 +60,11 @@ a jackpot escape. The catalog below includes all 51 animations.
 | KNOCKED_OUT | Collapse into unequal slumped capsules, with tiny breathing motion and orbiting stars. Replaces the orange X overlays. |
 | RECOVERING | Left eye opens before right, a clearing blink, then normal eyes and idle motion return over 3 s. |
 
-These 16 expressions/actions are available through the existing tap/swipe
-selector independently of mood. KO and recovery also replace the existing shake
-reaction automatically. A spontaneous action scheduler is not added here; the
-separate personality layer can select these IDs through `anim_set()`.
+These 16 expressions/actions are available through `anim_set()` and the host
+previews. KO and recovery replace the existing shake reaction automatically.
+The merged personality engine uses taps for pokes and swipes for strokes; it
+no longer provides manual expression cycling. Its current idle choices are
+preserved by this rebase; adding the new actions to those choices is separate.
 Existing voice responses are reused for applicable selections.
 
 ## Complete catalog
@@ -120,3 +121,10 @@ The sweep exposed uninitialized dance state in `anim_init()`; initialization now
 clears the state. UBSan also caught signed shifts in the existing eye math, which
 now use multiplication. Long scaled blink intervals use a 64-bit product to
 avoid wrapping.
+
+Rebased onto the merged first firmware release (`de52518`). The firmware build,
+character and rim tests, and 44,676-frame UBSan sweep pass on the combined code.
+The dance-fill harness passes, and character tests check that all three dance
+fills clear when entering heart eyes. Preview files were regenerated.
+The mirror-ball harness exposed a signed left shift of a negative local
+coordinate in the merged renderer; it now multiplies by `Q16_ONE` instead.

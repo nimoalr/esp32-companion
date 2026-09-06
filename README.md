@@ -60,7 +60,7 @@ catalog, animated previews, and a comparison of the old and new shake reaction.
 Heart eyes beat twice, break and mend; slot-machine eyes scroll through clipped
 reel windows, stop separately on sevens, then celebrate. Silhouette changes
 close the old eyes and reopen the new ones over 280 ms, including interrupted
-transitions. These actions are selectable independently of mood. Ten more
+transitions. These actions are available through the animation API and host previews. Ten more
 [round-display scenes](docs/expressions/RIM_ACTIONS.md) use the edge for hiding,
 peeking, clinging, bouncing and orbiting.
 

@@ -514,7 +514,7 @@ static inline uint32_t IRAM_ATTR bar_walk_level(const raster_shape_t *s, bar_wal
          * sides as on a sphere, turning with disco_spin; each facet has its own shade and some flash */
         const int32_t f = s->disco_facet > 0 ? s->disco_facet : Q16_ONE * 8;
         /* sphere: u = hw * asin(lx / hw) * 2 / pi, approximated by a cubic that bends the edges */
-        int64_t t = ((int64_t)w->lx << 16) / (s->hw > 0 ? s->hw : 1);           /* -1..1 Q16 */
+        int64_t t = ((int64_t)w->lx * Q16_ONE) / (s->hw > 0 ? s->hw : 1);       /* -1..1 Q16 */
         if (t > Q16_ONE) t = Q16_ONE;
         if (t < -Q16_ONE) t = -Q16_ONE;
         const int64_t t3 = (t * t >> 16) * t >> 16;

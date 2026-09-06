@@ -130,6 +130,18 @@ int main(void)
     const int32_t interrupted_gate = eyes.shape_gate[0];
     anim_set(&anim, &eyes, ANIM_NEUTRAL, 34064);
     assert(eyes.shape_gate[0] == interrupted_gate); /* Rapid tapping cannot pop it open. */
+    /* PR #1's dance fills must not leak into symbol eyes, or vice versa. */
+    for (int fx = RASTER_FX_BARS; fx <= RASTER_FX_SPOTS; fx++) {
+        const uint32_t t = 35000+(uint32_t)fx*2000;
+        anim_set(&anim,&eyes,ANIM_DANCE,t);
+        anim_update(&anim,&eyes,t+300);
+        eyes_set_fx(&eyes,fx,1.f);
+        eyes_update(&eyes,t+300,shapes);
+        assert(shapes[0].fx == fx && shapes[0].path_n == 0);
+        anim_set(&anim,&eyes,ANIM_HEARTS,t+400);
+        anim_update(&anim,&eyes,t+700); eyes_update(&eyes,t+700,shapes);
+        assert(shapes[0].fx == RASTER_FX_NONE && shapes[0].path_n > 0);
+    }
     memset(before, 0, sizeof before);
 
     /* Every changed star pixel must be repainted, including disable while rotated. */
