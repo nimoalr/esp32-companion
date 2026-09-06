@@ -445,16 +445,58 @@ static inline void IRAM_ATTR bar_walk_begin(const raster_shape_t *s, int x, int 
     w->hi = w->lo + s->bar_w;
 }
 
+static inline uint32_t IRAM_ATTR hash32(uint32_t x)
+{
+    x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16;
+    return x;
+}
+
 static inline uint32_t IRAM_ATTR bar_walk_level(const raster_shape_t *s, bar_walk_t *w)
 {
-    while (w->lx >= w->hi && w->b < 7) { w->b++; w->lo = w->hi; w->hi += s->bar_w; }
-    while (w->lx < w->lo && w->b > 0) { w->b--; w->hi = w->lo; w->lo -= s->bar_w; }
     uint32_t level = s->bar_dim;
-    if (!(w->b > 0 && w->lx - w->lo < Q16_ONE)) {          /* the first column of a bar is the gap */
-        const int32_t d = w->ly - s->bar_top[w->b];
-        if (d >= 0) level = s->bar_lit;
-        else if (d > -Q16_ONE) level = s->bar_dim + (uint32_t)(((int64_t)(s->bar_lit - s->bar_dim) * (d + Q16_ONE)) >> 16);
+    if (s->fx == RASTER_FX_BARS) {
+        while (w->lx >= w->hi && w->b < 7) { w->b++; w->lo = w->hi; w->hi += s->bar_w; }
+        while (w->lx < w->lo && w->b > 0) { w->b--; w->hi = w->lo; w->lo -= s->bar_w; }
+        if (!(w->b > 0 && w->lx - w->lo < Q16_ONE)) {          /* the first column of a bar is the gap */
+            const int32_t d = w->ly - s->bar_top[w->b];
+            if (d >= 0) level = s->bar_lit;
+            else if (d > -Q16_ONE) level = s->bar_dim + (uint32_t)(((int64_t)(s->bar_lit - s->bar_dim) * (d + Q16_ONE)) >> 16);
+        }
+    } else if (s->fx == RASTER_FX_DISCO) {
+        /* the mirror ball: a grid of facets in the local frame, the columns squeezed toward the
+         * sides as on a sphere, turning with disco_spin; each facet has its own shade and some flash */
+        const int32_t f = s->disco_facet > 0 ? s->disco_facet : Q16_ONE * 8;
+        /* sphere: u = hw * asin(lx / hw) * 2 / pi, approximated by a cubic that bends the edges */
+        int64_t t = ((int64_t)w->lx << 16) / (s->hw > 0 ? s->hw : 1);           /* -1..1 Q16 */
+        if (t > Q16_ONE) t = Q16_ONE;
+        if (t < -Q16_ONE) t = -Q16_ONE;
+        const int64_t t3 = (t * t >> 16) * t >> 16;
+        const int32_t u = (int32_t)(((t + (t3 * 5 >> 3)) * s->hw) >> 17) + s->disco_spin;   /* ~ t + 0.62 t^3, halved */
+        const int32_t gx = u + 0x40000000, gy = w->ly + 0x40000000;               /* positive for the modulo */
+        const uint32_t i = (uint32_t)(gx / f), j = (uint32_t)(gy / f);
+        const int32_t fx = gx - (int32_t)i * f, fy = gy - (int32_t)j * f;
+        if (fx < Q16_ONE || fy < Q16_ONE) {
+            level = 2;                                                            /* the grout between facets */
+        } else {
+            const uint32_t h = hash32(i * 0x9E3779B1U ^ j * 0x85EBCA77U);
+            level = 9 + (h & 7);                                                  /* the facet's own shade */
+            if (((h >> 8) ^ s->disco_seed) % 23 == 0) level = 31;                /* a flash */
+        }
+    } else {
+        /* light spots: bright discs with a soft rim over a dim floor */
+        for (int k = 0; k < s->spots_n; k++) {
+            const int32_t dx = (w->lx - s->spot_x[k]) >> 8, dy = (w->ly - s->spot_y[k]) >> 8;   /* Q8 */
+            const int64_t d2 = (int64_t)dx * dx + (int64_t)dy * dy;
+            const int64_t r = s->spot_r >> 8, r2 = r * r, r_in = r >> 1, r2_in = r_in * r_in;
+            if (d2 <= r2_in) { level = 31; break; }
+            if (d2 < r2) {
+                const uint32_t l = 31 - (uint32_t)((d2 - r2_in) * (31 - s->bar_dim) / (r2 - r2_in + 1));
+                if (l > level) level = l;
+            }
+        }
     }
+    /* the mix against the plain fill */
+    if (s->fx_mix < 256) level = 31 + (((int)level - 31) * s->fx_mix >> 8);
     const int32_t rc = s->rot ? s->rc : Q16_ONE, rs = s->rot ? s->rs : 0;
     w->lx += rc;
     w->ly -= rs;
@@ -474,7 +516,7 @@ static inline void IRAM_ATTR fill_bars(uint16_t *dst, int n, const raster_shape_
 static inline void IRAM_ATTR blit_cov(uint16_t *dst, const uint8_t *cov, int n, const raster_shape_t *s, int x, int py, bool over)
 {
     const uint16_t *lut = s->lut;
-    if (s->bars && !over) {
+    if (s->fx && !over) {
         const uint16_t *lut2 = s->lut2;
         bar_walk_t w;
         bar_walk_begin(s, x, py, &w);
@@ -603,7 +645,7 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
             blit_cov(row + (pl - bx0), cov, n, s, pl, py, over);
         }
         if (cr > cl) {
-            if (s->bars) {
+            if (s->fx) {
                 fill_bars(row + (cl - bx0), cr - cl, s, cl, py);
             } else if (s->hot) {
                 fill_hot(row + (cl - bx0), cr - cl, s, cl, py);
@@ -696,7 +738,7 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
                     }
                 }
                 blit_cov(row + (cl - bx0), cov, n, s, cl, py, over);
-            } else if (s->bars) {
+            } else if (s->fx) {
                 fill_bars(row + (cl - bx0), cr - cl, s, cl, py);
             } else if (s->hot) {
                 fill_hot(row + (cl - bx0), cr - cl, s, cl, py);

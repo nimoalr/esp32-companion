@@ -48,7 +48,9 @@ typedef struct {
     uint32_t dance_last_sound_ms;
     int dance_flourish;         /* 0 none, 2 a slow sway (a stroke) */
     float dance_bars[2][8];     /* smoothed spectrum heights, left eye low bands, right eye high */
-    int dance_visual;           /* the passing visual on top of the dance: 0 plain, 1 spectrum eyes */
+    int dance_visual;           /* the passing visual on top of the dance: 0 plain, 1 spectrum, 2 mirror ball, 3 spotlights */
+    int dance_visual_last;
+    float disco_spin;
     uint32_t dance_visual_ms;   /* when the current one began */
     uint32_t dance_visual_len;  /* how long it stays */
     float dance_visual_mix;     /* 0..1 fade of the visual */

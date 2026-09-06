@@ -24,16 +24,22 @@ int main(void)
     for (int k = 0; k < 40; k++) { t += 16; anim_update(&sm, &eyes, t); eyes_update(&eyes, t, sh); }
     const float hl[8] = { 0.9f, 0.75f, 0.6f, 0.8f, 0.45f, 0.35f, 0.5f, 0.3f };
     const float hr[8] = { 0.4f, 0.55f, 0.3f, 0.25f, 0.35f, 0.2f, 0.15f, 0.1f };
-    eyes_set_bars(&eyes, true);
     eyes_set_bar_heights(&eyes, 0, hl);
-    eyes_set_bar_heights(&eyes, 1, hr);
+    eyes_set_bar_heights(&eyes, 1, hl);
+    eyes_set_disco(&eyes, 0.13f, 5u);
+    const float sx[3] = { -0.4f, 0.5f, 0.1f }, sy[3] = { -0.2f, 0.3f, 0.6f };
+    eyes_set_spots(&eyes, 3, sx, sy, 0.4f);
+    static const char *names[3] = { "spectrum", "disco", "spots" };
+    for (int v = 0; v < 3; v++) {
+    eyes_set_fx(&eyes, v + 1, 1.f);
     t += 16; anim_update(&sm, &eyes, t); eyes_update(&eyes, t, sh);
     for (int y = 0; y < H; y += 32) {
         int rows = H - y < 32 ? H - y : 32;
         raster_band(band, 0, y, W, rows, sh, 2);
         memcpy(&fb[y * W], band, (size_t)W * rows * 2);
     }
-    FILE *f = fopen("out/spectrum.ppm", "wb");
+    char path[64]; snprintf(path, sizeof path, "out/%s.ppm", names[v]);
+    FILE *f = fopen(path, "wb");
     fprintf(f, "P6\n%d %d\n255\n", W, H);
     for (int i = 0; i < W * H; i++) {
         uint16_t s = fb[i];
@@ -42,5 +48,7 @@ int main(void)
         fwrite(px, 1, 3, f);
     }
     fclose(f);
+    }
+    (void)hr;
     return 0;
 }

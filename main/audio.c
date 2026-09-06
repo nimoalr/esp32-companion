@@ -213,7 +213,10 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     uint32_t refractory = BEAT_MIN_GAP_MS;
     if (s_gap_ms > 0.f && (uint32_t)(0.7f * s_gap_ms) > refractory) refractory = (uint32_t)(0.7f * s_gap_ms);
     const float kick_e = sqrtf(k_e / (float)FRAME);
-    const bool beat = kick_e > 1.6f * s_kick_mean && kick_e > 1.25f * s_kick_prev && s_presence > 0.25f &&
+    /* his own voice from the speaker is neither a beat nor a talker nor a direction: the levels and
+     * the spectrum keep flowing (the dance visuals must not freeze), the detectors hold */
+    const bool own_voice = s_muted;
+    const bool beat = !own_voice && kick_e > 1.6f * s_kick_mean && kick_e > 1.25f * s_kick_prev && s_presence > 0.25f &&
                       (now_ms - s_last_beat_ms) >= refractory;
     s_kick_prev = kick_e;
     s_kick_mean += (kick_e - s_kick_mean) * (1.f / 30.f);      /* ~0.5 s: spans a beat, not a bar */
@@ -242,7 +245,7 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     float meas_lag = 0.f, meas_conf = 0.f;
     bool measured = false, transient = false;
     micdir_result_t tr;
-    if (micdir_frame(&s_micdir, pcm, FRAME, peak, &tr)) {
+    if (!own_voice && micdir_frame(&s_micdir, pcm, FRAME, peak, &tr)) {
         measured = transient = true;
         meas_lag = tr.lag;
         meas_conf = tr.balance;
@@ -250,7 +253,7 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
         s_dir_peak = tr.peak;
         s_dir_level_db = tr.level_db;
     }
-    if (!measured && raw_lsb > 60.f) {
+    if (!own_voice && !measured && raw_lsb > 60.f) {
         float c[2 * DIR_MAX_LAG + 1], ll = 0.f, rr = 0.f;
         for (int i = 0; i < FRAME; i++) {
             const float l = (float)pcm[2 * i], r = (float)pcm[2 * i + 1];
@@ -371,7 +374,7 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     /* knocks and claps modulate the mid band too: a timed transient in the last 400 ms is not a syllable */
     if (s_micdir.n != s_dir_seen_n) { s_dir_seen_n = s_micdir.n; s_transient_ms = now_ms; }
     const bool knocking = s_transient_ms && (int32_t)(now_ms - s_transient_ms) < 400;
-    const bool talky = s_presence > 0.15f && sp_depth > 0.3f && !musical && !knocking && s_bass_ratio < 0.45f;
+    const bool talky = !own_voice && s_presence > 0.15f && sp_depth > 0.3f && !musical && !knocking && s_bass_ratio < 0.45f;
     if (talky) { s_sp_on += 2; if (s_sp_on > 60) s_sp_on = 60; s_sp_off = 0; }
     else { if (s_sp_on > 0) s_sp_on--; if (s_sp_off < 1000) s_sp_off++; }
     if (!s_speech && s_sp_on >= 30) s_speech = true;
@@ -417,13 +420,6 @@ static void audio_task(void *arg)
             continue;
         }
         const int64_t t0 = esp_timer_get_time();
-        if (s_muted) {
-            /* his own voice: keep the level flowing (presence) but no beats, no direction */
-            portENTER_CRITICAL(&s_lock);
-            s_feat.kick = 0.f;
-            portEXIT_CRITICAL(&s_lock);
-            continue;
-        }
         analyse(pcm, (uint32_t)(t0 / 1000));
         const uint32_t us = (uint32_t)(esp_timer_get_time() - t0);
         portENTER_CRITICAL(&s_lock);

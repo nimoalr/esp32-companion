@@ -282,10 +282,11 @@ static void anim_enter(anim_sm_t *sm, eyes_t *eyes, anim_id_t id, uint32_t now_m
     sm->dance_last_sound_ms = now_ms;
     memset(sm->dance_bars, 0, sizeof sm->dance_bars);
     sm->dance_visual = 0;
+    sm->dance_visual_last = 0;
     sm->dance_visual_ms = now_ms;
     sm->dance_visual_len = 8000 + rng_next(sm) % 8000;      /* the first show piece comes soon */
     sm->dance_visual_mix = 0.f;
-    eyes_set_bars(eyes, false);
+    eyes_set_fx(eyes, 0, 0.f);
     eyes_clear_mod(eyes);
     eyes_set_idle_rates(eyes, d->blink_interval_scale, d->blink_speed_scale, d->dart_scale);
     eyes_set_tint(eyes, d->tint, 450, now_ms);
@@ -461,12 +462,18 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
      * pieces for a while (the spectrum eyes today, the disco ball next), switched on a beat,
      * fading in and out. Each stays 10-20 s, the plain dance 15-35 s between them.
      */
-    if (now_ms - sm->dance_visual_ms >= sm->dance_visual_len && (a->beat_count != sm->dance_beats_seen || !sm->dance_visual)) {
+    const bool beat_now = sm->dance_beat_ms && now_ms - sm->dance_beat_ms < 40;
+    const uint32_t shown_for = now_ms - sm->dance_visual_ms;
+    if (shown_for >= sm->dance_visual_len && (beat_now || shown_for >= sm->dance_visual_len + 1500)) {
         if (sm->dance_visual) {
+            sm->dance_visual_last = sm->dance_visual;
             sm->dance_visual = 0;
             sm->dance_visual_len = 15000 + rng_next(sm) % 20000;
         } else {
-            sm->dance_visual = 1;
+            /* one of the show pieces, never the one that just went */
+            int pick = 1 + (int)(rng_next(sm) % 3u);
+            if (pick == sm->dance_visual_last) pick = 1 + pick % 3;
+            sm->dance_visual = pick;
             sm->dance_visual_len = 10000 + rng_next(sm) % 10000;
         }
         sm->dance_visual_ms = now_ms;
@@ -474,21 +481,38 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
     const float mix_want = sm->dance_visual ? 1.f : 0.f;
     sm->dance_visual_mix += (mix_want - sm->dance_visual_mix) * 0.06f;
     if (sm->dance_visual_mix < 0.01f) sm->dance_visual_mix = 0.f;
-    /* spectrum eyes: sixteen bands across the face, low on the left, rising from the bottom of each eye;
-     * they jump up with the sound and fall back at their own pace */
-    for (int e = 0; e < 2; e++) {
-        for (int i = 0; i < 8; i++) {
-            const float want = a->bands[e * 8 + i] * music;
-            float *h = &sm->dance_bars[e][i];
-            if (want > *h) *h += (want - *h) * 0.6f;
-            else *h -= 0.045f;
-            if (*h < 0.f) *h = 0.f;
-        }
-        float shown[8];
-        for (int i = 0; i < 8; i++) shown[i] = sm->dance_bars[e][i] * sm->dance_visual_mix;
-        eyes_set_bar_heights(eyes, e, shown);
+    const int fx_shown = sm->dance_visual ? sm->dance_visual : sm->dance_visual_last;
+    /* spectrum eyes: the same eight bands in both eyes (pairs of the sixteen), rising from the
+     * bottom of each eye; they jump up with the sound and fall back at their own pace */
+    for (int i = 0; i < 8; i++) {
+        const float b0 = a->bands[2 * i], b1 = a->bands[2 * i + 1];
+        const float want = (b0 > b1 ? b0 : b1) * music;
+        float *h = &sm->dance_bars[0][i];
+        if (want > *h) *h += (want - *h) * 0.6f;
+        else *h -= 0.045f;
+        if (*h < 0.f) *h = 0.f;
+        sm->dance_bars[1][i] = *h;
     }
-    eyes_set_bars(eyes, sm->dance_visual_mix > 0.f && music > 0.02f);
+    eyes_set_bar_heights(eyes, 0, sm->dance_bars[0]);
+    eyes_set_bar_heights(eyes, 1, sm->dance_bars[1]);
+    /* the mirror ball: a slow turn that quickens with the sound, facets flashing in time */
+    sm->disco_spin += (0.0009f + 0.004f * loud) * 1.f;
+    if (sm->disco_spin > 1000.f) sm->disco_spin -= 1000.f;
+    eyes_set_disco(eyes, sm->disco_spin, (uint32_t)(now_ms / 120) + (beat_now ? 7u : 0u));
+    /* the spotlights: three beams wandering on slow curves, each thrown to a new spot on the beat */
+    {
+        const float t = (float)now_ms * 0.001f;
+        float sx[3], sy[3];
+        const float kickf = kick;
+        sx[0] = 0.6f * sinf(t * 1.3f) + 0.25f * side * kickf;
+        sy[0] = 0.5f * cosf(t * 0.9f);
+        sx[1] = 0.6f * sinf(t * 0.7f + 2.f) - 0.25f * side * kickf;
+        sy[1] = 0.5f * sinf(t * 1.1f + 1.f);
+        sx[2] = 0.55f * cosf(t * 1.7f + 4.f);
+        sy[2] = 0.5f * sinf(t * 0.6f + 3.f) - 0.2f * kickf;
+        eyes_set_spots(eyes, 3, sx, sy, 0.34f + 0.12f * kickf);
+    }
+    eyes_set_fx(eyes, (sm->dance_visual_mix > 0.f && music > 0.02f) ? fx_shown : 0, sm->dance_visual_mix);
     /* the whole face pulses with the bass */
     eyes->face_mod_scale = (int32_t)((0.06f * bass) * 65536.f);
     /* the colour flashes a little brighter on the hit and shimmers with the bass */

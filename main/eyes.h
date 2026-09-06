@@ -132,8 +132,13 @@ typedef struct {
     uint8_t hot_g2l[RASTER_G2L_N];
     uint16_t lut2[2][32 * 64];
     /* spectrum bars (the dance): eight bars per eye rising from the bottom of the eye's box */
-    bool bars;
-    float bar_h[2][8];                 /* 0..1 of the eye's height */
+    int fx;                            /* RASTER_FX_* fill effect for the dance */
+    float fx_mix;                      /* 0..1 fade */
+    float bar_h[2][8];                 /* bars: 0..1 of the eye's height */
+    float disco_spin;                  /* disco: turn, in eye widths */
+    uint32_t disco_seed;
+    int spots_n;                       /* spots: local positions as fractions of hw / hh, radius as a fraction of hh */
+    float spot_x[3], spot_y[3], spot_r;
 } eyes_t;
 
 void eyes_init(eyes_t *e, uint32_t now_ms);
@@ -157,9 +162,11 @@ void eyes_set_mood(eyes_t *e, int32_t lum_q16, int32_t sat_q16);
 uint32_t eyes_color(const eyes_t *e, int eye);
 /* Hot spot shading on/off (always on in the firmware; the host harnesses compare both). */
 void eyes_set_hotspot(eyes_t *e, bool on);
-/* Spectrum bars in the fill (the dance); heights 0..1 per bar, eight per eye. */
-void eyes_set_bars(eyes_t *e, bool on);
-void eyes_set_bar_heights(eyes_t *e, int eye, const float h[8]);
+/* Fill effects for the dance: a RASTER_FX_* mode faded in by mix 0..1 (0 = plain fill). */
+void eyes_set_fx(eyes_t *e, int fx, float mix);
+void eyes_set_bar_heights(eyes_t *e, int eye, const float h[8]);            /* bars: 0..1 of the eye's height */
+void eyes_set_disco(eyes_t *e, float spin, uint32_t seed);                  /* spin in eye widths */
+void eyes_set_spots(eyes_t *e, int n, const float *x, const float *y, float r);   /* fractions of hw, hh; r of hh */
 
 /* Face-level placement, applied directly (callers ease). */
 void eyes_set_face_offset(eyes_t *e, int32_t dx_q16, int32_t dy_q16);

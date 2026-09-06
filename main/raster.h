@@ -24,6 +24,7 @@
 #define Q16(x)   ((int32_t)((x) * 65536.0))   /* compile-time constants only */
 
 enum { RAD_TL = 0, RAD_TR, RAD_BL, RAD_BR };
+enum { RASTER_FX_NONE = 0, RASTER_FX_BARS, RASTER_FX_DISCO, RASTER_FX_SPOTS };
 
 #define RASTER_G2L_N 272    /* 256 + the largest dither offset */
 #define RASTER_DITHER_MAX 16
@@ -62,15 +63,21 @@ typedef struct {
     const uint8_t *hot_g2l; /* RASTER_G2L_N entries -> 0..31 */
     const uint16_t *lut2;   /* 32 x 64 entries */
     /*
-     * Spectrum bars (the dance): eight bars in the eye's own frame, so they tilt with it, each
-     * lit from its top down to the bottom of the eye and dim above, with a one-pixel anti-aliased
-     * top and a one-pixel dark gap between bars, through lut2 like the hot spot. Takes precedence
-     * over hot.
+     * Fill effects for the dance, in the eye's own frame so they tilt with it, through lut2 like
+     * the hot spot (they take precedence over it): spectrum bars (eight, lit from their tops down
+     * to the bottom of the eye, a one-pixel anti-aliased top, a one-pixel gap), a mirror ball
+     * (a facet grid turning along local x with facets flashing), light spots sweeping across.
      */
-    bool bars;
-    int32_t bar_top[8];         /* Q16 local y of each bar's top (local y grows downward; the bottom is +hh) */
-    int32_t bar_w;              /* Q16 local width of a bar (2 hw / 8) */
-    uint8_t bar_lit, bar_dim;   /* lightness levels 0..31 */
+    int fx;                     /* RASTER_FX_NONE / BARS / DISCO / SPOTS */
+    int fx_mix;                 /* 0..256: how much of the effect shows against the plain fill */
+    int32_t bar_top[8];         /* BARS: Q16 local y of each bar's top (local y grows downward; the bottom is +hh) */
+    int32_t bar_w;              /* BARS: Q16 local width of a bar (2 hw / 8) */
+    uint8_t bar_lit, bar_dim;   /* lightness levels 0..31 (all effects) */
+    int32_t disco_facet;        /* DISCO: Q16 facet size */
+    int32_t disco_spin;         /* DISCO: Q16 offset of the facet grid along local x (the ball turning) */
+    uint32_t disco_seed;        /* DISCO: which facets flash this frame */
+    int spots_n;                /* SPOTS: up to 3 light spots in local Q16 coordinates */
+    int32_t spot_x[3], spot_y[3], spot_r;
     /* Pixel bounding box, [x0, x1) x [y0, y1), already clipped to the screen */
     int px0, py0, px1, py1;
     const uint16_t *lut;    /* 256-entry coverage -> RGB565 (byte order as sent) */

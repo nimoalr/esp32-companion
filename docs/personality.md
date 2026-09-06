@@ -160,10 +160,13 @@ before any of it goes into firmware.
   a wedge, so its rows are one or two spans, and it beats by scaling with a
   60-100 bpm envelope. The eye system already animates size, so the beat is a
   modulator like the dance's.
-* **Disco ball** for high-energy dance: a sprite of a dotted sphere with a
-  slow rotation, drawn as an accessory above the eyes, plus light spots that
-  sweep across the eye fill. Cheaper than it sounds if the sphere is a
-  pre-rendered 2-bit mask rotated by table lookup.
+* **Mirror ball and spotlights** (done): two more fill effects in the same
+  family as the spectrum, inside the eyes with the outline untouched: a facet
+  grid squeezed toward the sides as on a sphere, turning with the sound and
+  flashing in time; and three beams wandering on slow curves, thrown on the
+  beat. The dance shows one of the three for 10-20 s at a time, faded in and
+  out on a beat, with 15-35 s of plain dance between. See
+  `docs/images/dance_visuals.png`.
 * **Colour and tint** already respond to mood; the loving mood pinks, the
   grumpy one dims and reddens.
 

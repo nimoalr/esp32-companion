@@ -236,10 +236,24 @@ void eyes_set_attention(eyes_t *e, bool on, int x_px, int y_px)
     }
 }
 
-void eyes_set_bars(eyes_t *e, bool on)
+void eyes_set_fx(eyes_t *e, int fx, float mix)
 {
-    if (on && !e->bars) e->rgb[0] = e->rgb[1] = 0xFFFFFFFF;   /* lut2 is only kept fresh while it is needed */
-    e->bars = on;
+    if (fx && !e->fx) e->rgb[0] = e->rgb[1] = 0xFFFFFFFF;   /* lut2 is only kept fresh while it is needed */
+    e->fx = fx;
+    e->fx_mix = mix < 0.f ? 0.f : mix > 1.f ? 1.f : mix;
+}
+
+void eyes_set_disco(eyes_t *e, float spin, uint32_t seed)
+{
+    e->disco_spin = spin;
+    e->disco_seed = seed;
+}
+
+void eyes_set_spots(eyes_t *e, int n, const float *x, const float *y, float r)
+{
+    e->spots_n = n < 0 ? 0 : n > 3 ? 3 : n;
+    for (int i = 0; i < e->spots_n; i++) { e->spot_x[i] = x[i]; e->spot_y[i] = y[i]; }
+    e->spot_r = r;
 }
 
 void eyes_set_bar_heights(eyes_t *e, int eye, const float h[8])
@@ -353,7 +367,7 @@ static void update_color(eyes_t *e, uint32_t now_ms)
         if (rgb != e->rgb[i]) {
             e->rgb[i] = rgb;
             raster_build_lut(e->lut[i], (rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
-            if (e->hot || e->bars) {
+            if (e->hot || e->fx) {
                 build_lut2(e->lut2[i], rgb);
             }
         }
@@ -717,18 +731,30 @@ static void params_to_shape(eyes_t *e, int which, const EyeParams *p, raster_sha
     s->bot_slant = p->slant_b;
     s->curve = p->curve;
     s->lut = e->lut[which];
-    s->hot = e->hot && !e->bars;
-    s->bars = e->bars;
-    if (e->bars) {
-        /* eight bars across the eye in its own frame, rising from its bottom edge (local +hh) */
+    s->hot = e->hot && !e->fx;
+    s->fx = e->fx;
+    if (e->fx) {
+        s->fx_mix = (int)(e->fx_mix * 256.f);
+        s->bar_lit = 31;
+        s->bar_dim = 4;
+        s->lut2 = e->lut2[which];
+        /* bars: eight across the eye in its own frame, rising from its bottom edge (local +hh) */
         s->bar_w = s->hw / 4;
         for (int i = 0; i < 8; i++) {
             const float hf = e->bar_h[which][i];
             s->bar_top[i] = hf <= 0.f ? s->hh + Q16_ONE : s->hh - (int32_t)(hf * (float)(2 * s->hh));
         }
-        s->bar_lit = 31;
-        s->bar_dim = 4;
-        s->lut2 = e->lut2[which];
+        /* disco: facets a tenth of the eye's height, the turn in eye widths */
+        s->disco_facet = s->hh / 5;
+        s->disco_spin = (int32_t)(e->disco_spin * (float)(2 * s->hw));
+        s->disco_seed = e->disco_seed;
+        /* spots */
+        s->spots_n = e->spots_n;
+        for (int i = 0; i < s->spots_n; i++) {
+            s->spot_x[i] = (int32_t)(e->spot_x[i] * (float)s->hw);
+            s->spot_y[i] = (int32_t)(e->spot_y[i] * (float)s->hh);
+        }
+        s->spot_r = (int32_t)(e->spot_r * (float)s->hh);
     }
     if (s->hot) {
         hot_fill(e->hot_gx[which], e->hot_gy[which], hx, hy, q16_mul(p->h, HOT_SIGMA));
