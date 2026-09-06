@@ -303,9 +303,8 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
                 in->audio.bass_ratio >= MUSIC_BASS_RATIO * 0.6f) {
                 b->music_quiet_since_ms = now_ms;
             }
-            /* touch never stops the dance: a poke is a bounce, a stroke a shimmy, an eye poke a wink */
-            if (tapped) out->dance_flourish = in->poke_eye ? 3 : 1;
-            else if (stroked) out->dance_flourish = 2;
+            /* touch never stops the dance: a stroke adds a slow sway, a tap changes nothing */
+            if (stroked) out->dance_flourish = 2;
             if (!in->audio.active || now_ms - b->music_quiet_since_ms >= MUSIC_QUIET_MS) {
                 enter(b, BEH_IDLE, now_ms);
                 b->next_sniff_ms = now_ms + CONFIG_EYES_SNIFF_INTERVAL_S * 1000u;
@@ -321,7 +320,7 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
             break;
         case BEH_POKED:
             if (shaking_hard) { enter(b, BEH_DIZZY, now_ms); break; }
-            if (in_state >= 1100) enter(b, BEH_IDLE, now_ms);
+            if (in_state >= (b->poked_eye ? 1500u : 1600u)) enter(b, BEH_IDLE, now_ms);
             break;
         case BEH_PETTED:
             if (shaking_hard) { enter(b, BEH_DIZZY, now_ms); break; }
@@ -348,9 +347,8 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
             else if (out->event == BEH_EV_BODY_TAP) enter(b, BEH_STARTLED, now_ms);
             else if (b->rhythm_since_ms && now_ms - b->rhythm_since_ms > 4000) enter(b, BEH_CARRIED, now_ms);
             else if (in->dancing) {
-                /* the dance he was put in by hand: same rule, touch is a move */
-                if (tapped) out->dance_flourish = in->poke_eye ? 3 : 1;
-                else if (stroked) out->dance_flourish = 2;
+                /* the dance he was put in by hand: same rule */
+                if (stroked) out->dance_flourish = 2;
             }
             else if (stroked && in->stroke_forehead) {
                 enter(b, BEH_PETTED, now_ms);
@@ -416,7 +414,7 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
     case BEH_MUSIC:       out->override_anim = ANIM_DANCE; break;
     case BEH_UNIMPRESSED: out->override_anim = ANIM_ANNOYED; break;
     case BEH_LISTENING:   out->override_anim = b->listen_anim; break;
-    case BEH_POKED:       out->override_anim = b->poke_anim; break;
+    case BEH_POKED:       out->override_anim = b->poked_eye ? b->idle_anim : b->poke_anim; break;   /* an eye poke keeps the face */
     case BEH_PETTED:      out->override_anim = ANIM_LOVE; break;
     case BEH_IDLE:
         /* idle life: the face of the moment, re-rolled every 15-55 s */
@@ -492,8 +490,10 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
         if (b->state == BEH_POKED && b->poked_eye) {
             const int e = b->poked_eye - 1;
             const float in_ms = (float)(now_ms - b->state_since_ms);
-            const float shut = in_ms < 120.f ? in_ms / 120.f : in_ms < 700.f ? 1.f : in_ms < 1000.f ? (1000.f - in_ms) / 300.f : 0.f;
-            out->env[e].lid_top = (int32_t)(shut * 0.7f * 65536.f);
+            /* shut in 150 ms, hold, reopen over half a second with an ease */
+            float shut = in_ms < 150.f ? in_ms / 150.f : in_ms < 800.f ? 1.f : in_ms < 1350.f ? (1350.f - in_ms) / 550.f : 0.f;
+            shut = shut * shut * (3.f - 2.f * shut);
+            out->env[e].lid_top = (int32_t)(shut * 0.75f * 65536.f);
         }
         /* the voice's lean is in screen terms: + = the lanyard end = up */
         const float lean = -b->voice_dir * VOICE_LEAN_PX;

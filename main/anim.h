@@ -46,7 +46,7 @@ typedef struct {
     int dance_side;         /* +1 / -1, alternates on beats */
     float dance_bass, dance_loud, dance_bal;   /* smoothed */
     uint32_t dance_last_sound_ms;
-    int dance_flourish;         /* 0 none, 1 bounce burst (a poke), 2 shimmy (a stroke), 3 wink */
+    int dance_flourish;         /* 0 none, 2 a slow sway (a stroke) */
     uint32_t dance_flourish_ms; /* when it started */
 } anim_sm_t;
 

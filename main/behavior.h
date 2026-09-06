@@ -43,7 +43,7 @@ typedef struct {
     float face_angle_deg;       /* whole-face rotation so it stays upright against gravity */
     behavior_event_t event;     /* one-shot handling event this frame */
     float tap_side;             /* for a body tap: -1 left .. +1 right, where the knock came from */
-    int dance_flourish;         /* during a dance: 1 bounce (poke), 2 shimmy (stroke), 3 wink (eye poke), this frame */
+    int dance_flourish;         /* during a dance: 2 = a stroke's sway, this frame */
 } behavior_out_t;
 
 typedef enum {
