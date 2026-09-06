@@ -20,6 +20,7 @@ typedef struct {
     anim_id_t anim;             /* what the eyes show */
     float energy;               /* 0..1 stimulation */
     float valence;              /* -1..1 how well he has been treated */
+    bool handling;              /* motion/carrying: prevents accidental grip purrs */
     bool finger;                /* a finger resting on the screen */
     uint32_t tap_count;         /* running count of taps on the eyes */
     bool usb;
@@ -41,6 +42,7 @@ typedef struct {
     float energy;               /* babble */
     bool interrupt;             /* cut whatever is playing */
     float feel;                 /* valence nudge that goes with the event (0 = none) */
+    int face;                   /* animation for an accepted utterance, -1 = keep current */
 } persona_say_t;
 
 typedef struct {

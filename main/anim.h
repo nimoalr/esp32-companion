@@ -28,12 +28,47 @@ typedef enum {
     ANIM_SLEEPING,
     ANIM_SQUINT,
     ANIM_DANCE,             /* procedural, driven by audio_features_t */
+    /* Append new IDs: existing tap/selection IDs keep their values. */
+    ANIM_SMUG,
+    ANIM_SUSPICIOUS,
+    ANIM_DETERMINED,
+    ANIM_PLEADING,
+    ANIM_MISCHIEVOUS,
+    ANIM_EMBARRASSED,
+    ANIM_RELIEVED,
+    ANIM_DOUBLE_TAKE,
+    ANIM_KNOCKED_OUT,
+    ANIM_RECOVERING,
+    ANIM_HEARTS,
+    ANIM_HEARTBREAK,
+    ANIM_HIGH_ROLLER,
+    ANIM_NOD,
+    ANIM_PEEKABOO,
+    ANIM_LOADING,
+    ANIM_BOOP,
+    ANIM_SNEEZE,
+    ANIM_CAUTIOUS_PEEK,
+    ANIM_HIDE_RELOCATE,
+    ANIM_TOO_CLOSE,
+    ANIM_RIM_BONK,
+    ANIM_HANGING_ON,
+    ANIM_LAZY_PUDDLE,
+    ANIM_AROUND_BEND,
+    ANIM_SECRET_OBSERVER,
+    ANIM_WRONG_ENTRANCE,
+    ANIM_JACKPOT_ESCAPE,
     ANIM_COUNT
 } anim_id_t;
 
 typedef struct {
     anim_id_t id;
     uint32_t t_enter_ms;    /* start of the current pass through the keyframes */
+    uint32_t t_change_ms;   /* actual selection change, independent of loop wraps */
+    eye_symbol_t previous_symbol[2];
+    int32_t previous_split;
+    int32_t previous_reel[2];
+    int32_t previous_gate[2];
+    uint32_t rim_retreat_ms; /* secret-observer touch retreat, reset on entry/loop */
     int next_kf;            /* index of the next keyframe to apply */
     /* jitter modulator state */
     int32_t jit_from[2][EYE_POSE_FIELDS], jit_to[2][EYE_POSE_FIELDS];
@@ -43,6 +78,8 @@ typedef struct {
     audio_features_t audio;
     uint32_t dance_beats_seen;
     uint32_t dance_beat_ms;
+    uint32_t dance_frame_ms;
+    float dance_hit_level;
     int dance_side;         /* +1 / -1, alternates on beats */
     float dance_bass, dance_loud, dance_bal;   /* smoothed */
     uint32_t dance_last_sound_ms;
@@ -54,6 +91,9 @@ typedef struct {
     uint32_t dance_visual_ms;   /* when the current one began */
     uint32_t dance_visual_len;  /* how long it stays */
     float dance_visual_mix;     /* 0..1 fade of the visual */
+    bool dance_lasers_on;       /* independent background show, can overlap any eye fill */
+    uint32_t dance_laser_ms, dance_laser_len, dance_laser_rng;
+    float dance_laser_mix;
     uint32_t dance_flourish_ms; /* when it started */
 } anim_sm_t;
 
@@ -72,3 +112,5 @@ void anim_set_audio(anim_sm_t *sm, const audio_features_t *f);
 /* Apply keyframes whose time has come and compute this frame's modulation. Call once per frame before eyes_update(). */
 void anim_update(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms);
 const char *anim_name(anim_id_t id);
+/* One authored cycle; static poses get a five-second cameo. */
+uint32_t anim_action_ms(anim_id_t id);

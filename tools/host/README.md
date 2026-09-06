@@ -18,6 +18,17 @@ python3 tools/host/tile.py sheet.png 6 2 tools/host/out/e_*.ppm   # cols, downsc
 | `color_harness` | expression tints on three base colours and the mood extremes |
 | `feat_harness` | hot spot on/off, gaze-following hot spot, attention, face scale; prints per-frame timings |
 | `char_harness` | accessories and rotated faces, plus a behaviour simulation printout |
+| `character_test` | shake/KO/recovery integration, interrupted transitions, blink timing, rotated symbol bounds, scrolling reels and star dirty coverage; build with `-fsanitize=undefined -fno-sanitize-recover=all` |
+| `rim_test` | physical-disc visibility, hidden pauses, staggered peeks, rotated touch retreat, interrupted orbit and loop recovery for all ten rim actions |
+| `expression_preview` | all 51 poses plus attitude, playful, rim, high-roller, transition and before/after recovery videos; use `expressions.sh` to encode into `docs/expressions/` |
+| `dance_preview`, `dance.sh` | real spectrum, mirror-ball, spotlight and background-laser rendering; a synthetic kick/breakdown/return sequence in `docs/dance/` |
+| `dance_test` | all-fill laser occlusion, horizontal emitter row, rotated damage bounds, tiled rendering, independent 30–60 s timer, music response, clean exit, 30 Hz cap and dance timing at two frame rates |
+| `interaction_test` | all 26 idle choices, situational handling/conversation/food, purr affection phases, accepted-line gestures, scene priority, quiet rotation and tapped lower lids |
+| `personality_preview` | real behavior/renderer preview of petting and purring, knock recovery, and conversation; `personality.sh` exports a small MP4 |
+| `interaction_preview` | a half-closed lower lid through an eye poke; writes `out/poke-preview.ppm` |
+| `dance_bench` | texture setup + eye raster timings, plus laser damage raster and estimated display traffic |
+| `audio_test` | exact firmware analysis and behavior on synthetic EDM, speech-like syllables, noise, hum, muted playback and audible breakdowns |
+| `audio_replay` | 16 kHz mono PCM16 WAV through actual audio analysis and behavior; optional target RMS (0 preserves input levels) and per-frame CSV |
 | `ui_harness` | every setup screen with synthetic sensor data |
 | `imu_cal_test` | accelerometer calibration maths: the three wizard poses on five sensor mountings, rejected poses, motion restart; exits non-zero on failure |
 | `sweep` | 60 Hz sweep through every expression with rotation, hot spot, face scale and attention; asserts nothing is drawn outside a shape's bounding box. Build with `-fsanitize=address,undefined` |

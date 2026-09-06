@@ -11,6 +11,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "raster.h"
+#include "eye_symbols.h"
+#include "dance_fill.h"
 
 /* What the renderer draws. All lengths Q16 pixels, fractions Q16 in [0, 1]. */
 typedef struct {
@@ -86,7 +88,7 @@ typedef struct {
     uint32_t next_blink_ms;
     uint32_t blink_t0_ms;
     bool blinking;
-    int32_t blink_interval_scale;      /* Q16; > ONE = rarer blinks */
+    int32_t blink_interval_scale;      /* Q16; > ONE = rarer blinks; 0 = authored lids, no idle blink */
     int32_t blink_speed_scale;         /* Q16; > ONE = slower close/open */
     /* gaze darts */
     int32_t dart_scale;                /* Q16 amplitude scale; 0 = eyes hold still */
@@ -104,6 +106,10 @@ typedef struct {
     eye_pose_t mod[2];                 /* per-frame additive modulation (wobble, bounce, beat); deltas */
     eye_pose_t env[2];                 /* environment layer (gravity gaze), set by the behaviour code; deltas */
     eyes_idle_t idle;
+    eye_symbol_t symbol[2];           /* optional silhouette, driven by animation */
+    int32_t symbol_split;             /* Q16 separation of broken-heart halves */
+    int32_t reel_pos[2];              /* Q16 vertical reel position in symbol pitches */
+    int32_t shape_gate[2];            /* Q16 height gate for silhouette changes */
     bool face_rot;                     /* whole face rotated about the screen centre */
     float face_deg;
     int32_t face_cos, face_sin;        /* Q16 */
@@ -135,9 +141,11 @@ typedef struct {
     int fx;                            /* RASTER_FX_* fill effect for the dance */
     float fx_mix;                      /* 0..1 fade */
     float bar_h[2][8];                 /* bars: 0..1 of the eye's height */
-    float disco_spin;                  /* disco: turn, in eye widths */
+    float laser_mix;                  /* background show, separate from the eye fill */
+    dance_fill_t dance_fill;
+    float disco_spin;                  /* disco: complete rotations */
     uint32_t disco_seed;
-    int spots_n;                       /* spots: local positions as fractions of hw / hh, radius as a fraction of hh */
+    int spots_n;                       /* spots: normalised floor targets and beam spread */
     float spot_x[3], spot_y[3], spot_r;
 } eyes_t;
 
@@ -165,8 +173,8 @@ void eyes_set_hotspot(eyes_t *e, bool on);
 /* Fill effects for the dance: a RASTER_FX_* mode faded in by mix 0..1 (0 = plain fill). */
 void eyes_set_fx(eyes_t *e, int fx, float mix);
 void eyes_set_bar_heights(eyes_t *e, int eye, const float h[8]);            /* bars: 0..1 of the eye's height */
-void eyes_set_disco(eyes_t *e, float spin, uint32_t seed);                  /* spin in eye widths */
-void eyes_set_spots(eyes_t *e, int n, const float *x, const float *y, float r);   /* fractions of hw, hh; r of hh */
+void eyes_set_disco(eyes_t *e, float spin, uint32_t seed);                  /* spin in complete rotations; seed retained for API compatibility */
+void eyes_set_spots(eyes_t *e, int n, const float *x, const float *y, float r);   /* normalised floor targets; r controls beam spread */
 
 /* Face-level placement, applied directly (callers ease). */
 void eyes_set_face_offset(eyes_t *e, int32_t dx_q16, int32_t dy_q16);

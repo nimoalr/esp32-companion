@@ -34,6 +34,7 @@
 #include "audio.h"
 #include "speech.h"
 #include "persona.h"
+#include "dance_lasers.h"
 #include "accessories.h"
 #include "behavior.h"
 
@@ -152,6 +153,7 @@ typedef struct {
     eyes_t eyes;
     anim_sm_t sm;
     raster_shape_t shapes[2];
+    dance_lasers_t lasers;
     rect_t prev[2];
     anim_id_t saved_anim;      /* expression to restore after DROWSY */
     anim_id_t user_anim;       /* what the user picked by tapping; behaviour may override it */
@@ -176,6 +178,7 @@ typedef struct {
     uint16_t *dst;
     int x0, y, w, rows;
     const raster_shape_t *shapes;
+    const dance_lasers_t *lasers;
 } raster_job_t;
 
 static raster_job_t s_wjob;
@@ -186,21 +189,21 @@ static void raster_worker(void *arg)
 {
     for (;;) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        raster_band(s_wjob.dst, s_wjob.x0, s_wjob.y, s_wjob.w, s_wjob.rows, s_wjob.shapes, 2);
+        dance_lasers_paint(s_wjob.lasers,s_wjob.dst, s_wjob.x0, s_wjob.y, s_wjob.w, s_wjob.rows, s_wjob.shapes);
         xTaskNotifyGive(s_render);
     }
 }
 
-static void raster_split(uint16_t *band, int x0, int y, int w, int rows, const raster_shape_t *shapes)
+static void raster_split(uint16_t *band, int x0, int y, int w, int rows, const raster_shape_t *shapes, const dance_lasers_t *lasers)
 {
     if (!s_worker || rows < 4) {
-        raster_band(band, x0, y, w, rows, shapes, 2);
+        dance_lasers_paint(lasers,band, x0, y, w, rows, shapes);
         return;
     }
     const int top = rows / 2;
-    s_wjob = (raster_job_t){ band + (size_t)top * w, x0, y + top, w, rows - top, shapes };
+    s_wjob = (raster_job_t){ band + (size_t)top * w, x0, y + top, w, rows - top, shapes, lasers };
     xTaskNotifyGive(s_worker);
-    raster_band(band, x0, y, w, top, shapes, 2);
+    dance_lasers_paint(lasers,band, x0, y, w, top, shapes);
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 }
 
@@ -212,7 +215,7 @@ static void paint_piece(uint16_t *band, int x0, int y, int w, int rows, const re
         const gfx_band_t gb = { .dst = band, .x0 = x0, .y0 = y, .w = w, .rows = rows };
         ui_paint(&c->ui, &gb);
     } else {
-        raster_split(band, x0, y, w, rows, c->shapes);
+        raster_split(band, x0, y, w, rows, c->shapes, &c->lasers);
         if (acc_any(&c->acc)) {
             const gfx_band_t gb = { .dst = band, .x0 = x0, .y0 = y, .w = w, .rows = rows };
             acc_paint(&c->acc, &gb, now_ms);
@@ -663,6 +666,7 @@ static void render_task(void *arg)
             audio_get_features(&af);
         }
         behavior_out_t bo = { .override_anim = -1 };
+        if (c.mode != MODE_EYES || state != POWER_ACTIVE) behavior_suspend_scenes(&c.beh, now_ms);
         if (c.mode == MODE_EYES) {
             behavior_in_t bi = { .cal = &g_settings.cal, .audio = af, .mic_available = c.mic_ok,
                                  .user_interacting = (int32_t)(now_ms - touch_last_activity_ms()) < 3000, .tap_count = c.tap_count };
@@ -670,11 +674,17 @@ static void render_task(void *arg)
                 pmic_battery_t ub;
                 power_battery(&ub);
                 bi.usb = ub.vbus;
+                bi.battery_known = ub.present;
+                bi.batt_pct = ub.percent;
                 bi.dancing = c.user_anim == ANIM_DANCE;
                 bi.poke_eye = c.poke_eye;
                 bi.stroke_count = c.stroke_count;
                 bi.stroke_forehead = c.stroke_forehead;
             }
+            bi.idle_allowed = state == POWER_ACTIVE;
+            bi.purring = speech_purring();
+            bi.shown_anim = c.sm.id;
+            bi.shown_anim_done = now_ms-c.sm.t_change_ms >= anim_action_ms(c.sm.id);
             bi.have_accel = power_last_accel(bi.accel, &bi.accel_ms);
             behavior_update(&c.beh, &bi, now_ms, &bo);
             if (bo.dance_flourish && c.sm.id == ANIM_DANCE) anim_dance_flourish(&c.sm, bo.dance_flourish, now_ms);
@@ -687,7 +697,7 @@ static void render_task(void *arg)
             /* a finger resting on the screen: the eyes settle on it and stop wandering (Vector's focus) */
             uint16_t fx, fy;
             const bool finger = touch_pressed(&fx, &fy) && c.sm.id != ANIM_DANCE;   /* the dance is not to be stared out of */
-            eyes_set_attention(&c.eyes, finger, fx, fy);
+            eyes_set_attention(&c.eyes, finger && c.sm.id != ANIM_KNOCKED_OUT && c.sm.id != ANIM_RECOVERING, fx, fy);
             /* mood: a tired character is dimmer and paler, an energetic one glows */
             const float energy = behavior_energy(&c.beh);
             eyes_set_mood(&c.eyes, (int32_t)((0.85f + 0.15f * energy) * 65536.f), (int32_t)((0.90f + 0.10f * energy) * 65536.f));
@@ -698,7 +708,7 @@ static void render_task(void *arg)
                 power_battery(&b);
                 acc_set_charge(&c.acc, b.vbus, b.present ? b.percent : 0, b.charging);
             }
-            acc_set_knocked_out(&c.acc, bo.knocked_out, now_ms);
+            acc_set_knocked_out(&c.acc, bo.knocked_out || c.sm.id == ANIM_KNOCKED_OUT, now_ms);
             acc_set_zz(&c.acc, bo.zz || c.sm.id == ANIM_SLEEPING, now_ms);
         }
         sync_audio(&c, (c.sm.id == ANIM_DANCE && bo.override_anim < 0) || bo.want_mic);
@@ -716,7 +726,9 @@ static void render_task(void *arg)
                 .beh = c.beh.state,
                 .anim = c.sm.id,
                 .energy = behavior_energy(&c.beh),
-                .finger = c.mode == MODE_EYES && c.sm.id != ANIM_DANCE && touch_pressed(&fx, &fy),
+                .finger = c.mode == MODE_EYES && c.sm.id != ANIM_DANCE && touch_pressed(&fx, &fy)
+                          && fx > 50 && fx < BOARD_LCD_H_RES-50 && fy > 35 && fy < 170,
+                .handling = c.beh.moving_since_ms != 0 || c.beh.shake >= .08f || c.beh.state == BEH_CARRIED,
                 .tap_count = c.tap_count,
                 .usb = pb.vbus,
                 .batt_pct = pb.present ? pb.percent : -1,
@@ -731,12 +743,15 @@ static void render_task(void *arg)
             persona_say_t say;
             persona_tick(&c.persona, &pi, now_ms, &say);
             if (say.feel != 0.f) behavior_feel(&c.beh, say.feel);
+            bool accepted = false;
             switch (say.kind) {
-            case SAY_GESTURE: speech_gesture((voice_id_t)say.id, say.level, say.interrupt); break;
-            case SAY_WORD:    speech_word(say.id, say.level, say.interrupt); break;
-            case SAY_BABBLE:  speech_babble(say.level, say.energy); break;
+            case SAY_GESTURE: accepted = speech_gesture((voice_id_t)say.id, say.level, say.interrupt); break;
+            case SAY_WORD:    accepted = speech_word(say.id, say.level, say.interrupt); break;
+            case SAY_BABBLE:  accepted = speech_babble(say.level, say.energy); break;
             default: break;
             }
+            if (accepted && say.face >= 0 && state == POWER_ACTIVE && c.mode == MODE_EYES && c.sm.id != ANIM_DANCE)
+                behavior_cue(&c.beh, (anim_id_t)say.face, now_ms);
         }
 
         /* Power state machine. The UI counts as activity while it is being used. */
@@ -811,9 +826,7 @@ static void render_task(void *arg)
         } else {
             anim_update(&c.sm, &c.eyes, now_ms);
             eyes_update(&c.eyes, now_ms, c.shapes);
-            if (bo.knocked_out) {
-                c.shapes[0].visible = c.shapes[1].visible = false;   /* X eyes are drawn as accessories */
-            }
+            const bool laser_changed=dance_lasers_update(&c.lasers,c.eyes.laser_mix,&c.sm.audio,now_ms,c.eyes.face_deg);
 
             /* Dirty rects: union of each eye's previous and current bounding box. */
             for (int i = 0; i < 2; i++) {
@@ -833,6 +846,13 @@ static void render_task(void *arg)
             for (int i = 0; i < na; i++) {
                 const rect_t r = rect_align((rect_t){ ar[i].x0, ar[i].y0, ar[i].x1, ar[i].y1 });
                 if (!rect_is_empty(&r)) dirty[ndirty++] = r;
+            }
+            /* Background changes are capped at 30 Hz; intervening eye frames
+             * repaint their own rectangles over the unchanged laser snapshot. */
+            if(laser_changed){
+                rect_t r=rect_align((rect_t){c.lasers.damage[0],c.lasers.damage[1],c.lasers.damage[2],c.lasers.damage[3]});
+                for(int i=0;i<ndirty;i++)r=rect_union(&r,&dirty[i]);
+                dirty[0]=r;ndirty=1;
             }
         }
 

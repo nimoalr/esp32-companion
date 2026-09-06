@@ -17,10 +17,16 @@ typedef struct {
     uint32_t accel_ms;
     const imu_cal_t *cal;
     audio_features_t audio;     /* .active false when the mics are off */
+    bool idle_allowed;         /* renderer is active; no cameos queued while sleeping/in menus */
+    anim_id_t shown_anim;       /* current animation, for one-shot idle scene completion */
+    bool shown_anim_done;
+    bool purring;              /* actual mouth playback, not a predicted touch reaction */
     bool mic_available;         /* board has working mics */
     bool user_interacting;      /* touch in the last few seconds */
     uint32_t tap_count;         /* running count of taps; a tap during a music reaction ends it */
     bool usb;                   /* on the charger: the microphones can stay on */
+    bool battery_known;
+    int batt_pct;
     bool dancing;               /* the dance is on by the user's choice: heavy handling is expected */
     /* touch language: counters, so an event is a change */
     int poke_eye;               /* with the latest tap: 0 elsewhere, 1 left eye, 2 right eye */
@@ -75,7 +81,8 @@ typedef struct {
     uint32_t next_sniff_ms;
     uint32_t sniff_start_ms;
     bool sniffing;
-    uint32_t music_quiet_since_ms;
+    uint32_t music_quiet_since_ms; /* last confirmed rhythm; breakdown grace */
+    uint32_t music_silence_since_ms;
     uint32_t speech_last_ms;    /* last frame with speech */
     float voice_dir;            /* smoothed direction of the voice along the mic axis */
     /* handling */
@@ -101,6 +108,16 @@ typedef struct {
     float valence;              /* -1..1: how well he has been treated lately */
     anim_id_t idle_anim;        /* the face of the moment while nothing happens, from the mood */
     uint32_t idle_roll_ms;
+    int idle_action, last_idle_action; /* -1 when no cameo is running */
+    uint32_t action_started_ms, next_action_ms;
+    int reaction_anim;         /* single contextual scene; never queued behind another event */
+    behavior_state_t reaction_state;
+    uint32_t reaction_ms, purr_since_ms, last_poke_ms;
+    bool reaction_motion, was_purring;
+    uint8_t poke_streak;
+    bool context_primed, previous_usb;
+    uint32_t battery_plead_ms;
+    uint8_t pet_strokes;
     uint32_t strokes_seen;
     uint32_t last_stroke_ms;
     int poked_eye;              /* 0 none, 1 left, 2 right, during BEH_POKED */
@@ -117,6 +134,11 @@ float behavior_energy(const behavior_t *b);
 float behavior_valence(const behavior_t *b);
 /* a nudge to the valence from outside the behaviour (the persona's judgement of an event) */
 void behavior_feel(behavior_t *b, float valence_delta);
+/* Couple an accepted utterance to a face, without replacing an authored scene
+ * or a higher-priority physical reaction. False means the face keeps priority. */
+bool behavior_cue(behavior_t *b, anim_id_t anim, uint32_t now_ms);
+/* Menus and inactive rendering discard scenes, rather than replaying them on return. */
+void behavior_suspend_scenes(behavior_t *b, uint32_t now_ms);
 
 void behavior_init(behavior_t *b, uint32_t now_ms);
 void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, behavior_out_t *out);

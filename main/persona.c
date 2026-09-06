@@ -74,7 +74,78 @@ static void react_to_anim(persona_t *p, anim_id_t a, float level, persona_say_t 
     case ANIM_ANNOYED:   say_gesture(o, VOICE_ANNOYED, level, false); break;
     case ANIM_SQUINT:    say_word(o, CLIP_I_AM_WATCHING_YOU, level, false); break;
     case ANIM_NEUTRAL:   say_word(o, CLIP_OKAY, level, false); break;
+    case ANIM_SMUG:      say_word(o, CLIP_NICE_TRY, level, false); break;
+    case ANIM_SUSPICIOUS: say_word(o, CLIP_I_AM_WATCHING_YOU, level, false); break;
+    case ANIM_DETERMINED: say_word(o, CLIP_COME_ON, level, false); break;
+    case ANIM_PLEADING:  say_word(o, CLIP_OH_PLEASE, level, false); break;
+    case ANIM_MISCHIEVOUS: say_word(o, CLIP_PEEKABOO, level, false); break;
+    case ANIM_EMBARRASSED: say_word(o, CLIP_OOPSIE, level, false); break;
+    case ANIM_RELIEVED:  say_word(o, CLIP_OKAY, level, false); break;
+    case ANIM_DOUBLE_TAKE: say_word(o, CLIP_SERIOUSLY, level, false); break;
+    case ANIM_HEARTS:    say_word(o, CLIP_OOH_LA_LA, level, false); break;
+    case ANIM_HEARTBREAK: say_word(o, CLIP_OH_NO, level, false); break;
+    case ANIM_HIGH_ROLLER: say_word(o, CLIP_BINGO, level, false); break;
+    case ANIM_NOD:       say_word(o, CLIP_OKAY, level, false); break;
+    case ANIM_PEEKABOO:  say_word(o, CLIP_PEEKABOO, level, false); break;
+    case ANIM_BOOP:      say_gesture(o, VOICE_BLIP, level, false); break;
+    case ANIM_LOADING:   say_gesture(o, VOICE_HM, level, false); break;
+    case ANIM_CAUTIOUS_PEEK:
+    case ANIM_SECRET_OBSERVER: say_word(o, CLIP_I_AM_WATCHING_YOU, level, false); break;
+    case ANIM_HIDE_RELOCATE:
+    case ANIM_AROUND_BEND: say_word(o, CLIP_PEEKABOO, level, false); break;
+    case ANIM_TOO_CLOSE: say_word(o, CLIP_HELLO, level, false); break;
+    case ANIM_RIM_BONK:
+    case ANIM_WRONG_ENTRANCE: say_word(o, CLIP_OOPSIE, level, false); break;
+    case ANIM_HANGING_ON: say_word(o, CLIP_UH_OH, level, false); break;
+    case ANIM_LAZY_PUDDLE: say_gesture(o, VOICE_YAWN, level, false); break;
+    case ANIM_JACKPOT_ESCAPE: say_word(o, CLIP_BINGO, level, false); break;
+    case ANIM_SNEEZE: break; /* breathing choreography stays wordless */
     default: break;
+    }
+}
+
+/* Meaning comes from our own selected line, never inferred from microphone
+ * speech. The behaviour decides whether this suggestion can take the face. */
+static int spoken_face(const persona_say_t *o, const persona_in_t *in)
+{
+    if (o->kind == SAY_GESTURE) {
+        switch ((voice_id_t)o->id) {
+        case VOICE_HAPPY: case VOICE_LAUGH: return ANIM_HAPPY;
+        case VOICE_HM: return ANIM_THINKING;
+        case VOICE_CONFUSED: return ANIM_LOADING;
+        case VOICE_SURPRISED: case VOICE_OH: return ANIM_DOUBLE_TAKE;
+        case VOICE_YAWN: return ANIM_LAZY_PUDDLE;
+        case VOICE_ANNOYED: return ANIM_SUSPICIOUS;
+        default: return -1; /* purr has a playback-driven sequence */
+        }
+    }
+    if (o->kind != SAY_WORD) return -1;
+    switch (o->id) {
+    case CLIP_HELLO: case CLIP_HI_THERE: case CLIP_GOOD_MORNING:
+    case CLIP_WAKEY_WAKEY: return in->valence >= 0 ? ANIM_PEEKABOO : ANIM_CAUTIOUS_PEEK;
+    case CLIP_PEEKABOO: return ANIM_MISCHIEVOUS;
+    case CLIP_OKAY: case CLIP_AHA: return ANIM_NOD;
+    case CLIP_THANK_YOU: return ANIM_RELIEVED;
+    case CLIP_OOH_LA_LA: case CLIP_YUMMY: return ANIM_HEARTS;
+    case CLIP_HOORAY: case CLIP_BRAVO: return ANIM_HAPPY;
+    case CLIP_BINGO: return ANIM_HIGH_ROLLER;
+    case CLIP_COME_ON: return ANIM_DETERMINED;
+    case CLIP_FEED_ME: case CLIP_OH_PLEASE: return ANIM_PLEADING;
+    case CLIP_OOPSIE: case CLIP_SORRY: return ANIM_EMBARRASSED;
+    case CLIP_UH_OH: case CLIP_WOW: case CLIP_REALLY: case CLIP_SERIOUSLY:
+    case CLIP_OH_REALLY: case CLIP_EXCUSE_ME: return ANIM_DOUBLE_TAKE;
+    case CLIP_OH_NO: return ANIM_HEARTBREAK;
+    case CLIP_NICE_TRY: case CLIP_AS_IF: case CLIP_YOU_WISH: case CLIP_NOT_MY_PROBLEM:
+    case CLIP_BITE_ME: case CLIP_NERD: case CLIP_LOSER: case CLIP_DUMB_DUMB:
+    case CLIP_SILLY: return ANIM_SMUG;
+    case CLIP_I_AM_WATCHING_YOU: case CLIP_DO_NOT_TOUCH_ME: case CLIP_HOW_RUDE:
+    case CLIP_GO_AWAY: case CLIP_BUZZ_OFF: case CLIP_GET_LOST: case CLIP_NOPE:
+    case CLIP_LEAVE_ME_ALONE: case CLIP_TALK_TO_THE_HAND: case CLIP_NO_WAY:
+    case CLIP_FUCK_YOU: case CLIP_SHUT_UP: case CLIP_YOU_IDIOT: return ANIM_SUSPICIOUS;
+    case CLIP_BORING: case CLIP_I_AM_BORED: case CLIP_MEH: case CLIP_WHATEVER:
+    case CLIP_WHATEVER_HUMAN: return in->energy < .4f ? ANIM_LAZY_PUDDLE : ANIM_SMUG;
+    case CLIP_BYE_BYE: return ANIM_NOD;
+    default: return -1;
     }
 }
 
@@ -97,6 +168,7 @@ static bool is_recent(const persona_t *p, const persona_say_t *o)
 void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona_say_t *out)
 {
     memset(out, 0, sizeof *out);
+    out->face = -1;
     if (!p->primed) {
         p->prev = *in;
         p->primed = true;
@@ -107,6 +179,13 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
     const float level = 0.6f + 0.4f * in->energy;
     const bool gap_ok = (int32_t)(now_ms - p->last_say_ms) > MIN_GAP_MS;
     const bool free = !in->speaking && gap_ok && !in->in_ui;
+
+    /* Track touch continuously, even when a higher-priority reaction speaks.
+     * Carrying or releasing the finger restarts the deliberate hold duration. */
+    const bool gentle_touch = in->finger && !in->handling && in->power == 0 && !in->in_ui && !in->dancing &&
+                              (in->beh == BEH_IDLE || in->beh == BEH_PETTED);
+    if (!gentle_touch) { p->finger_since_ms = 0; p->purred = false; }
+    else if (!p->finger_since_ms) p->finger_since_ms = now_ms;
 
     /* power transitions: reflexes that may interrupt */
     if (in->power != pv->power) {
@@ -162,7 +241,7 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
             break;
         }
         case BEH_UNIMPRESSED: say_word(out, chance(p, 50) ? CLIP_BORING : CLIP_MEH, 0.9f, false); break;
-        case BEH_CARRIED:     say_gesture(out, VOICE_PURR, 0.8f, false); break;
+        case BEH_CARRIED:     if (free && chance(p, 30)) say_gesture(out, VOICE_HM, level, false); break;
         case BEH_POKED:
             if (in->valence < -0.3f && chance(p, 50)) {
                 static const int w[] = { CLIP_DO_NOT_TOUCH_ME, CLIP_GO_AWAY, CLIP_LEAVE_ME_ALONE, CLIP_NOPE, CLIP_BUZZ_OFF };
@@ -171,7 +250,7 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
             break;
         case BEH_PETTED:
             out->feel = 0.05f;
-            if (chance(p, 60)) say_gesture(out, VOICE_PURR, 0.8f, false);
+            if (free && !in->handling && chance(p, 60)) say_gesture(out, VOICE_PURR, 0.8f, false);
             else say_word(out, chance(p, 50) ? CLIP_OOH_LA_LA : CLIP_YUMMY, level, false);
             break;
         case BEH_STARTLED: {
@@ -250,9 +329,8 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
         }
     }
     /* a finger resting: a purr, once per touch (not during the dance: nothing touches the dance) */
-    else if (in->finger && in->power == 0 && !in->in_ui && !in->dancing) {
-        if (!pv->finger) { p->finger_since_ms = now_ms; p->purred = false; }
-        else if (!p->purred && (int32_t)(now_ms - p->finger_since_ms) > 1500 && !in->speaking) {
+    else if (gentle_touch) {
+        if (!p->purred && (int32_t)(now_ms - p->finger_since_ms) > 3500 && free) {
             p->purred = true;
             say_gesture(out, VOICE_PURR, level, false);
         }
@@ -269,7 +347,9 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
         for (int attempt = 0; attempt < 4; attempt++) {
             memset(out, 0, sizeof *out);
             const int r = (int)(rnd(p) % 100u);
-            if (r < 50) {
+            if (in->anim >= ANIM_SMUG) {
+                react_to_anim(p, in->anim, level, out);
+            } else if (r < 50) {
                 out->kind = SAY_BABBLE; out->level = level; out->energy = in->energy;
             } else if (r < 75) {
                 react_to_anim(p, in->anim, level, out);
@@ -290,7 +370,7 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
 
     if (out->kind != SAY_NONE) {
         /* a reaction that would repeat one of the last two becomes a wordless remark instead */
-        if (out->kind != SAY_BABBLE && !out->interrupt && is_recent(p, out)) {
+        if (out->kind != SAY_BABBLE && !out->interrupt && !(out->kind == SAY_GESTURE && out->id == VOICE_PURR) && is_recent(p, out)) {
             const float lv = out->level;
             memset(out, 0, sizeof *out);
             out->kind = SAY_BABBLE; out->level = lv; out->energy = in->energy;
@@ -300,6 +380,7 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
         p->last_say_ms = now_ms;
         if (p->next_idle_ms) schedule_idle(p, in, now_ms);
     }
+    out->face = in->power == 0 && !in->in_ui && !in->dancing ? spoken_face(out, in) : -1;
     if (in->chattiness != pv->chattiness) schedule_idle(p, in, now_ms);
     p->prev = *in;
 }

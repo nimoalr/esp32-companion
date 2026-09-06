@@ -45,7 +45,54 @@ static inline int32_t IRAM_ATTR sqrt_q16(uint32_t v)
 }
 
 /* Span-list edits. Lists hold at most RASTER_MAX_SPANS intervals, sorted and disjoint. */
-#define RASTER_MAX_SPANS 4
+#define RASTER_MAX_SPANS 8
+
+bool raster_path_add(raster_shape_t *s, const int32_t (*xy)[2], int n)
+{
+    if (n < 3 || n + s->path_n > RASTER_PATH_EDGES) return false;
+    if (!s->path_n) {
+        s->path_x0 = s->path_y0 = INT32_MAX;
+        s->path_x1 = s->path_y1 = INT32_MIN;
+    }
+    for (int i = 0; i < n; i++) {
+        int32_t x0 = xy[i][0], y0 = xy[i][1];
+        int32_t x1 = xy[(i+1)%n][0], y1 = xy[(i+1)%n][1];
+        if (x0 < s->path_x0) s->path_x0 = x0;
+        if (x0 > s->path_x1) s->path_x1 = x0;
+        if (y0 < s->path_y0) s->path_y0 = y0;
+        if (y0 > s->path_y1) s->path_y1 = y0;
+        if (y0 == y1) continue;
+        if (y0 > y1) {
+            const int32_t x = x0, y = y0; x0 = x1; y0 = y1; x1 = x; y1 = y;
+        }
+        const int64_t slope = (int64_t)(x1-x0) * Q16_ONE / (y1-y0);
+        /* Nearly horizontal edges can have a slope outside Q16 range. Store
+         * no more than the useful screen span per 1/65536 px of vertical travel. */
+        s->path[s->path_n++] = (raster_edge_t){y0, y1, x0,
+            slope > INT32_MAX ? INT32_MAX : slope < INT32_MIN ? INT32_MIN : (int32_t)slope};
+    }
+    return true;
+}
+
+static int IRAM_ATTR path_spans(const raster_shape_t *s, int32_t y, span_t *out)
+{
+    int32_t cross[2 * RASTER_MAX_SPANS];
+    int n = 0;
+    for (int i = 0; i < s->path_n; i++) {
+        const raster_edge_t *edge = &s->path[i];
+        if (y < edge->y0 || y >= edge->y1) continue;
+        if (n == 2 * RASTER_MAX_SPANS) break;
+        const int32_t x = edge->x0 + (int32_t)(((int64_t)(y-edge->y0)*edge->slope) >> 16);
+        int j = n++;
+        while (j && cross[j-1] > x) { cross[j] = cross[j-1]; j--; }
+        cross[j] = x;
+    }
+    int count = 0;
+    for (int i = 0; i+1 < n; i += 2) {
+        if (cross[i] < cross[i+1]) out[count++] = (span_t){cross[i], cross[i+1]};
+    }
+    return count;
+}
 
 /* Remove the open interval (a, b) from the list. */
 static inline int IRAM_ATTR spans_remove(span_t *sp, int n, int32_t a, int32_t b)
@@ -428,6 +475,7 @@ static const DRAM_ATTR uint8_t k_dither[4] = { 0, 9, 13, 4 };
  */
 typedef struct {
     int32_t lx, ly, lo, hi;
+    int32_t u,v,du,dv;
     int b;
 } bar_walk_t;
 
@@ -437,18 +485,19 @@ static inline void IRAM_ATTR bar_walk_begin(const raster_shape_t *s, int x, int 
     const int32_t X = ((int32_t)x << 16) + 0x8000 - s->cx, Y = ((int32_t)py << 16) + 0x8000 - s->cy;
     w->lx = (int32_t)(((int64_t)rc * X + (int64_t)rs * Y) >> 16);
     w->ly = (int32_t)(((int64_t)rc * Y - (int64_t)rs * X) >> 16);
+    if(s->fx!=RASTER_FX_BARS) {
+        w->u=(int32_t)((int64_t)w->lx*s->fx_sx>>16)+Q16(32);
+        w->v=(int32_t)((int64_t)w->ly*s->fx_sy>>16)+Q16(32);
+        w->du=(int32_t)((int64_t)rc*s->fx_sx>>16);
+        w->dv=-(int32_t)((int64_t)rs*s->fx_sy>>16);
+        return;
+    }
     int b = (int)(((int64_t)(w->lx + s->hw)) / (s->bar_w > 0 ? s->bar_w : 1));
     if (b < 0) b = 0;
     if (b > 7) b = 7;
     w->b = b;
     w->lo = b * s->bar_w - s->hw;
     w->hi = w->lo + s->bar_w;
-}
-
-static inline uint32_t IRAM_ATTR hash32(uint32_t x)
-{
-    x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16;
-    return x;
 }
 
 static inline uint32_t IRAM_ATTR bar_walk_level(const raster_shape_t *s, bar_walk_t *w)
@@ -462,38 +511,11 @@ static inline uint32_t IRAM_ATTR bar_walk_level(const raster_shape_t *s, bar_wal
             if (d >= 0) level = s->bar_lit;
             else if (d > -Q16_ONE) level = s->bar_dim + (uint32_t)(((int64_t)(s->bar_lit - s->bar_dim) * (d + Q16_ONE)) >> 16);
         }
-    } else if (s->fx == RASTER_FX_DISCO) {
-        /* the mirror ball: a grid of facets in the local frame, the columns squeezed toward the
-         * sides as on a sphere, turning with disco_spin; each facet has its own shade and some flash */
-        const int32_t f = s->disco_facet > 0 ? s->disco_facet : Q16_ONE * 8;
-        /* sphere: u = hw * asin(lx / hw) * 2 / pi, approximated by a cubic that bends the edges */
-        int64_t t = ((int64_t)w->lx << 16) / (s->hw > 0 ? s->hw : 1);           /* -1..1 Q16 */
-        if (t > Q16_ONE) t = Q16_ONE;
-        if (t < -Q16_ONE) t = -Q16_ONE;
-        const int64_t t3 = (t * t >> 16) * t >> 16;
-        const int32_t u = (int32_t)(((t + (t3 * 5 >> 3)) * s->hw) >> 17) + s->disco_spin;   /* ~ t + 0.62 t^3, halved */
-        const int32_t gx = u + 0x40000000, gy = w->ly + 0x40000000;               /* positive for the modulo */
-        const uint32_t i = (uint32_t)(gx / f), j = (uint32_t)(gy / f);
-        const int32_t fx = gx - (int32_t)i * f, fy = gy - (int32_t)j * f;
-        if (fx < Q16_ONE || fy < Q16_ONE) {
-            level = 2;                                                            /* the grout between facets */
-        } else {
-            const uint32_t h = hash32(i * 0x9E3779B1U ^ j * 0x85EBCA77U);
-            level = 9 + (h & 7);                                                  /* the facet's own shade */
-            if (((h >> 8) ^ s->disco_seed) % 23 == 0) level = 31;                /* a flash */
-        }
     } else {
-        /* light spots: bright discs with a soft rim over a dim floor */
-        for (int k = 0; k < s->spots_n; k++) {
-            const int32_t dx = (w->lx - s->spot_x[k]) >> 8, dy = (w->ly - s->spot_y[k]) >> 8;   /* Q8 */
-            const int64_t d2 = (int64_t)dx * dx + (int64_t)dy * dy;
-            const int64_t r = s->spot_r >> 8, r2 = r * r, r_in = r >> 1, r2_in = r_in * r_in;
-            if (d2 <= r2_in) { level = 31; break; }
-            if (d2 < r2) {
-                const uint32_t l = 31 - (uint32_t)((d2 - r2_in) * (31 - s->bar_dim) / (r2 - r2_in + 1));
-                if (l > level) level = l;
-            }
-        }
+        const int u=w->u>>16,v=w->v>>16;
+        /* A circular texture can leave unused space in a tall eye. Keep its silhouette there too. */
+        level=(unsigned)u<64 && (unsigned)v<64 ? s->fx_tex[v*64+u] : s->bar_dim;
+        w->u+=w->du;w->v+=w->dv;
     }
     /* the mix against the plain fill */
     if (s->fx_mix < 256) level = 31 + (((int)level - 31) * s->fx_mix >> 8);
@@ -507,7 +529,7 @@ static inline uint32_t IRAM_ATTR bar_walk_level(const raster_shape_t *s, bar_wal
 static inline void IRAM_ATTR fill_bars(uint16_t *dst, int n, const raster_shape_t *s, int x, int py)
 {
     const uint16_t *lut2 = s->lut2 + 63;
-    bar_walk_t w;
+    bar_walk_t w = {0};
     bar_walk_begin(s, x, py, &w);
     for (int i = 0; i < n; i++) dst[i] = lut2[bar_walk_level(s, &w) << 6];
 }
@@ -516,20 +538,26 @@ static inline void IRAM_ATTR fill_bars(uint16_t *dst, int n, const raster_shape_
 static inline void IRAM_ATTR blit_cov(uint16_t *dst, const uint8_t *cov, int n, const raster_shape_t *s, int x, int py, bool over)
 {
     const uint16_t *lut = s->lut;
-    if (s->fx && !over) {
+    if (s->fx) {
         const uint16_t *lut2 = s->lut2;
-        bar_walk_t w;
+        bar_walk_t w = {0};
         bar_walk_begin(s, x, py, &w);
-        for (int i = 0; i < n; i++) dst[i] = lut2[(bar_walk_level(s, &w) << 6) | (cov[i] >> 2)];
+        for (int i = 0; i < n; i++) {
+            const uint32_t level = bar_walk_level(s, &w) << 6;
+            if (over && !cov[i]) continue;
+            dst[i] = over && dst[i] ? blend565(dst[i], lut2[level | 63], cov[i]) : lut2[level | (cov[i] >> 2)];
+        }
         return;
     }
-    if (s->hot && !over) {
+    if (s->hot) {
         const uint8_t *gx = s->hot_gx + x, *g2l = s->hot_g2l;
         const uint32_t gy = s->hot_gy[py];
         const uint16_t *lut2 = s->lut2;
         const uint8_t *dz = &k_dither[(py & 1) * 2];
         for (int i = 0; i < n; i++) {
-            dst[i] = lut2[((uint32_t)g2l[((gx[i] * gy) >> 8) + dz[(x + i) & 1]] << 6) | (cov[i] >> 2)];
+            const uint32_t level = (uint32_t)g2l[((gx[i] * gy) >> 8) + dz[(x + i) & 1]] << 6;
+            if (over && !cov[i]) continue;
+            dst[i] = over && dst[i] ? blend565(dst[i], lut2[level | 63], cov[i]) : lut2[level | (cov[i] >> 2)];
         }
         return;
     }
@@ -590,7 +618,8 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
     const int32_t ybase = py << 16;
 
     for (int k = 0; k < 4; k++) {
-        ns[k] = s->rot ? shape_spans_rot(s, ybase + k_sub_off[k], sp[k]) : shape_spans(s, ybase + k_sub_off[k], sp[k]);
+        ns[k] = s->path_n ? path_spans(s, ybase + k_sub_off[k], sp[k])
+                         : s->rot ? shape_spans_rot(s, ybase + k_sub_off[k], sp[k]) : shape_spans(s, ybase + k_sub_off[k], sp[k]);
         total += ns[k];
         if (ns[k] > 1) {
             multi = true;
@@ -779,6 +808,14 @@ void raster_shapes_over(uint16_t *dst, int x0, int y0, int w, int rows, const ra
 
 void raster_shape_finalize(raster_shape_t *s, int screen_w, int screen_h)
 {
+    if (s->path_n) {
+        int x0 = (s->path_x0 >> 16) - 1, y0 = (s->path_y0 >> 16) - 1;
+        int x1 = ((s->path_x1 + 65535) >> 16) + 1, y1 = ((s->path_y1 + 65535) >> 16) + 1;
+        s->px0 = x0 < 0 ? 0 : x0; s->py0 = y0 < 0 ? 0 : y0;
+        s->px1 = x1 > screen_w ? screen_w : x1; s->py1 = y1 > screen_h ? screen_h : y1;
+        s->visible = s->px0 < s->px1 && s->py0 < s->py1;
+        return;
+    }
     if (s->slant > -RCP_MIN_Q16 && s->slant < RCP_MIN_Q16) s->slant = 0;
     if (s->bend > -RCP_MIN_Q16 && s->bend < RCP_MIN_Q16) s->bend = 0;
     s->slant_rcp = s->slant ? (int32_t)((1LL << 32) / s->slant) : 0;
