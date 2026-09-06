@@ -133,6 +133,32 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
         default: break;
         }
     }
+    /* handling */
+    else if (in->event != BEH_EV_NONE && in->power <= 1 && !in->in_ui) {
+        switch (in->event) {
+        case BEH_EV_PICKED_UP: {
+            static const int w[] = { CLIP_HI_THERE, CLIP_HELLO, CLIP_EXCUSE_ME, CLIP_OKAY };
+            if (chance(p, 55)) say_gesture(out, VOICE_OH, 0.9f, false);
+            else say_word(out, pick(p, w, 4), 0.9f, false);
+            break;
+        }
+        case BEH_EV_PUT_DOWN:
+            if (chance(p, 40)) say_gesture(out, VOICE_HM, level, false);
+            else if (chance(p, 50)) say_word(out, chance(p, 50) ? CLIP_OKAY : CLIP_BYE_BYE, level, false);
+            break;
+        case BEH_EV_BODY_TAP: {
+            static const int w[] = { CLIP_EXCUSE_ME, CLIP_HOW_RUDE, CLIP_DO_NOT_TOUCH_ME, CLIP_NOPE };
+            if (chance(p, 50)) say_gesture(out, VOICE_SURPRISED, 1.f, true);
+            else say_word(out, pick(p, w, 4), 1.f, true);
+            break;
+        }
+        default: break;
+        }
+    }
+    /* carried: settles, purrs once */
+    else if (in->beh == BEH_CARRIED && pv->beh != BEH_CARRIED && !in->in_ui) {
+        say_gesture(out, VOICE_PURR, 0.6f, false);
+    }
     /* the charger: every plug and unplug gets a line, and the line depends on how hungry he is */
     else if (in->usb != pv->usb && in->power <= 1 && !in->in_ui) {
         const int pct = in->batt_pct < 0 ? 50 : in->batt_pct;

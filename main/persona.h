@@ -25,6 +25,7 @@ typedef struct {
     int batt_pct;               /* -1 unknown */
     bool speaking;              /* the mouth is busy */
     bool speech;                /* someone is talking */
+    behavior_event_t event;     /* one-shot handling event */
     int chattiness;             /* 0 quiet .. 3 talkative */
 } persona_in_t;
 

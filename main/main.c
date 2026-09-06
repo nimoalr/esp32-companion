@@ -701,6 +701,7 @@ static void render_task(void *arg)
                 .batt_pct = pb.present ? pb.percent : -1,
                 .speaking = speech_busy(),
                 .speech = af.active && af.speech,
+                .event = c.mode == MODE_EYES ? bo.event : BEH_EV_NONE,
                 .chattiness = g_settings.chattiness,
             };
             persona_say_t say;

@@ -39,7 +39,7 @@
 
 const char *behavior_state_name(behavior_state_t s)
 {
-    static const char *n[] = { "idle", "dizzy", "knocked-out", "groggy", "face-down", "waking", "music", "unimpressed", "listening" };
+    static const char *n[] = { "idle", "dizzy", "knocked-out", "groggy", "face-down", "waking", "music", "unimpressed", "listening", "carried", "startled" };
     return s <= BEH_UNIMPRESSED ? n[s] : "?";
 }
 
@@ -121,6 +121,55 @@ static void feel_motion(behavior_t *b, const behavior_in_t *in, uint32_t now_ms)
     } else {
         b->face_down_since_ms = 0;
     }
+
+    /*
+     * Handling. Still versus moving from the smoothed shake: a pick-up is motion that starts
+     * after a long rest, a put-down is rest that follows a stretch of motion. A walking rhythm
+     * is the high-passed |a| crossing zero at 1.5-2.5 Hz with a decent swing for a few seconds.
+     * A body tap is a single sharp spike in |a| between two samples with nothing before or
+     * after, and no finger on the glass.
+     */
+    const bool moving = b->shake > 0.025f;
+    if (moving) {
+        if (!b->moving_since_ms) {
+            b->moving_since_ms = now_ms;
+            if (b->was_resting) b->pending = BEH_EV_PICKED_UP;
+        }
+        b->still_since_ms = 0;
+        b->was_resting = false;
+    } else {
+        if (!b->still_since_ms) {
+            b->still_since_ms = now_ms;
+            if (b->moving_since_ms && now_ms - b->moving_since_ms > 1200) b->pending = BEH_EV_PUT_DOWN;
+        }
+        b->moving_since_ms = 0;
+        if (now_ms - b->still_since_ms > 3000) b->was_resting = true;
+    }
+    /* walking rhythm */
+    const float hp_in = mag - 1.f;
+    const float hp = 0.9f * (b->hp_mag + hp_in - b->hp_prev);      /* one-pole high-pass ~1 Hz at 100 Hz */
+    b->hp_prev = hp_in;
+    const bool crossed = (hp > 0.f) != (b->hp_mag > 0.f);
+    b->hp_mag = hp;
+    b->cross_amp += (fabsf(hp) - b->cross_amp) * 0.05f;
+    if (crossed) {
+        const float gap = b->last_cross_ms ? (float)(now_ms - b->last_cross_ms) : 0.f;
+        b->last_cross_ms = now_ms;
+        if (gap > 0.f) b->cross_gap_ms += (gap - b->cross_gap_ms) * 0.3f;
+    }
+    /* two crossings per step: 1.5-2.5 Hz is a gap of 200-333 ms */
+    const bool rhythmic = b->cross_gap_ms > 180.f && b->cross_gap_ms < 360.f && b->cross_amp > 0.03f && b->cross_amp < 0.4f &&
+                          now_ms - b->last_cross_ms < 500;
+    if (rhythmic) { if (!b->rhythm_since_ms) b->rhythm_since_ms = now_ms; }
+    else if (now_ms - b->last_cross_ms > 1500 || b->cross_amp < 0.02f) b->rhythm_since_ms = 0;
+    /* body tap: a spike, isolated */
+    const float jump = fabsf(mag - b->prev_mag);
+    b->prev_mag = mag;
+    if (jump > 0.35f && b->shake < 0.08f && !in->user_interacting && now_ms - b->spike_ms > 600) {
+        b->spike_ms = now_ms;
+        b->spike_side = sg[0] > 0.f ? 1.f : -1.f;
+        b->pending = BEH_EV_BODY_TAP;
+    }
 }
 
 static bool music_detected(const audio_features_t *a)
@@ -138,6 +187,9 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
     feel_mood(b, in, now_ms);
     const bool tapped = in->tap_count != b->taps_seen;
     b->taps_seen = in->tap_count;
+    out->event = b->pending;
+    out->tap_side = b->spike_side;
+    b->pending = BEH_EV_NONE;
 
     const bool shaking_hard = b->shake_time_ms >= DIZZY_AFTER_MS;
     const bool face_down = b->face_down_since_ms && (now_ms - b->face_down_since_ms) >= FACE_DOWN_MS;
@@ -185,6 +237,14 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
             if (in->audio.active && in->audio.speech) b->speech_last_ms = now_ms;
             if (!in->audio.active || now_ms - b->speech_last_ms > 2000 || tapped) enter(b, BEH_IDLE, now_ms);
             break;
+        case BEH_CARRIED:
+            if (shaking_hard) { enter(b, BEH_DIZZY, now_ms); break; }
+            if (!b->rhythm_since_ms && in_state > 2000) enter(b, BEH_IDLE, now_ms);
+            break;
+        case BEH_STARTLED:
+            if (shaking_hard) { enter(b, BEH_DIZZY, now_ms); break; }
+            if (in_state >= 1400) enter(b, BEH_IDLE, now_ms);
+            break;
         case BEH_UNIMPRESSED:
             if (in_state >= 4500 || tapped) {
                 enter(b, BEH_IDLE, now_ms);
@@ -195,6 +255,8 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
         default:
             if (shaking_hard) enter(b, BEH_DIZZY, now_ms);
             else if (face_down) enter(b, BEH_FACE_DOWN, now_ms);
+            else if (out->event == BEH_EV_BODY_TAP) enter(b, BEH_STARTLED, now_ms);
+            else if (b->rhythm_since_ms && now_ms - b->rhythm_since_ms > 4000) enter(b, BEH_CARRIED, now_ms);
             else if (in->audio.active && in->audio.speech && !in->user_interacting) {
                 b->speech_last_ms = now_ms;
                 enter(b, BEH_LISTENING, now_ms);
@@ -241,6 +303,8 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
     case BEH_MUSIC:       out->override_anim = ANIM_DANCE; break;
     case BEH_UNIMPRESSED: out->override_anim = ANIM_ANNOYED; break;
     case BEH_LISTENING:   out->override_anim = ANIM_CURIOUS; break;
+    case BEH_CARRIED:     out->override_anim = ANIM_SQUINT; break;
+    case BEH_STARTLED:    out->override_anim = ANIM_SURPRISED; break;
     default: break;
     }
 
@@ -273,8 +337,9 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
     /* the voice: the eyes drift toward the talker along the mic axis (+ = the lanyard end = the top) */
     const float want_voice = (b->state == BEH_LISTENING && in->audio.active) ? in->audio.dir : 0.f;
     b->voice_dir += (want_voice - b->voice_dir) * 0.05f;
-    if (in->have_accel && (b->state == BEH_IDLE || b->state == BEH_MUSIC || b->state == BEH_WAKING || b->state == BEH_LISTENING)) {
-        float bx = -b->gx, by = -b->gy - b->voice_dir * 0.8f;
+    if (in->have_accel && (b->state == BEH_IDLE || b->state == BEH_MUSIC || b->state == BEH_WAKING || b->state == BEH_LISTENING ||
+                           b->state == BEH_STARTLED || b->state == BEH_CARRIED)) {
+        float bx = -b->gx + (b->state == BEH_STARTLED ? b->spike_side * 0.9f : 0.f), by = -b->gy - b->voice_dir * 0.8f;
         if (bx > 1.f) bx = 1.f;
         if (bx < -1.f) bx = -1.f;
         if (by > 1.f) by = 1.f;

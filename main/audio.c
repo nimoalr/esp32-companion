@@ -348,10 +348,13 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     s_sp_slow += (s_sp_fast - s_sp_slow) * 0.1f;        /* ~1 Hz */
     s_sp_mod += (fabsf(s_sp_fast - s_sp_slow) - s_sp_mod) * 0.08f;
     const float sp_depth = s_sp_slow > 1e-4f ? s_sp_mod / s_sp_slow : 0.f;
-    const bool talky = s_presence > 0.15f && sp_depth > 0.35f && mid > bass && tempo_conf < 0.5f && s_bass_ratio < 0.15f;
-    if (talky) { if (s_sp_on < 60) s_sp_on++; s_sp_off = 0; }
+    /* a voice close to the mics carries plenty of sub-bass (plosives, proximity), so the
+     * bass share only rules out real music: a locked dance tempo with a kick under it */
+    const bool musical = tempo_conf >= 0.75f && bpm >= 85.f && bpm <= 185.f && s_bass_ratio >= 0.08f;
+    const bool talky = s_presence > 0.15f && sp_depth > 0.3f && !musical && s_bass_ratio < 0.45f;
+    if (talky) { s_sp_on += 2; if (s_sp_on > 60) s_sp_on = 60; s_sp_off = 0; }
     else { if (s_sp_on > 0) s_sp_on--; if (s_sp_off < 1000) s_sp_off++; }
-    if (!s_speech && s_sp_on >= 35) s_speech = true;
+    if (!s_speech && s_sp_on >= 30) s_speech = true;
     if (s_speech && s_sp_off >= 90) s_speech = false;
     s_feat.speech = s_speech;
     s_feat.speech_depth = sp_depth;

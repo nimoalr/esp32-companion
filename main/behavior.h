@@ -29,6 +29,8 @@ typedef struct {
     bool want_mic;              /* behaviour wants the microphones running */
     eye_pose_t env[2];          /* gravity gaze deltas */
     float face_angle_deg;       /* whole-face rotation so it stays upright against gravity */
+    behavior_event_t event;     /* one-shot handling event this frame */
+    float tap_side;             /* for a body tap: -1 left .. +1 right, where the knock came from */
 } behavior_out_t;
 
 typedef enum {
@@ -41,7 +43,16 @@ typedef enum {
     BEH_MUSIC,
     BEH_UNIMPRESSED,
     BEH_LISTENING,              /* someone is talking: look their way */
+    BEH_CARRIED,                /* walking rhythm for a while: content */
+    BEH_STARTLED,               /* a knock on the body */
 } behavior_state_t;
+
+typedef enum {
+    BEH_EV_NONE = 0,
+    BEH_EV_PICKED_UP,
+    BEH_EV_PUT_DOWN,
+    BEH_EV_BODY_TAP,
+} behavior_event_t;
 
 typedef struct {
     behavior_state_t state;
@@ -58,6 +69,21 @@ typedef struct {
     uint32_t music_quiet_since_ms;
     uint32_t speech_last_ms;    /* last frame with speech */
     float voice_dir;            /* smoothed direction of the voice along the mic axis */
+    /* handling */
+    float prev_mag;             /* |a| of the previous sample, g */
+    float hp_mag;               /* high-passed |a| for the walking rhythm */
+    float hp_prev;
+    uint32_t still_since_ms;    /* 0 while moving */
+    uint32_t moving_since_ms;   /* 0 while still */
+    bool was_resting;           /* still for long enough to count a pick-up */
+    uint32_t last_cross_ms;     /* last zero crossing of the rhythm */
+    float cross_gap_ms;         /* smoothed interval between crossings */
+    float cross_amp;            /* smoothed swing of the rhythm, g */
+    uint32_t rhythm_since_ms;   /* when the walking rhythm began, 0 = none */
+    uint32_t spike_ms;          /* last body-tap spike */
+    float spike_side;
+    uint32_t last_touch_ms;     /* a touch this close disqualifies a spike */
+    behavior_event_t pending;
     /* mood */
     float energy;               /* 0..1, drifts; fed by handling and touch */
     uint32_t mood_tick_ms;
