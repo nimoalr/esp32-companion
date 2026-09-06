@@ -515,7 +515,7 @@ static void color_input(ui_t *u, ui_input_t in, uint32_t now_ms)
  */
 #define MIC_MIN_BAL   0.4f        /* the quieter mic's peak over the louder one's */
 #define MIC_MIN_CORR  0.6f        /* the two edges must match */
-#define MIC_MIN_PEAK  6000        /* LSB */
+#define MIC_MIN_PEAK  2500        /* LSB, at the wizard's 12 dB gain */
 #define MIC_MOVE_RAW  150         /* accel step between samples that counts as handling (~35 mg) */
 #define MIC_MOVE_MS   500         /* claps this soon after handling are ignored */
 #define MIC_MIN_SEP   0.5f        /* samples between the ends, below which the axis is unusable */
