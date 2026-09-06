@@ -303,8 +303,9 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
                 in->audio.bass_ratio >= MUSIC_BASS_RATIO * 0.6f) {
                 b->music_quiet_since_ms = now_ms;
             }
-            /* touch never stops the dance: a stroke adds a slow sway, a tap changes nothing */
+            /* touch never stops the dance: a stroke adds a slow sway, a tap on an eye squints that eye */
             if (stroked) out->dance_flourish = 2;
+            if (tapped && in->poke_eye) { b->dance_eye = in->poke_eye; b->dance_eye_ms = now_ms; }
             if (!in->audio.active || now_ms - b->music_quiet_since_ms >= MUSIC_QUIET_MS) {
                 enter(b, BEH_IDLE, now_ms);
                 b->next_sniff_ms = now_ms + CONFIG_EYES_SNIFF_INTERVAL_S * 1000u;
@@ -349,6 +350,7 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
             else if (in->dancing) {
                 /* the dance he was put in by hand: same rule */
                 if (stroked) out->dance_flourish = 2;
+                if (tapped && in->poke_eye) { b->dance_eye = in->poke_eye; b->dance_eye_ms = now_ms; }
             }
             else if (stroked && in->stroke_forehead) {
                 enter(b, BEH_PETTED, now_ms);
@@ -494,6 +496,14 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
             float shut = in_ms < 150.f ? in_ms / 150.f : in_ms < 800.f ? 1.f : in_ms < 1350.f ? (1350.f - in_ms) / 550.f : 0.f;
             shut = shut * shut * (3.f - 2.f * shut);
             out->env[e].lid_top = (int32_t)(shut * 0.75f * 65536.f);
+        }
+        /* an eye tapped during the dance: a soft squint of that eye, the dance carries on around it */
+        if (b->dance_eye && (b->state == BEH_MUSIC || in->dancing)) {
+            const float t = (float)(now_ms - b->dance_eye_ms);
+            float k = t < 200.f ? t / 200.f : t < 700.f ? 1.f : t < 1100.f ? (1100.f - t) / 400.f : 0.f;
+            k = k * k * (3.f - 2.f * k);
+            if (t >= 1100.f) b->dance_eye = 0;
+            else out->env[b->dance_eye - 1].lid_top += (int32_t)(k * 0.45f * 65536.f);
         }
         /* the voice's lean is in screen terms: + = the lanyard end = up */
         const float lean = -b->voice_dir * VOICE_LEAN_PX;
