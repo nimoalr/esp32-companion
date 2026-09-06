@@ -190,26 +190,44 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
         s_last_beat_ms = now_ms;
     }
     /*
-     * Direction along the microphone axis: cross-correlate the two channels over a few
-     * samples of lag and refine the peak with a parabola. Only on frames with real sound.
+     * Direction along the microphone axis. The mics are ~40 mm apart: at most ~1.9 samples
+     * of delay at 16 kHz, so this needs care. Two rules: a transient (clap, knock) is
+     * measured on the first ~4 ms after its onset, before the room's reflections arrive
+     * from everywhere; a sustained sound (voice) is measured on the whole frame and
+     * averaged. The peak of the cross-correlation over lags -3..+3 is refined with a
+     * parabola for sub-sample resolution.
      */
-    if (s_presence > 0.3f) {
+    static float prev_raw = 0.f;
+    const bool onset = raw_lsb > 60.f && raw_lsb > 4.f * prev_raw;
+    prev_raw = raw_lsb;
+    if (raw_lsb > 60.f) {
+        int i_start = 0, i_end = FRAME;
+        if (onset) {
+            /* first sample above 30 % of the frame's peak, then a short window from there */
+            const int thr = peak * 3 / 10;
+            for (int i = 0; i < FRAME; i++) {
+                if (abs((int)pcm[2 * i]) > thr || abs((int)pcm[2 * i + 1]) > thr) { i_start = i; break; }
+            }
+            i_end = i_start + 64 <= FRAME ? i_start + 64 : FRAME;
+        }
         float c[2 * DIR_MAX_LAG + 1], ll = 0.f, rr = 0.f;
-        for (int i = 0; i < FRAME; i++) {
+        for (int i = i_start; i < i_end; i++) {
             const float l = (float)pcm[2 * i], r = (float)pcm[2 * i + 1];
             ll += l * l; rr += r * r;
         }
         int best = 0;
         for (int lag = -DIR_MAX_LAG; lag <= DIR_MAX_LAG; lag++) {
             float acc = 0.f;
-            const int i0 = lag < 0 ? -lag : 0, i1 = lag > 0 ? FRAME - lag : FRAME;
-            for (int i = i0; i < i1; i++) acc += (float)pcm[2 * i] * (float)pcm[2 * (i + lag) + 1];
+            int a = i_start, b = i_end;
+            if (a + lag < 0) a = -lag;
+            if (b + lag > FRAME) b = FRAME - lag;
+            for (int i = a; i < b; i++) acc += (float)pcm[2 * i] * (float)pcm[2 * (i + lag) + 1];
             c[lag + DIR_MAX_LAG] = acc;
             if (acc > c[best + DIR_MAX_LAG]) best = lag;
         }
         const float norm = sqrtf(ll * rr) + 1.f;
-        const float peak = c[best + DIR_MAX_LAG] / norm;
-        if (peak > 0.3f) {
+        const float pk = c[best + DIR_MAX_LAG] / norm;
+        if (pk > 0.3f) {
             float lagf = (float)best;
             if (best > -DIR_MAX_LAG && best < DIR_MAX_LAG) {
                 const float ym = c[best + DIR_MAX_LAG - 1], y0 = c[best + DIR_MAX_LAG], yp = c[best + DIR_MAX_LAG + 1];
@@ -217,11 +235,14 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
                 if (den < 0.f) lagf += 0.5f * (ym - yp) / den;
             }
             s_dir_lag = lagf;
-            s_dir_conf = peak;
-            s_dir += (lagf / (float)DIR_MAX_LAG - s_dir) * 0.15f;
+            s_dir_conf = pk;
+            /* a transient is one clean measurement: take most of it; a voice is averaged */
+            s_dir += (lagf / 2.f - s_dir) * (onset ? 0.7f : 0.12f);
+            if (s_dir > 1.f) s_dir = 1.f;
+            if (s_dir < -1.f) s_dir = -1.f;
         }
     } else {
-        s_dir *= 0.98f;                  /* fade back to centre in silence */
+        s_dir *= 0.995f;                 /* fade back to centre in silence, slowly */
         s_dir_conf *= 0.98f;
     }
 
