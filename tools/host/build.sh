@@ -11,6 +11,7 @@ SRCS="$R/raster.c $R/eyes.c $R/anim.c $R/gfx.c $R/font_spleen_8x16.c $R/font_spl
 case "$name" in
     ui_harness) SRCS="$SRCS $R/ui.c" ;;
     imu_cal_test) SRCS="$R/imu_cal.c" ;;
+    micdir_test) SRCS="$R/micdir.c" ;;
 esac
 src="$HERE/$name.c"
 [ -f "$src" ] || src="$HERE/drafts/$name.c"

@@ -31,6 +31,8 @@ typedef struct {
     float dir_conf;         /* 0..1: how evenly the two mics heard the last transient */
     float dir_lag;          /* arrival-time difference of the last transient in samples (+ = MIC1 first) */
     uint16_t dir_n;         /* transients (claps, knocks) timed since the mics started */
+    uint16_t dir_loud;      /* loud frames that were not onsets (diagnostic) */
+    int16_t dir_pre;        /* pre-onset level of the last loud frame, % of its peak (diagnostic) */
     float rms_l, rms_r;     /* per-channel RMS in LSB: MIC1 (slot 0) and MIC2 (slot 1) */
     uint32_t cpu_us;        /* analysis time of the last frame, for the stats line */
 } audio_features_t;

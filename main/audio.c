@@ -1,4 +1,5 @@
 #include "audio.h"
+#include "micdir.h"
 
 #include <math.h>
 #include <string.h>
@@ -54,20 +55,9 @@ static float s_lp_x1, s_lp_x2, s_lp_y1, s_lp_y2;
 static float s_kick_mean, s_kick_prev, s_max_kick = 1.f;
 static float s_bass_ratio;
 static float s_dir, s_dir_conf, s_dir_lag;
-static uint16_t s_dir_n;              /* transients timed so far */
 static float s_dir_off = 0.f, s_dir_gain = 0.5f;   /* raw lag -> -1..+1; the wizard sets these */
-#define DIR_MAX_LAG 3                 /* ~40 mm of microphone spacing is about two samples at 16 kHz */
-#define DIR_HIST 16                   /* samples of the previous frame kept for onsets on the boundary */
-#define DIR_EDGE_WIN 48               /* samples (3 ms) after the onset in which the channel peak is taken */
-#define DIR_CLAP_MIN_PEAK 2000        /* a transient must reach this many LSB to be timed */
-static int16_t s_hist[2 * DIR_HIST];
-
-/* |sample| of channel ch at index j of the current frame; negative j reaches into the previous frame's tail */
-static inline int dir_abs(const int16_t *pcm, int j, int ch)
-{
-    if (j < 0) return j < -DIR_HIST ? 0 : abs((int)s_hist[2 * (j + DIR_HIST) + ch]);
-    return abs((int)pcm[2 * j + ch]);
-}
+#define DIR_MAX_LAG 3                 /* cross-correlation lags for sustained sound */
+static micdir_t s_micdir;
 static float s_presence;              /* 0..1: is there real sound, from the raw level (quiet room ~18 LSB) */
 static float s_gap_ms;                /* current tempo estimate as a beat interval, 0 = none */
 static uint32_t s_last_beat_ms;
@@ -216,46 +206,8 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
      */
     float meas_lag = 0.f, meas_conf = 0.f;
     bool measured = false, transient = false;
-    if (peak > DIR_CLAP_MIN_PEAK) {
-        const int thr = peak * 3 / 10;
-        int k = -1;
-        for (int i = 0; i < FRAME; i++) {
-            if (abs((int)pcm[2 * i]) > thr || abs((int)pcm[2 * i + 1]) > thr) {
-                bool quiet = true;
-                for (int j = i - DIR_HIST; j < i && quiet; j++) {
-                    if (dir_abs(pcm, j, 0) > thr / 4 || dir_abs(pcm, j, 1) > thr / 4) quiet = false;
-                }
-                if (quiet) k = i;    /* an edge rising from silence: a transient starts here */
-                break;               /* otherwise the loud part began earlier: a continuation */
-            }
-        }
-        if (k >= 0) {
-            float t[2];
-            int pk[2] = { 0, 0 };
-            bool ok = true;
-            for (int ch = 0; ch < 2 && ok; ch++) {
-                for (int i = k; i < k + DIR_EDGE_WIN && i < FRAME; i++) {
-                    const int v = abs((int)pcm[2 * i + ch]);
-                    if (v > pk[ch]) pk[ch] = v;
-                }
-                if (pk[ch] < DIR_CLAP_MIN_PEAK / 4) { ok = false; break; }   /* one mic barely heard it */
-                const float th = 0.3f * (float)pk[ch];
-                int j = k - DIR_MAX_LAG - 1;
-                while (j < FRAME && (float)dir_abs(pcm, j, ch) <= th) j++;
-                if (j >= FRAME) { ok = false; break; }
-                const float v0 = (float)dir_abs(pcm, j - 1, ch), v1 = (float)dir_abs(pcm, j, ch);
-                t[ch] = (float)(j - 1) + (th - v0) / (v1 - v0);
-            }
-            if (ok) {
-                meas_lag = t[1] - t[0];
-                if (meas_lag > DIR_MAX_LAG) meas_lag = DIR_MAX_LAG;
-                if (meas_lag < -DIR_MAX_LAG) meas_lag = -DIR_MAX_LAG;
-                const float lo = (float)(pk[0] < pk[1] ? pk[0] : pk[1]), hi = (float)(pk[0] < pk[1] ? pk[1] : pk[0]);
-                meas_conf = lo / hi;
-                measured = transient = true;
-                s_dir_n++;
-            }
-        }
+    if (micdir_frame(&s_micdir, pcm, FRAME, peak, &meas_lag, &meas_conf)) {
+        measured = transient = true;
     }
     if (!measured && raw_lsb > 60.f) {
         float c[2 * DIR_MAX_LAG + 1], ll = 0.f, rr = 0.f;
@@ -297,7 +249,6 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     } else if (raw_lsb <= 60.f) {
         s_dir *= 0.995f;                 /* fade back to centre in silence, slowly */
     }
-    memcpy(s_hist, &pcm[2 * (FRAME - DIR_HIST)], sizeof s_hist);
 
     /* sub-bass share of the sound: music with a kick has plenty, conversation almost none */
     const float ratio = loud > 1e-5f ? kick_e / loud : 0.f;
@@ -363,7 +314,9 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     s_feat.dir = s_dir;
     s_feat.dir_conf = s_dir_conf;
     s_feat.dir_lag = s_dir_lag;
-    s_feat.dir_n = s_dir_n;
+    s_feat.dir_n = s_micdir.n;
+    s_feat.dir_loud = s_micdir.loud;
+    s_feat.dir_pre = s_micdir.pre;
     portEXIT_CRITICAL(&s_lock);
 }
 
@@ -458,8 +411,7 @@ esp_err_t audio_start(void)
     s_kick_mean = s_kick_prev = 0.f;
     s_bass_ratio = 0.f;
     s_dir = s_dir_conf = s_dir_lag = 0.f;
-    s_dir_n = 0;
-    memset(s_hist, 0, sizeof s_hist);
+    micdir_reset(&s_micdir);
     s_lp_x1 = s_lp_x2 = s_lp_y1 = s_lp_y2 = 0.f;
     s_max_kick = 1e-3f;
     s_presence = 0.f;

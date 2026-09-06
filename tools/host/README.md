@@ -25,3 +25,5 @@ python3 tools/host/tile.py sheet.png 6 2 tools/host/out/e_*.ppm   # cols, downsc
 | `drafts/hp*_harness` | headphone design drafts (none adopted) |
 
 Timings are host numbers; use them for ratios, not for absolute budgets.
+
+`micdir_test`: synthetic claps with known fractional delays (both polarities, on silence and over loud background music, inside a frame and straddling a frame boundary, clipped and not) through `main/micdir.c`; every clap must be timed exactly once within 0.15 sample.
