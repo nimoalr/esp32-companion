@@ -173,6 +173,7 @@ void voice_start(voice_t *v, voice_id_t id, float level)
 {
     if (id < 0 || id >= VOICE_COUNT) return;
     v->g = k_voice_gestures[id];
+    v->word = NULL;
     start_common(v, level);
 }
 
@@ -184,6 +185,7 @@ void voice_babble(voice_t *v, float level, float energy)
     static const uint8_t onsets[] = { ON_NONE, ON_NONE, ON_NONE, ON_H, ON_B, ON_L, ON_W, ON_K };
     voice_gesture_t *g = &v->g;
     memset(g, 0, sizeof *g);
+    v->word = NULL;
     g->name = "babble";
     g->nseg = 1 + (int)(rnd(v) % 4u);
     const float spread = 3.f + 6.f * energy;          /* semitones */
@@ -214,6 +216,35 @@ void voice_babble(voice_t *v, float level, float energy)
     start_common(v, level);
 }
 
+void voice_speak(voice_t *v, const voice_word_t *w, float level)
+{
+    if (!w || w->nframes < 1) return;
+    /* a one-syllable gesture shell carries the global voice settings; the track drives the rest */
+    voice_gesture_t *g = &v->g;
+    memset(g, 0, sizeof *g);
+    g->name = w->name;
+    g->nseg = 1;
+    g->seg[0].ms = (float)w->nframes * VOICE_FRAME_MS;
+    g->seg[0].vowel = VOW_A;
+    g->vib_hz = 5.5f;
+    g->vib_st = 0.3f;
+    g->breath = 0.f;
+    g->partner = 0.3f;
+    g->partner_ratio = 2.f;
+    g->attack_ms = 5.f;
+    g->release_ms = 20.f;
+    g->lp_hz = 3200.f;
+    g->level = 0.9f;
+    start_common(v, level);
+    v->detune_len = 1.f;            /* the track's timing is the word's */
+    v->len = w->nframes * (VOICE_RATE / 1000) * VOICE_FRAME_MS;
+    v->word = w;
+    v->wpos = 0;
+    v->wenv = 0.f;
+    v->f1 = w->frames[0].f1 * 8.f;
+    v->f2 = w->frames[0].f2 * 16.f;
+}
+
 void voice_stop(voice_t *v)
 {
     if (v->on && v->g.loop) v->stopping = true;
@@ -232,6 +263,62 @@ static float contour(const voice_seg_t *sg, float t)
     else { a = sg->st1; b = sg->st2; f = (t - 0.5f) * 2.f; }
     const float s = f * f * (3.f - 2.f * f);
     return a + (b - a) * s;
+}
+
+/* one sample of a spoken word: the track's frames, interpolated, drive the same tone,
+ * resonators and noise as the gestures */
+static int16_t speak_sample(voice_t *v)
+{
+    const voice_word_t *w = v->word;
+    const voice_gesture_t *g = &v->g;
+    const int hop = VOICE_RATE / 1000 * VOICE_FRAME_MS;
+    const int f = v->pos / hop;
+    const float t = (float)(v->pos - f * hop) / (float)hop;
+    const voice_frame_t *a = &w->frames[f < w->nframes ? f : w->nframes - 1];
+    const voice_frame_t *b = &w->frames[f + 1 < w->nframes ? f + 1 : w->nframes - 1];
+    const float st = (a->st4 + (b->st4 - a->st4) * t) * 0.25f;
+    const float lvl = (a->level + (b->level - a->level) * t) * (1.f / 255.f);
+    const float f1 = (a->f1 + (b->f1 - a->f1) * t) * 8.f, f2 = (a->f2 + (b->f2 - a->f2) * t) * 16.f;
+    const bool voiced = a->voiced;
+    v->wenv += (lvl - v->wenv) * 0.02f;
+    /* pitch with vibrato */
+    v->phv += g->vib_hz / VOICE_RATE;
+    if (v->phv >= 1.f) v->phv -= 1.f;
+    const float hz = k_base_hz[v->reg] * v->detune * exp2f((st + g->vib_st * sine(v->phv)) * (1.f / 12.f));
+    v->ph1 += hz / VOICE_RATE;
+    if (v->ph1 >= 1.f) v->ph1 -= 1.f;
+    v->ph2 += hz * g->partner_ratio / VOICE_RATE;
+    if (v->ph2 >= 1.f) v->ph2 -= 1.f;
+    /* formants glide toward the frame's */
+    if (v->coef_ctr == 0) {
+        v->f1 += (f1 - v->f1) * 0.5f;
+        v->f2 += (f2 - v->f2) * 0.5f;
+        bp_coef(v->c1, v->f1 < 150.f ? 150.f : v->f1, 5.f);
+        bp_coef(v->c2, v->f2 < 300.f ? 300.f : v->f2, 7.f);
+    }
+    v->coef_ctr = (v->coef_ctr + 1) & 31;
+    float s;
+    if (voiced) {
+        const float tone = sine(v->ph1) + 0.25f * sine(v->ph1 * 2.f) + g->partner * sine(v->ph2);
+        const float rich = sine(v->ph1) + 0.5f * sine(v->ph1 * 2.f) + 0.33f * sine(v->ph1 * 3.f) +
+                           0.25f * sine(v->ph1 * 4.f) + 0.2f * sine(v->ph1 * 5.f);
+        const float form = bp_run(v->c1, v->b1, rich) * 1.5f + bp_run(v->c2, v->b2, rich) * 1.8f;
+        s = 0.55f * tone + form;
+    } else {
+        /* a consonant: bright noise through the same resonators, plus a little raw hiss */
+        const float nz = frand(v);
+        s = (bp_run(v->c1, v->b1, nz) * 1.2f + bp_run(v->c2, v->b2, nz) * 2.5f + 0.35f * nz) * 1.2f;
+    }
+    const float lp_k = 1.f - expf(-2.f * (float)M_PI * g->lp_hz / VOICE_RATE);
+    v->lp += (s - v->lp) * lp_k;
+    float y = v->lp * v->wenv * g->level * v->gain * 0.5f;
+    const float ay = y < 0.f ? -y : y;
+    if (ay > 0.8f) {
+        const float over = ay - 0.8f;
+        const float lim = 0.8f + over / (1.f + 4.f * over);
+        y = y < 0.f ? -lim : lim;
+    }
+    return (int16_t)(y * 32767.f);
 }
 
 int voice_render(voice_t *v, int16_t *out, int n)
@@ -261,6 +348,13 @@ int voice_render(voice_t *v, int16_t *out, int n)
                     begin_seg(v);
                 }
             }
+            continue;
+        }
+        if (v->word) {
+            out[i] = speak_sample(v);
+            done = i + 1;
+            v->pos++;
+            if (v->pos >= v->len) v->on = false;
             continue;
         }
         const float t = (float)v->pos / (float)v->len;
