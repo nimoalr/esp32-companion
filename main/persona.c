@@ -3,7 +3,7 @@
 #include <string.h>
 
 #define MIN_GAP_MS 4000                 /* between any two utterances, reflexes excepted */
-static const uint32_t k_idle_ms[4] = { 0, 360000, 150000, 50000 };   /* by chattiness; 0 = never */
+static const uint32_t k_idle_ms[4] = { 0, 300000, 120000, 20000 };   /* by chattiness; 0 = never */
 
 static uint32_t rnd(persona_t *p)
 {
@@ -133,13 +133,39 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
         default: break;
         }
     }
-    /* the charger */
-    else if (in->usb != pv->usb && in->power == 0 && !in->in_ui) {
+    /* the charger: every plug and unplug gets a line, and the line depends on how hungry he is */
+    else if (in->usb != pv->usb && in->power <= 1 && !in->in_ui) {
+        const int pct = in->batt_pct < 0 ? 50 : in->batt_pct;
+        const float lv = in->power == 0 ? 0.9f : 0.6f;
         if (in->usb) {
-            if (in->batt_pct >= 0 && in->batt_pct < 40) say_word(out, CLIP_YUMMY, 0.9f, false);
-            else say_gesture(out, VOICE_OH, 0.8f, false);
-        } else if (in->batt_pct >= 0 && in->batt_pct < 15) {
-            say_word(out, CLIP_OH_NO, 0.9f, false);
+            if (pct < 20) {
+                static const int w[] = { CLIP_YUMMY, CLIP_THANK_YOU, CLIP_HOORAY, CLIP_YUMMY };
+                say_word(out, pick(p, w, 4), lv, false);
+            } else if (pct < 80) {
+                static const int w[] = { CLIP_OKAY, CLIP_THANK_YOU, CLIP_AHA, CLIP_YUMMY };
+                if (chance(p, 30)) say_gesture(out, VOICE_OH, lv, false);
+                else say_word(out, pick(p, w, 4), lv, false);
+            } else {
+                static const int w[] = { CLIP_WHATEVER, CLIP_MEH, CLIP_OH_PLEASE, CLIP_REALLY };
+                if (chance(p, 30)) say_gesture(out, VOICE_ANNOYED, lv, false);
+                else say_word(out, pick(p, w, 4), lv, false);
+            }
+        } else {
+            if (pct < 15) {
+                static const int w[] = { CLIP_OH_NO, CLIP_FEED_ME, CLIP_HOW_RUDE, CLIP_SERIOUSLY };
+                say_word(out, pick(p, w, 4), lv, false);
+            } else if (pct < 40) {
+                static const int w[] = { CLIP_UH_OH, CLIP_SERIOUSLY, CLIP_EXCUSE_ME, CLIP_OH_NO };
+                say_word(out, pick(p, w, 4), lv, false);
+            } else if (pct < 80) {
+                static const int w[] = { CLIP_OKAY, CLIP_REALLY, CLIP_HI_THERE };
+                if (chance(p, 40)) say_gesture(out, VOICE_HM, lv, false);
+                else say_word(out, pick(p, w, 3), lv, false);
+            } else {
+                static const int w[] = { CLIP_BYE_BYE, CLIP_OKAY, CLIP_HOORAY, CLIP_BRAVO };
+                if (chance(p, 30)) say_gesture(out, VOICE_HAPPY, lv, false);
+                else say_word(out, pick(p, w, 4), lv, false);
+            }
         }
     }
     /* taps: a new expression gets its sound sometimes; a flurry of pokes gets a complaint */
