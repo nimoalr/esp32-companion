@@ -116,6 +116,9 @@ typedef struct {
 } ui_t;
 
 void ui_init(ui_t *u, settings_t *s, bool first_boot, uint32_t now_ms);
+/* Log the last mic wizard run (every transient it saw, accepted or not) again: the wizard
+ * is usually run on battery, so the run is kept in RAM and replayed once USB is back. */
+void ui_miccal_dump(void);
 /* The UI's accent colour follows the eye colour; called by ui_init and when the setting changes. */
 void ui_set_accent(uint32_t rgb);
 void ui_input(ui_t *u, ui_input_t in, uint32_t now_ms);

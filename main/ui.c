@@ -520,6 +520,65 @@ static void color_input(ui_t *u, ui_input_t in, uint32_t now_ms)
 #define MIC_MOVE_MS   500         /* claps this soon after handling are ignored */
 #define MIC_MIN_SEP   0.5f        /* samples between the ends, below which the axis is unusable */
 
+/* the last run's transients, kept for ui_miccal_dump */
+#define MIC_LOG_N 40
+typedef struct {
+    uint32_t ms;
+    int16_t lag_x100;
+    uint16_t peak;
+    uint8_t place, idx, bal_pct, corr_pct;
+    int8_t why;             /* -1 accepted, else index into k_mic_why */
+} mic_event_t;
+static mic_event_t s_mic_log[MIC_LOG_N];
+static int s_mic_log_n;
+static float s_mic_run_lag[MIC_PLACES][MIC_CLAPS];
+static mic_cal_t s_mic_run_result;
+static bool s_mic_run_done, s_mic_run_ok;
+static char s_mic_run_err[48];
+static const char *k_mic_why[] = { "settling", "echo of the last clap", "device being handled", "too quiet",
+                                   "uneven between the mics", "edges do not match" };
+
+static void mic_log_event(uint32_t ms, int place, int idx, float lag, float bal, float corr, int peak, int why)
+{
+    if (s_mic_log_n >= MIC_LOG_N) {
+        memmove(&s_mic_log[0], &s_mic_log[1], sizeof(mic_event_t) * (MIC_LOG_N - 1));
+        s_mic_log_n = MIC_LOG_N - 1;
+    }
+    mic_event_t *e = &s_mic_log[s_mic_log_n++];
+    e->ms = ms;
+    e->lag_x100 = (int16_t)(lag * 100.f);
+    e->peak = (uint16_t)(peak > 65535 ? 65535 : peak);
+    e->place = (uint8_t)place;
+    e->idx = (uint8_t)idx;
+    e->bal_pct = (uint8_t)(bal * 100.f + 0.5f);
+    e->corr_pct = (uint8_t)(corr * 100.f + 0.5f);
+    e->why = (int8_t)why;
+}
+
+void ui_miccal_dump(void)
+{
+    if (!s_mic_log_n) return;
+    ESP_LOGI(TAG, "miccal replay: %d transient(s) of the last run", s_mic_log_n);
+    for (int i = 0; i < s_mic_log_n; i++) {
+        const mic_event_t *e = &s_mic_log[i];
+        ESP_LOGI(TAG, "  t+%lus %s %d clap %d: lag %+.2f bal %.2f corr %.2f peak %u%s%s",
+                 (unsigned long)((e->ms - s_mic_log[0].ms) / 1000), e->place < MIC_PLACES ? "place" : "check",
+                 e->place + 1, e->idx, e->lag_x100 / 100.f, e->bal_pct / 100.f, e->corr_pct / 100.f, e->peak,
+                 e->why >= 0 ? " ignored: " : "", e->why >= 0 ? k_mic_why[e->why] : "");
+    }
+    if (s_mic_run_done) {
+        ESP_LOGI(TAG, "  usb %+.2f %+.2f %+.2f | lanyard %+.2f %+.2f %+.2f | front %+.2f %+.2f %+.2f -> %s%s",
+                 s_mic_run_lag[0][0], s_mic_run_lag[0][1], s_mic_run_lag[0][2], s_mic_run_lag[1][0], s_mic_run_lag[1][1],
+                 s_mic_run_lag[1][2], s_mic_run_lag[2][0], s_mic_run_lag[2][1], s_mic_run_lag[2][2],
+                 s_mic_run_ok ? "ok" : "FAILED: ", s_mic_run_ok ? "" : s_mic_run_err);
+        if (s_mic_run_ok) {
+            ESP_LOGI(TAG, "  sep %.2f samples (%s mic is at the USB end), offset %+.2f, gain %+.2f",
+                     s_mic_run_result.sep, s_mic_run_result.sep > 0.f ? "R/MIC2" : "L/MIC1", s_mic_run_result.offset,
+                     s_mic_run_result.gain);
+        }
+    }
+}
+
 static const char *k_mic_title[MIC_PLACES][2] = {
     { "Clap at the USB end",     "30 cm from the port" },
     { "Clap at the lanyard end", "30 cm from the holes" },
@@ -545,6 +604,8 @@ static void miccal_begin(ui_t *u, uint32_t now_ms)
     u->arrow_len = 0;
     u->text_a[0] = u->text_b[0] = 0;
     u->cal_msg[0] = 0;
+    s_mic_log_n = 0;
+    s_mic_run_done = false;
     goto_screen(u, UI_SCREEN_MICCAL, now_ms);
     ESP_LOGI(TAG, "miccal: start");
 }
@@ -648,20 +709,21 @@ static void miccal_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *s)
     /* a new transient since last time? */
     const bool fresh = s->mic_on && s->dir_n != u->mic_seen_n;
     u->mic_seen_n = s->dir_n;
-    const char *why = NULL;
+    int why = -1;
     if (fresh) {
-        if (now_ms - u->mic_step_ms <= MIC_SETTLE_MS) why = "settling";
-        else if (now_ms - u->mic_clap_ms <= MIC_GAP_MS) why = "echo of the last clap";
-        else if (u->mic_move_ms && now_ms - u->mic_move_ms < MIC_MOVE_MS) why = "device being handled";
-        else if (s->dir_peak < MIC_MIN_PEAK) why = "too quiet";
-        else if (s->dir_conf < MIC_MIN_BAL) why = "uneven between the mics";
-        else if (s->dir_corr < MIC_MIN_CORR) why = "edges do not match";
+        if (now_ms - u->mic_step_ms <= MIC_SETTLE_MS) why = 0;
+        else if (now_ms - u->mic_clap_ms <= MIC_GAP_MS) why = 1;
+        else if (u->mic_move_ms && now_ms - u->mic_move_ms < MIC_MOVE_MS) why = 2;
+        else if (s->dir_peak < MIC_MIN_PEAK) why = 3;
+        else if (s->dir_conf < MIC_MIN_BAL) why = 4;
+        else if (s->dir_corr < MIC_MIN_CORR) why = 5;
     }
-    const bool accept = fresh && !why;
+    const bool accept = fresh && why < 0;
     if (fresh) {
+        mic_log_event(now_ms, u->mic_step, u->mic_n + 1, s->dir_lag, s->dir_conf, s->dir_corr, s->dir_peak, why);
         ESP_LOGI(TAG, "miccal: %s %d clap %d: lag %+.2f bal %.2f corr %.2f peak %d L %d R %d%s%s",
                  u->mic_step < MIC_PLACES ? "place" : "check", u->mic_step + 1, u->mic_n + 1, s->dir_lag, s->dir_conf,
-                 s->dir_corr, s->dir_peak, s->mic_rms_l, s->mic_rms_r, why ? " ignored: " : "", why ? why : "");
+                 s->dir_corr, s->dir_peak, s->mic_rms_l, s->mic_rms_r, why >= 0 ? " ignored: " : "", why >= 0 ? k_mic_why[why] : "");
     }
     if (u->mic_step >= MIC_PLACES) {
         if (accept && u->mic_ok) {
@@ -699,6 +761,11 @@ static void miccal_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *s)
         char err[48];
         u->mic_ok = miccal_compute(u->mic_lag, &u->mic_result, err, sizeof err);
         if (!u->mic_ok) snprintf(u->cal_msg, sizeof u->cal_msg, "%s", err);
+        memcpy(s_mic_run_lag, u->mic_lag, sizeof s_mic_run_lag);
+        s_mic_run_result = u->mic_result;
+        s_mic_run_ok = u->mic_ok;
+        s_mic_run_done = true;
+        snprintf(s_mic_run_err, sizeof s_mic_run_err, "%s", err);
         u->text_a[0] = 0;
         u->arrow_len = 0;
         ESP_LOGI(TAG, "miccal: usb %+.2f %+.2f %+.2f | lanyard %+.2f %+.2f %+.2f | front %+.2f %+.2f %+.2f -> %s%s",

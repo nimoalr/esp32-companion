@@ -781,6 +781,17 @@ static void render_task(void *arg)
             const uint32_t elapsed_ms = (uint32_t)((now_us - stats_t0) / 1000);
             pmic_battery_t b;
             power_battery(&b);
+            /* the mic wizard is usually run on battery: replay its log a few seconds after USB returns */
+            {
+                static bool usb_prev = true;
+                static uint32_t usb_since_ms;
+                if (b.vbus && !usb_prev) usb_since_ms = now_ms;
+                if (b.vbus && usb_since_ms && (int32_t)(now_ms - usb_since_ms) > 4000) {
+                    usb_since_ms = 0;
+                    ui_miccal_dump();
+                }
+                usb_prev = b.vbus;
+            }
             char audio_s[224] = "";
             if (af.active) {
                 snprintf(audio_s, sizeof audio_s, " | audio rms %.0f kick %.2f ratio %.2f, beats %" PRIu32 " %d bpm conf %.2f, L %.0f R %.0f dir %+.2f clap %u lag %+.2f bal %.2f corr %.2f pk %d (loud %u pre %d%%)",
