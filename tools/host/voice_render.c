@@ -35,45 +35,69 @@ static int render(voice_t *v, voice_id_t id, int16_t *buf)
     return n;
 }
 
+static int16_t g_buf[MAX_S], g_medley[VOICE_COUNT * (MAX_S + VOICE_RATE / 2)];
+
+static void medley(voice_t *v, const char *path, int from, int to, int gap)
+{
+    int m = 0;
+    for (int id = from; id < to; id++) {
+        const int n = render(v, (voice_id_t)id, g_buf);
+        memcpy(g_medley + m, g_buf, sizeof(int16_t) * (size_t)n);
+        m += n;
+        memset(g_medley + m, 0, sizeof(int16_t) * (size_t)gap);
+        m += gap;
+    }
+    wav_write(path, g_medley, m);
+}
+
 int main(void)
 {
     static const char *regs[3] = { "low", "mid", "high" };
     mkdir("out", 0755);
     mkdir("out/voice", 0755);
-    static int16_t buf[MAX_S], medley[VOICE_COUNT * (MAX_S + VOICE_RATE / 2)];
     voice_t v;
     for (int r = 0; r < 3; r++) {
         voice_init(&v, 12345u + (uint32_t)r);
         voice_set_register(&v, (voice_register_t)r);
-        int m = 0;
         for (int id = 0; id < VOICE_COUNT; id++) {
-            const int n = render(&v, (voice_id_t)id, buf);
+            const int n = render(&v, (voice_id_t)id, g_buf);
             char path[128];
             snprintf(path, sizeof path, "out/voice/%s_%02d_%s.wav", regs[r], id, k_voice_gestures[id].name);
-            wav_write(path, buf, n);
-            memcpy(medley + m, buf, sizeof(int16_t) * (size_t)n);
-            m += n;
-            memset(medley + m, 0, sizeof(int16_t) * (VOICE_RATE / 2));
-            m += VOICE_RATE / 2;
+            wav_write(path, g_buf, n);
             int peak = 0;
-            for (int i = 0; i < n; i++) if (abs(buf[i]) > peak) peak = abs(buf[i]);
-            if (r == 1) printf("%-10s %5d ms  peak %5d\n", k_voice_gestures[id].name, n * 1000 / VOICE_RATE, peak);
+            for (int i = 0; i < n; i++) if (abs(g_buf[i]) > peak) peak = abs(g_buf[i]);
+            if (r == 2) printf("%-10s %5d ms  peak %5d\n", k_voice_gestures[id].name, n * 1000 / VOICE_RATE, peak);
         }
         char path[128];
-        snprintf(path, sizeof path, "out/voice/medley_%s.wav", regs[r]);
-        wav_write(path, medley, m);
+        snprintf(path, sizeof path, "out/voice/moods_%s.wav", regs[r]);
+        medley(&v, path, 0, VOICE_HELLO, VOICE_RATE / 2);
+        snprintf(path, sizeof path, "out/voice/words_%s.wav", regs[r]);
+        medley(&v, path, VOICE_HELLO, VOICE_COUNT, VOICE_RATE / 2);
     }
-    /* variety: the same gesture five times, mid register, should never sound identical */
+    /* variety: the same gesture five times, high register, should never sound identical */
     voice_init(&v, 99u);
     int m = 0;
     for (int k = 0; k < 5; k++) {
-        const int n = render(&v, VOICE_HAPPY, buf);
-        memcpy(medley + m, buf, sizeof(int16_t) * (size_t)n);
+        const int n = render(&v, VOICE_HELLO, g_buf);
+        memcpy(g_medley + m, g_buf, sizeof(int16_t) * (size_t)n);
         m += n;
-        memset(medley + m, 0, sizeof(int16_t) * (VOICE_RATE / 4));
+        memset(g_medley + m, 0, sizeof(int16_t) * (VOICE_RATE / 4));
         m += VOICE_RATE / 4;
     }
-    wav_write("out/voice/variety_happy.wav", medley, m);
+    wav_write("out/voice/variety_hello.wav", g_medley, m);
+    /* babble: twelve random utterances, energy rising from calm to lively */
+    voice_init(&v, 4242u);
+    m = 0;
+    for (int k = 0; k < 12; k++) {
+        voice_babble(&v, 1.f, (float)k / 11.f);
+        int n = 0;
+        while (voice_active(&v) && n < MAX_S) n += voice_render(&v, g_buf + n, 160);
+        memcpy(g_medley + m, g_buf, sizeof(int16_t) * (size_t)n);
+        m += n;
+        memset(g_medley + m, 0, sizeof(int16_t) * (VOICE_RATE * 3 / 4));
+        m += VOICE_RATE * 3 / 4;
+    }
+    wav_write("out/voice/babble_high.wav", g_medley, m);
     printf("written to tools/host/out/voice/\n");
     return 0;
 }

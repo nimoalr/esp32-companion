@@ -28,4 +28,4 @@ Timings are host numbers; use them for ratios, not for absolute budgets.
 
 `micdir_test`: synthetic claps with known fractional delays (both polarities, on silence and over loud background music, inside a frame and straddling a frame boundary, clipped and not) through `main/micdir.c`; every clap must be timed exactly once within 0.15 sample.
 
-`voice_render`: writes the procedural voice vocabulary (`main/voice.c`) to `out/voice/`: one WAV per gesture and register, a medley per register (`medley_low/mid/high.wav`, all gestures in a row), and `variety_happy.wav` (one gesture five times, to hear the per-call jitter). Listen with `afplay out/voice/medley_mid.wav`.
+`voice_render`: writes the procedural voice vocabulary (`main/voice.c`) to `out/voice/`: one WAV per gesture and register, `moods_<reg>.wav` and `words_<reg>.wav` medleys (all gestures of that group in a row), `variety_hello.wav` (one gesture five times, to hear the per-call jitter) and `babble_high.wav` (twelve random babbles, calm to lively). Listen with `afplay out/voice/words_high.wav`. The high-register medleys are also committed under `docs/voice/`.

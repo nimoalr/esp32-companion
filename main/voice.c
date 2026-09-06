@@ -3,32 +3,60 @@
 #include <math.h>
 #include <string.h>
 
-/* base pitch of each register, Hz */
-/* the speaker is two centimetres across: nothing below ~300 Hz carries, so the registers sit high */
+/* base pitch of each register, Hz: the speaker is two centimetres across and carries nothing
+ * below ~300 Hz, so all three sit high */
 static const float k_base_hz[3] = { 330.f, 440.f, 587.f };
 
-#define P(...) { __VA_ARGS__ }
-const voice_gesture_t k_voice_gestures[VOICE_COUNT] = {
-    /*                  name        ms   pitch contour (t, semitones)                                       vib hz,st  trill hz,st  breath partner,ratio  att,rel  pulses  lp    level  loop */
-    [VOICE_HAPPY]     = { "happy",     420, 3, P({ 0.f, 0.f }, { 0.45f, 4.f }, { 1.f, 9.f }),                 6.f, 0.3f, 0, 0,      0.00f, 0.35f, 2.f,  12, 60,   0, 2800, 0.8f, false },
-    [VOICE_LAUGH]     = { "laugh",     620, 3, P({ 0.f, 2.f }, { 0.5f, 5.f }, { 1.f, 3.f }),                  6.f, 0.4f, 0, 0,      0.03f, 0.30f, 2.f,  5,  40,   5, 2600, 0.8f, false },
-    [VOICE_SAD]       = { "sad",       700, 3, P({ 0.f, 3.f }, { 0.3f, 1.f }, { 1.f, -7.f }),                 5.f, 0.5f, 0, 0,      0.04f, 0.25f, 1.5f, 40, 120,  0, 1800, 0.7f, false },
-    [VOICE_SURPRISED] = { "surprised", 320, 3, P({ 0.f, -2.f }, { 0.6f, 8.f }, { 1.f, 14.f }),                0,   0,    0, 0,      0.00f, 0.30f, 2.f,  8,  60,   0, 3200, 0.9f, false },
-    [VOICE_SCARED]    = { "scared",    520, 3, P({ 0.f, 4.f }, { 0.4f, 12.f }, { 1.f, 13.f }),                0,   0,    22.f, 2.f, 0.00f, 0.25f, 2.f,  8,  80,   0, 3400, 0.9f, false },
-    [VOICE_ANGRY]     = { "angry",     600, 3, P({ 0.f, -10.f }, { 0.5f, -9.f }, { 1.f, -12.f }),             0,   0,    38.f, 1.f, 0.08f, 0.50f, 1.5f, 15, 80,   0, 1500, 0.9f, false },
-    [VOICE_ANNOYED]   = { "annoyed",   380, 3, P({ 0.f, -6.f }, { 0.5f, -5.f }, { 1.f, -9.f }),               0,   0,    30.f, 1.f, 0.06f, 0.40f, 1.5f, 20, 60,   2, 1700, 0.8f, false },
-    [VOICE_YAWN]      = { "yawn",      1100, 4, P({ 0.f, -2.f }, { 0.3f, 3.f }, { 0.6f, 1.f }, { 1.f, -9.f }), 4.f, 0.6f, 0, 0,     0.10f, 0.20f, 2.f,  120, 250, 0, 1600, 0.7f, false },
-    [VOICE_PURR]      = { "purr",      1000, 2, P({ 0.f, -14.f }, { 1.f, -13.f }),                            0,   0,    26.f, 0.f, 0.12f, 0.40f, 2.f,  150, 250, 0, 900,  0.7f, true },
-    [VOICE_HM]        = { "hm",        380, 3, P({ 0.f, -1.f }, { 0.6f, 0.f }, { 1.f, 6.f }),                 0,   0,    0, 0,      0.04f, 0.20f, 2.f,  30, 60,   0, 1400, 0.7f, false },
-    [VOICE_CONFUSED]  = { "confused",  640, 4, P({ 0.f, -1.f }, { 0.4f, 5.f }, { 0.55f, -2.f }, { 1.f, 7.f }), 0, 0,    0, 0,      0.04f, 0.20f, 2.f,  30, 60,   2, 1500, 0.7f, false },
-    [VOICE_DIZZY]     = { "dizzy",     900, 3, P({ 0.f, 4.f }, { 0.5f, 0.f }, { 1.f, -6.f }),                 7.f, 2.5f, 0, 0,      0.00f, 0.30f, 1.5f, 40, 150,  0, 2200, 0.8f, false },
-    [VOICE_PROTEST]   = { "protest",   560, 4, P({ 0.f, 6.f }, { 0.3f, 10.f }, { 0.6f, 5.f }, { 1.f, 11.f }), 0,   0,    0, 0,      0.00f, 0.30f, 2.f,  5,  30,   4, 3000, 0.9f, false },
-    [VOICE_KO]        = { "ko",        900, 3, P({ 0.f, 6.f }, { 0.4f, -2.f }, { 1.f, -16.f }),               3.f, 0.4f, 0, 0,      0.03f, 0.25f, 2.f,  10, 300,  0, 1800, 0.8f, false },
-    [VOICE_OH]        = { "oh",        300, 3, P({ 0.f, 1.f }, { 0.5f, 5.f }, { 1.f, 3.f }),                  0,   0,    0, 0,      0.00f, 0.25f, 2.f,  15, 80,   0, 2000, 0.7f, false },
-    [VOICE_BLIP]      = { "blip",      90,  2, P({ 0.f, 10.f }, { 1.f, 13.f }),                               0,   0,    0, 0,      0.00f, 0.20f, 2.f,  3,  25,   0, 3800, 0.6f, false },
-    [VOICE_WAKE]      = { "wake",      700, 3, P({ 0.f, -5.f }, { 0.7f, -1.f }, { 1.f, 4.f }),                4.f, 0.4f, 0, 0,      0.05f, 0.25f, 2.f,  150, 120, 0, 1600, 0.6f, false },
+/* vowel formants F1, F2 (Hz) and level; at these pitches the colour comes mostly from F2 */
+static const float k_vowel[VOW_COUNT][3] = {
+    [VOW_NONE] = { 0, 0, 0 },
+    [VOW_A] = { 750, 1250, 1.0f },
+    [VOW_E] = { 500, 1900, 0.9f },
+    [VOW_I] = { 320, 2400, 0.8f },
+    [VOW_O] = { 480, 900, 1.0f },
+    [VOW_U] = { 350, 750, 0.9f },
+    [VOW_M] = { 260, 1000, 0.5f },
 };
-#undef P
+
+#define S(...) { __VA_ARGS__ }
+const voice_gesture_t k_voice_gestures[VOICE_COUNT] = {
+    /*                  name        n  syllables { ms, st0, st1, st2, vowel, onset, gap }                                         vib      trill      breath partner att rel pulses lp   level loop */
+    [VOICE_HAPPY]     = { "happy",     2, S({ 160, 0, 2, 4, VOW_E, ON_NONE, 20 }, { 240, 5, 8, 9, VOW_I, ON_NONE, 0 }),            6, .3,   0, 0,      0,   .35, 2, 12, 60,   0, 2800, .8, false },
+    [VOICE_LAUGH]     = { "laugh",     3, S({ 180, 4, 5, 3, VOW_A, ON_H, 30 }, { 160, 5, 6, 4, VOW_A, ON_H, 30 }, { 200, 4, 4, 1, VOW_A, ON_H, 0 }), 6, .3, 0, 0, .03, .3, 2, 5, 40, 2, 2600, .8, false },
+    [VOICE_SAD]       = { "sad",       1, S({ 700, 3, 1, -7, VOW_O, ON_NONE, 0 }),                                                 5, .5,   0, 0,      .04, .25, 1.5, 40, 120, 0, 1800, .7, false },
+    [VOICE_SURPRISED] = { "surprised", 1, S({ 320, -2, 8, 14, VOW_O, ON_NONE, 0 }),                                                0, 0,    0, 0,      0,   .3, 2, 8, 60,    0, 3200, .9, false },
+    [VOICE_SCARED]    = { "scared",    1, S({ 520, 4, 12, 13, VOW_I, ON_NONE, 0 }),                                                0, 0,    22, 2,     0,   .25, 2, 8, 80,   0, 3400, .9, false },
+    [VOICE_ANGRY]     = { "angry",     1, S({ 600, -10, -9, -12, VOW_U, ON_NONE, 0 }),                                             0, 0,    38, 1,     .08, .5, 1.5, 15, 80,  0, 1500, .9, false },
+    [VOICE_ANNOYED]   = { "annoyed",   2, S({ 180, -6, -5, -6, VOW_U, ON_NONE, 30 }, { 200, -6, -7, -9, VOW_O, ON_NONE, 0 }),      0, 0,    30, 1,     .06, .4, 1.5, 20, 60,  0, 1700, .8, false },
+    [VOICE_YAWN]      = { "yawn",      1, S({ 1100, -2, 3, -9, VOW_A, ON_H, 0 }),                                                  4, .6,   0, 0,      .10, .2, 2, 120, 250, 0, 1600, .7, false },
+    [VOICE_PURR]      = { "purr",      1, S({ 1000, -14, -13, -14, VOW_M, ON_NONE, 0 }),                                           0, 0,    26, 0,     .12, .4, 2, 150, 250, 0, 900,  .7, true },
+    [VOICE_HM]        = { "hm",        1, S({ 380, -1, 0, 6, VOW_M, ON_NONE, 0 }),                                                 0, 0,    0, 0,      .04, .2, 2, 30, 60,   0, 1400, .7, false },
+    [VOICE_CONFUSED]  = { "confused",  2, S({ 260, -1, 2, 5, VOW_M, ON_NONE, 60 }, { 300, -2, 1, 7, VOW_M, ON_NONE, 0 }),          0, 0,    0, 0,      .04, .2, 2, 30, 60,   0, 1500, .7, false },
+    [VOICE_DIZZY]     = { "dizzy",     1, S({ 900, 4, 0, -6, VOW_O, ON_W, 0 }),                                                    7, 2.5,  0, 0,      0,   .3, 1.5, 40, 150, 0, 2200, .8, false },
+    [VOICE_PROTEST]   = { "protest",   3, S({ 140, 6, 10, 8, VOW_E, ON_NONE, 30 }, { 140, 5, 9, 7, VOW_E, ON_NONE, 30 }, { 180, 8, 11, 12, VOW_I, ON_NONE, 0 }), 0, 0, 0, 0, 0, .3, 2, 5, 30, 0, 3000, .9, false },
+    [VOICE_KO]        = { "ko",        1, S({ 900, 6, -2, -16, VOW_O, ON_NONE, 0 }),                                               3, .4,   0, 0,      .03, .25, 2, 10, 300, 0, 1800, .8, false },
+    [VOICE_OH]        = { "oh",        1, S({ 300, 1, 5, 3, VOW_O, ON_NONE, 0 }),                                                  0, 0,    0, 0,      0,   .25, 2, 15, 80,  0, 2000, .7, false },
+    [VOICE_BLIP]      = { "blip",      1, S({ 90, 10, 12, 13, VOW_NONE, ON_NONE, 0 }),                                             0, 0,    0, 0,      0,   .2, 2, 3, 25,    0, 3800, .6, false },
+    [VOICE_WAKE]      = { "wake",      1, S({ 700, -5, -1, 4, VOW_M, ON_NONE, 0 }),                                                4, .4,   0, 0,      .05, .25, 2, 150, 120, 0, 1600, .6, false },
+    /* word-like: the contour of the word, its vowels and a consonant hint, no actual consonants */
+    [VOICE_HELLO]     = { "hello",     2, S({ 170, 0, 1, 2, VOW_E, ON_H, 20 }, { 330, 7, 6, 2, VOW_O, ON_L, 0 }),                  5, .3,   0, 0,      .02, .3, 2, 15, 90,   0, 2600, .8, false },
+    [VOICE_HI]        = { "hi",        1, S({ 380, 2, 8, 6, VOW_A, ON_H, 0 }),                                                     5, .3,   0, 0,      .02, .3, 2, 10, 80,   0, 2800, .8, false },
+    [VOICE_BYE]       = { "bye",       2, S({ 240, 6, 7, 4, VOW_A, ON_B, 40 }, { 300, 3, 1, -3, VOW_A, ON_B, 0 }),                 5, .3,   0, 0,      .02, .3, 2, 8, 100,   0, 2600, .8, false },
+    [VOICE_YAY]       = { "yay",       1, S({ 520, 2, 9, 11, VOW_E, ON_W, 0 }),                                                    6, .4,   0, 0,      0,   .35, 2, 20, 120, 0, 3000, .9, false },
+    [VOICE_UHOH]      = { "uh-oh",     2, S({ 200, 5, 5, 4, VOW_U, ON_NONE, 70 }, { 300, 0, -1, -3, VOW_O, ON_B, 0 }),             0, 0,    0, 0,      .02, .3, 2, 10, 80,   0, 2200, .8, false },
+    [VOICE_OKAY]      = { "okay",      2, S({ 160, 2, 2, 3, VOW_O, ON_NONE, 30 }, { 300, 5, 8, 7, VOW_E, ON_K, 0 }),               5, .3,   0, 0,      .02, .3, 2, 10, 80,   0, 2600, .8, false },
+    [VOICE_NO]        = { "no-no",     2, S({ 200, 2, 3, -2, VOW_O, ON_NONE, 60 }, { 260, 1, 2, -4, VOW_O, ON_NONE, 0 }),          4, .3,   0, 0,      .02, .3, 2, 10, 70,   0, 2000, .8, false },
+    [VOICE_WOW]       = { "wow",       1, S({ 600, -2, 6, -1, VOW_A, ON_W, 0 }),                                                   5, .5,   0, 0,      .02, .3, 2, 30, 150,  0, 2400, .85, false },
+    [VOICE_YES_HM]    = { "mm-hm",     2, S({ 160, -2, -1, 0, VOW_M, ON_NONE, 40 }, { 260, 3, 5, 6, VOW_M, ON_H, 0 }),             0, 0,    0, 0,      .04, .2, 2, 20, 70,   0, 1500, .7, false },
+    [VOICE_NO_MM]     = { "mm-mm",     2, S({ 180, 2, 2, 1, VOW_M, ON_NONE, 40 }, { 260, -1, -2, -4, VOW_M, ON_NONE, 0 }),         0, 0,    0, 0,      .04, .2, 2, 20, 70,   0, 1500, .7, false },
+    [VOICE_HUH]       = { "huh",       1, S({ 300, -1, 2, 7, VOW_U, ON_H, 0 }),                                                    0, 0,    0, 0,      .03, .25, 2, 10, 60,  0, 2200, .75, false },
+    [VOICE_WHEE]      = { "whee",      1, S({ 800, -4, 8, 12, VOW_I, ON_W, 0 }),                                                   7, .5,   0, 0,      0,   .35, 2, 20, 150, 0, 3200, .85, false },
+    [VOICE_LALA]      = { "la-la-la",  3, S({ 220, 2, 3, 2, VOW_A, ON_L, 30 }, { 220, 6, 7, 6, VOW_A, ON_L, 30 }, { 320, 4, 5, 2, VOW_A, ON_L, 0 }), 5, .4, 0, 0, .02, .3, 2, 10, 90, 0, 2600, .75, false },
+    [VOICE_TADA]      = { "ta-da",     2, S({ 150, 4, 4, 5, VOW_A, ON_K, 40 }, { 480, 11, 12, 11, VOW_A, ON_B, 0 }),               6, .5,   0, 0,      0,   .35, 2, 5, 200,   0, 3000, .9, false },
+    [VOICE_PSST]      = { "psst",      1, S({ 220, 8, 8, 9, VOW_NONE, ON_H, 0 }),                                                  0, 0,    0, 0,      .5,  .2, 2, 5, 60,    0, 3800, .5, false },
+    [VOICE_AWW]       = { "aww",       1, S({ 700, 3, 1, -4, VOW_A, ON_NONE, 0 }),                                                 4, .5,   0, 0,      .03, .3, 2, 60, 200,  0, 2000, .75, false },
+};
+#undef S
 
 /* 256-entry sine table, linear interpolation: cheap enough for two oscillators at 16 kHz */
 static float s_sin[257];
@@ -65,7 +93,7 @@ void voice_init(voice_t *v, uint32_t seed)
     tables();
     memset(v, 0, sizeof *v);
     v->rng = seed ? seed : 1;
-    v->reg = VOICE_REG_MID;
+    v->reg = VOICE_REG_HIGH;
 }
 
 void voice_set_register(voice_t *v, voice_register_t reg)
@@ -73,77 +101,182 @@ void voice_set_register(voice_t *v, voice_register_t reg)
     v->reg = reg;
 }
 
-void voice_start(voice_t *v, voice_id_t id, float level)
+/* band-pass biquad (constant skirt gain) at f with quality q */
+static void bp_coef(float c[5], float f, float q)
 {
-    if (id < 0 || id >= VOICE_COUNT) return;
-    v->g = &k_voice_gestures[id];
+    const float w = 2.f * (float)M_PI * f / VOICE_RATE;
+    const float sn = sinf(w), cs = cosf(w);
+    const float alpha = sn / (2.f * q);
+    const float a0 = 1.f + alpha;
+    c[0] = alpha / a0;          /* b0 */
+    c[1] = 0.f;                 /* b1 */
+    c[2] = -alpha / a0;         /* b2 */
+    c[3] = -2.f * cs / a0;      /* a1 */
+    c[4] = (1.f - alpha) / a0;  /* a2 */
+}
+
+static inline float bp_run(const float c[5], float s[4], float x)
+{
+    const float y = c[0] * x + c[2] * s[1] - c[3] * s[2] - c[4] * s[3];
+    s[1] = s[0]; s[0] = x;
+    s[3] = s[2]; s[2] = y;
+    return y;
+}
+
+static void begin_seg(voice_t *v)
+{
+    const voice_seg_t *sg = &v->g.seg[v->seg];
+    v->len = (int)(sg->ms * v->detune_len * (VOICE_RATE / 1000.f));
+    if (v->len < 16) v->len = 16;
+    v->gap = (int)(sg->gap_ms * (VOICE_RATE / 1000.f));
     v->pos = 0;
-    v->len = (int)(v->g->dur_ms * (1.f + 0.1f * frand(v)) * (VOICE_RATE / 1000.f));
+}
+
+static void start_common(voice_t *v, float level)
+{
+    v->on = true;
+    v->seg = 0;
+    v->elapsed = 0;
     v->detune = 1.f + 0.03f * frand(v);
+    v->detune_len = 1.f + 0.1f * frand(v);
+    v->total = 0;
+    for (int i = 0; i < v->g.nseg; i++) v->total += (int)((v->g.seg[i].ms + v->g.seg[i].gap_ms) * v->detune_len * (VOICE_RATE / 1000.f));
     v->ph1 = v->ph2 = v->phv = v->pht = 0.f;
     v->lp = v->nz = v->nz2 = 0.f;
+    memset(v->b1, 0, sizeof v->b1);
+    memset(v->b2, 0, sizeof v->b2);
+    v->f1 = k_vowel[v->g.seg[0].vowel][0];
+    v->f2 = k_vowel[v->g.seg[0].vowel][1];
+    v->coef_ctr = 0;
     v->gain = level < 0.f ? 0.f : level > 1.f ? 1.f : level;
     v->stopping = false;
     v->fade = 1.f;
+    begin_seg(v);
+}
+
+void voice_start(voice_t *v, voice_id_t id, float level)
+{
+    if (id < 0 || id >= VOICE_COUNT) return;
+    v->g = k_voice_gestures[id];
+    start_common(v, level);
+}
+
+void voice_babble(voice_t *v, float level, float energy)
+{
+    if (energy < 0.f) energy = 0.f;
+    if (energy > 1.f) energy = 1.f;
+    static const uint8_t vowels[] = { VOW_A, VOW_E, VOW_I, VOW_O, VOW_U, VOW_M, VOW_A, VOW_O };
+    static const uint8_t onsets[] = { ON_NONE, ON_NONE, ON_NONE, ON_H, ON_B, ON_L, ON_W, ON_K };
+    voice_gesture_t *g = &v->g;
+    memset(g, 0, sizeof *g);
+    g->name = "babble";
+    g->nseg = 1 + (int)(rnd(v) % 4u);
+    const float spread = 3.f + 6.f * energy;          /* semitones */
+    float st = spread * frand(v) * 0.5f;
+    for (int i = 0; i < g->nseg; i++) {
+        voice_seg_t *sg = &g->seg[i];
+        const float len = 110.f + 120.f * (1.f - energy) + 140.f * (0.5f + 0.5f * frand(v));
+        sg->ms = len;
+        sg->st0 = st;
+        sg->st1 = st + spread * 0.5f * frand(v);
+        st = st + spread * frand(v);
+        sg->st2 = st;
+        sg->vowel = vowels[rnd(v) % 8u];
+        sg->onset = onsets[rnd(v) % 8u];
+        sg->gap_ms = i + 1 < g->nseg ? 20.f + 50.f * (0.5f + 0.5f * frand(v)) : 0.f;
+    }
+    g->vib_hz = 5.f;
+    g->vib_st = 0.3f;
+    g->breath = 0.02f;
+    g->partner = 0.3f;
+    g->partner_ratio = 2.f;
+    g->attack_ms = 15.f;
+    g->release_ms = 80.f;
+    g->lp_hz = 2600.f;
+    g->level = 0.6f + 0.2f * energy;
+    start_common(v, level);
 }
 
 void voice_stop(voice_t *v)
 {
-    if (v->g && v->g->loop) v->stopping = true;
+    if (v->on && v->g.loop) v->stopping = true;
 }
 
 bool voice_active(const voice_t *v)
 {
-    return v->g != NULL;
+    return v->on;
 }
 
-/* pitch in semitones at time t (0..1) along the contour */
-static float contour(const voice_gesture_t *g, float t)
+/* pitch in semitones at time t (0..1) along a syllable: smooth through start, middle, end */
+static float contour(const voice_seg_t *sg, float t)
 {
-    if (t <= g->pts[0].t) return g->pts[0].st;
-    for (int i = 1; i < g->npts; i++) {
-        if (t <= g->pts[i].t) {
-            const float a = g->pts[i - 1].t, b = g->pts[i].t;
-            const float f = b > a ? (t - a) / (b - a) : 1.f;
-            /* smooth step between breakpoints: no corners in the pitch */
-            const float s = f * f * (3.f - 2.f * f);
-            return g->pts[i - 1].st + (g->pts[i].st - g->pts[i - 1].st) * s;
-        }
-    }
-    return g->pts[g->npts - 1].st;
+    float a, b, f;
+    if (t < 0.5f) { a = sg->st0; b = sg->st1; f = t * 2.f; }
+    else { a = sg->st1; b = sg->st2; f = (t - 0.5f) * 2.f; }
+    const float s = f * f * (3.f - 2.f * f);
+    return a + (b - a) * s;
 }
 
 int voice_render(voice_t *v, int16_t *out, int n)
 {
-    if (!v->g) {
+    if (!v->on) {
         memset(out, 0, sizeof(int16_t) * (size_t)n);
         return 0;
     }
-    const voice_gesture_t *g = v->g;
+    const voice_gesture_t *g = &v->g;
     const float base = k_base_hz[v->reg] * v->detune;
     const float att = g->attack_ms * (VOICE_RATE / 1000.f), rel = g->release_ms * (VOICE_RATE / 1000.f);
     const float lp_k = 1.f - expf(-2.f * (float)M_PI * g->lp_hz / VOICE_RATE);
+    const float edge = 0.006f * VOICE_RATE;          /* 6 ms syllable edges against clicks */
     int done = 0;
     for (int i = 0; i < n; i++) {
-        if (!v->g) { out[i] = 0; continue; }
+        if (!v->on) { out[i] = 0; continue; }
+        const voice_seg_t *sg = &g->seg[v->seg];
+        if (v->pos >= v->len) {
+            /* in the gap after a syllable */
+            out[i] = 0;
+            done = i + 1;
+            if (--v->gap <= 0) {
+                if (++v->seg >= g->nseg) {
+                    if (g->loop && !v->stopping) { v->seg = 0; begin_seg(v); v->pos = (int)att; }
+                    else v->on = false;
+                } else {
+                    begin_seg(v);
+                }
+            }
+            continue;
+        }
         const float t = (float)v->pos / (float)v->len;
-        /* envelope */
+        const bool first = v->seg == 0, last = v->seg == g->nseg - 1;
+        /* envelope: attack on the first syllable, release on the last, short edges elsewhere */
         float env = 1.f;
-        if ((float)v->pos < att) env = (float)v->pos / att;
+        if (first && (float)v->pos < att) env = (float)v->pos / att;
+        else if ((float)v->pos < edge) env = (float)v->pos / edge;
         const float left = (float)(v->len - v->pos);
-        if (!g->loop && left < rel) env *= left / rel;
+        if (last && !g->loop && left < rel) env *= left / rel;
+        else if (left < edge) env *= left / edge;
         if (g->pulses) {
-            /* raised-cosine pulses over the utterance, never fully closed */
             const float p = 0.5f - 0.5f * sine(t * (float)g->pulses);
             env *= 0.15f + 0.85f * p * p;
         }
+        /* onset consonants */
+        float onset_noise = 0.f, onset_st = 0.f;
+        const float ms = (float)v->pos * (1000.f / VOICE_RATE);
+        switch (sg->onset) {
+        case ON_H: if (ms < 45.f) { onset_noise = 0.35f * (1.f - ms / 45.f); env *= 0.4f + 0.6f * ms / 45.f; } break;
+        case ON_K: if (ms < 6.f) onset_noise = 0.9f; else if (ms < 30.f) env *= (ms - 6.f) / 24.f; break;
+        case ON_B: if (ms < 12.f) env = 0.f; else if (ms < 22.f) env *= (ms - 12.f) / 10.f; break;
+        case ON_W: if (ms < 70.f) { onset_st = -5.f * (1.f - ms / 70.f); env *= 0.3f + 0.7f * ms / 70.f; } break;
+        case ON_L: if (ms < 35.f) env *= 0.35f + 0.65f * ms / 35.f; break;
+        default: break;
+        }
         if (v->stopping) {
             v->fade -= 1.f / (0.15f * VOICE_RATE);
-            if (v->fade <= 0.f) { v->g = NULL; out[i] = 0; continue; }
+            if (v->fade <= 0.f) { v->on = false; out[i] = 0; continue; }
             env *= v->fade;
         }
         /* pitch */
-        float st = contour(g, t);
+        float st = contour(sg, t) + onset_st;
         if (g->vib_hz > 0.f) {
             v->phv += g->vib_hz / VOICE_RATE;
             if (v->phv >= 1.f) v->phv -= 1.f;
@@ -153,32 +286,54 @@ int voice_render(voice_t *v, int16_t *out, int n)
             v->pht += g->trill_hz / VOICE_RATE;
             if (v->pht >= 1.f) v->pht -= 1.f;
             if (g->trill_st > 0.f) st += v->pht < 0.5f ? g->trill_st : 0.f;
-            else env *= 0.55f + 0.45f * sine(v->pht);     /* purr: the trill is an amplitude flutter */
+            else env *= 0.55f + 0.45f * sine(v->pht);     /* purr: an amplitude flutter */
         }
         const float hz = base * exp2f(st * (1.f / 12.f));
         v->ph1 += hz / VOICE_RATE;
         if (v->ph1 >= 1.f) v->ph1 -= 1.f;
         v->ph2 += hz * g->partner_ratio / VOICE_RATE;
         if (v->ph2 >= 1.f) v->ph2 -= 1.f;
-        /* oscillators: a fundamental with a little second harmonic for colour, and the partner */
+        /* tone: a fundamental with a little second harmonic, and the partner */
         float s = sine(v->ph1) + 0.25f * sine(v->ph1 * 2.f) + g->partner * sine(v->ph2);
-        if (g->noise > 0.f) {
-            /* breath: noise darkened by two poles so it sits under the tone instead of hissing over it */
+        /* vowel: a harmonic-rich source through two formant resonators */
+        const float *vw = k_vowel[sg->vowel];
+        if (vw[2] > 0.f) {
+            if (v->coef_ctr == 0) {
+                v->f1 += (vw[0] - v->f1) * 0.25f;      /* formants glide between syllables (every 32 samples) */
+                v->f2 += (vw[1] - v->f2) * 0.25f;
+                bp_coef(v->c1, v->f1 < 100.f ? 100.f : v->f1, 5.f);
+                bp_coef(v->c2, v->f2 < 100.f ? 100.f : v->f2, 7.f);
+            }
+            v->coef_ctr = (v->coef_ctr + 1) & 31;
+            const float rich = sine(v->ph1) + 0.5f * sine(v->ph1 * 2.f) + 0.33f * sine(v->ph1 * 3.f) +
+                               0.25f * sine(v->ph1 * 4.f) + 0.2f * sine(v->ph1 * 5.f);
+            const float form = bp_run(v->c1, v->b1, rich) * 1.6f + bp_run(v->c2, v->b2, rich) * 1.4f;
+            s = 0.55f * s + vw[2] * form;
+        }
+        /* breath and onset noise, darkened by two poles so it sits under the tone */
+        const float nz_amt = g->breath + onset_noise;
+        if (nz_amt > 0.f) {
             v->nz += (frand(v) - v->nz) * 0.12f;
             v->nz2 += (v->nz - v->nz2) * 0.12f;
-            s += g->noise * 6.f * v->nz2;
+            s += nz_amt * 6.f * v->nz2;
+            if (onset_noise > 0.f) s += onset_noise * 0.8f * frand(v);    /* a bright edge for the consonant */
         }
-        /* filter and output */
         v->lp += (s - v->lp) * lp_k;
-        float y = v->lp * env * g->level * v->gain * 0.45f;
+        float y = v->lp * env * g->level * v->gain * 0.4f;
         if (y > 1.f) y = 1.f;
         if (y < -1.f) y = -1.f;
         out[i] = (int16_t)(y * 32767.f);
         done = i + 1;
         v->pos++;
-        if (v->pos >= v->len) {
-            if (g->loop && !v->stopping) v->pos = (int)(att);      /* loop past the attack */
-            else v->g = NULL;
+        v->elapsed++;
+        if (v->pos >= v->len && v->gap <= 0) {
+            /* no gap: go straight to the next syllable (legato) */
+            if (++v->seg >= g->nseg) {
+                if (g->loop && !v->stopping) { v->seg = 0; begin_seg(v); v->pos = (int)att; }
+                else v->on = false;
+            } else {
+                begin_seg(v);
+            }
         }
     }
     return done;
