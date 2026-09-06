@@ -25,9 +25,11 @@ typedef enum {
     VOICE_HAPPY, VOICE_LAUGH, VOICE_SAD, VOICE_SURPRISED, VOICE_SCARED, VOICE_ANGRY, VOICE_ANNOYED,
     VOICE_YAWN, VOICE_PURR, VOICE_HM, VOICE_CONFUSED, VOICE_DIZZY, VOICE_PROTEST, VOICE_KO, VOICE_OH,
     VOICE_BLIP, VOICE_WAKE,
-    /* word-like */
-    VOICE_HELLO, VOICE_HI, VOICE_BYE, VOICE_YAY, VOICE_UHOH, VOICE_OKAY, VOICE_NO, VOICE_WOW,
-    VOICE_YES_HM, VOICE_NO_MM, VOICE_HUH, VOICE_WHEE, VOICE_LALA, VOICE_TADA, VOICE_PSST, VOICE_AWW,
+    /* words: two syllables or more, the melody and the vowels carry them */
+    VOICE_HELLO, VOICE_UHOH, VOICE_WOW, VOICE_OHNO, VOICE_OKAY, VOICE_BYEBYE, VOICE_OOPSIE, VOICE_REALLY,
+    VOICE_SERIOUSLY, VOICE_WHATEVER, VOICE_NOWAY, VOICE_THANKYOU, VOICE_HOORAY, VOICE_SORRY, VOICE_PEEKABOO,
+    VOICE_BINGO, VOICE_WAKEYWAKEY, VOICE_GOODNIGHT, VOICE_GOODMORNING, VOICE_OOHLALA, VOICE_AHA, VOICE_COMEON,
+    VOICE_EXCUSEME, VOICE_HOWRUDE, VOICE_YUMMY, VOICE_BRAVO, VOICE_HITHERE, VOICE_OHREALLY,
     VOICE_COUNT
 } voice_id_t;
 
@@ -39,7 +41,8 @@ enum { ON_NONE, ON_H, ON_K, ON_B, ON_W, ON_L };   /* breath, click, pop, glide u
 typedef struct {
     float ms;                   /* duration */
     float st0, st1, st2;        /* pitch at start, middle, end, semitones from the base */
-    uint8_t vowel, onset;
+    uint8_t vowel, vowel2;      /* vowel2 != 0: a diphthong, the colour glides to it over the second half */
+    uint8_t onset;
     float gap_ms;               /* silence after */
 } voice_seg_t;
 
