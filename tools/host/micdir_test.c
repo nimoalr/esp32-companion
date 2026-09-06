@@ -22,7 +22,7 @@ static int run(float delay, float bg, float onset_ms, int frames, float amp_l, f
     static int16_t pcm[FRAME * 2];
     unsigned seed = 1;
     int got = 0;
-    float lag = 0.f, conf = 0.f;
+    micdir_result_t r = { 0 };
     for (int f = 0; f < frames; f++) {
         int peak = 0;
         for (int i = 0; i < FRAME; i++) {
@@ -39,12 +39,12 @@ static int run(float delay, float bg, float onset_ms, int frames, float amp_l, f
             if (abs((int)l) > peak) peak = abs((int)l);
             if (abs((int)r) > peak) peak = abs((int)r);
         }
-        if (micdir_frame(&d, pcm, FRAME, peak, &lag, &conf)) { got++; if (verbose > 1) printf("  frame %d peak %d lag %+.2f refr %d\n", f, peak, lag, (int)d.refr); }
+        if (micdir_frame(&d, pcm, FRAME, peak, &r)) { got++; if (verbose > 1) printf("  frame %d peak %d lag %+.2f corr %.2f refr %d\n", f, peak, r.lag, r.corr, (int)d.refr); }
     }
-    const int ok = got == 1 && fabsf(lag - delay) < 0.15f;
+    const int ok = got == 1 && fabsf(r.lag - delay) < 0.15f && r.corr > 0.6f;
     if (verbose || !ok)
         printf("%s delay %+.2f bg %5.0f onset %6.2f ms amp %5.0f/%5.0f -> %d timed, lag %+.2f conf %.2f, loud %u pre %d%%\n",
-               ok ? "ok  " : "FAIL", delay, bg, onset_ms, amp_l, amp_r, got, lag, conf, d.loud, d.pre);
+               ok ? "ok  " : "FAIL", delay, bg, onset_ms, amp_l, amp_r, got, r.lag, r.balance, d.loud, d.pre);
     return ok;
 }
 

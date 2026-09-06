@@ -28,8 +28,10 @@ typedef struct {
     float tempo_conf;       /* 0..1: share of recent intervals within 12 % of the median tempo (octave-folded) */
     float bass_ratio;       /* sub-bass RMS / full-band RMS, smoothed over ~1 s: speech ~0.1, EDM 0.3-0.7 */
     float dir;              /* -1..+1 along the microphone axis, smoothed: + = the sound reaches MIC1 (slot 0) first */
-    float dir_conf;         /* 0..1: how evenly the two mics heard the last transient */
+    float dir_conf;         /* 0..1: how evenly the two mics heard the last transient (level balance) */
     float dir_lag;          /* arrival-time difference of the last transient in samples (+ = MIC1 first) */
+    float dir_corr;         /* 0..1: how alike the two mics' edges were for the last transient */
+    int dir_peak;           /* the last transient's peak, LSB */
     uint16_t dir_n;         /* transients (claps, knocks) timed since the mics started */
     uint16_t dir_loud;      /* loud frames that were not onsets (diagnostic) */
     int16_t dir_pre;        /* pre-onset level of the last loud frame, % of its peak (diagnostic) */

@@ -31,7 +31,7 @@ static inline int mag(const micdir_t *d, const int16_t *pcm, int j, int ch)
     return abs((int)pcm[2 * j + ch]);
 }
 
-bool micdir_frame(micdir_t *d, const int16_t *pcm, int frame, int peak, float *lag, float *conf)
+bool micdir_frame(micdir_t *d, const int16_t *pcm, int frame, int peak, micdir_result_t *out)
 {
     bool timed = false;
     int timed_at = -100000;
@@ -98,8 +98,10 @@ bool micdir_frame(micdir_t *d, const int16_t *pcm, int frame, int peak, float *l
                     if (l > MICDIR_MAX_LAG) l = MICDIR_MAX_LAG;
                     if (l < -MICDIR_MAX_LAG) l = -MICDIR_MAX_LAG;
                     const float lo = (float)(pk[0] < pk[1] ? pk[0] : pk[1]), hi = (float)(pk[0] < pk[1] ? pk[1] : pk[0]);
-                    *lag = l;
-                    *conf = lo / hi;
+                    out->lag = l;
+                    out->balance = lo / hi;
+                    out->corr = best_v < 0.f ? 0.f : best_v;
+                    out->peak = (int)hi;
                     d->n++;
                     timed = true;
                     timed_at = k;

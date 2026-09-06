@@ -508,7 +508,16 @@ static void color_input(ui_t *u, ui_input_t in, uint32_t now_ms)
 #define MIC_CLAPS     3
 #define MIC_SETTLE_MS 1200        /* after entering a place: the opening tap rings in the body */
 #define MIC_GAP_MS    250         /* a clap's echoes may re-trigger; one clap per gap */
-#define MIC_MIN_CONF  0.25f       /* both mics must have heard it */
+/*
+ * A clap 30 cm away reaches both mics alike, loud, with the same edge. Handling the
+ * device (fingers on the shell, a scrape over a mic port) is loud too, but uneven,
+ * incoherent between the mics, and the accelerometer sees the hand.
+ */
+#define MIC_MIN_BAL   0.4f        /* the quieter mic's peak over the louder one's */
+#define MIC_MIN_CORR  0.6f        /* the two edges must match */
+#define MIC_MIN_PEAK  6000        /* LSB */
+#define MIC_MOVE_RAW  150         /* accel step between samples that counts as handling (~35 mg) */
+#define MIC_MOVE_MS   500         /* claps this soon after handling are ignored */
 #define MIC_MIN_SEP   0.5f        /* samples between the ends, below which the axis is unusable */
 
 static const char *k_mic_title[MIC_PLACES][2] = {
@@ -531,6 +540,8 @@ static void miccal_begin(ui_t *u, uint32_t now_ms)
     u->mic_n = 0;
     u->mic_ok = false;
     u->mic_step_ms = now_ms;
+    u->mic_move_ms = 0;
+    u->mic_prev_acc_ms = 0;
     u->arrow_len = 0;
     u->text_a[0] = u->text_b[0] = 0;
     u->cal_msg[0] = 0;
@@ -621,15 +632,36 @@ static void miccal_input(ui_t *u, ui_input_t in, uint32_t now_ms)
 
 static void miccal_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *s)
 {
+    /* is the device being handled? */
+    if (s->have_accel && s->accel_ms != u->mic_prev_acc_ms) {
+        if (u->mic_prev_acc_ms) {
+            int step = 0;
+            for (int i = 0; i < 3; i++) {
+                const int dlt = abs((int)s->accel[i] - (int)u->mic_prev_acc[i]);
+                if (dlt > step) step = dlt;
+            }
+            if (step > MIC_MOVE_RAW) u->mic_move_ms = now_ms;
+        }
+        memcpy(u->mic_prev_acc, s->accel, sizeof u->mic_prev_acc);
+        u->mic_prev_acc_ms = s->accel_ms;
+    }
     /* a new transient since last time? */
     const bool fresh = s->mic_on && s->dir_n != u->mic_seen_n;
     u->mic_seen_n = s->dir_n;
-    const bool accept = fresh && s->dir_conf >= MIC_MIN_CONF && now_ms - u->mic_step_ms > MIC_SETTLE_MS &&
-                        now_ms - u->mic_clap_ms > MIC_GAP_MS;
+    const char *why = NULL;
     if (fresh) {
-        ESP_LOGI(TAG, "miccal: %s %d clap %d: lag %+.2f conf %.2f L %d R %d%s",
+        if (now_ms - u->mic_step_ms <= MIC_SETTLE_MS) why = "settling";
+        else if (now_ms - u->mic_clap_ms <= MIC_GAP_MS) why = "echo of the last clap";
+        else if (u->mic_move_ms && now_ms - u->mic_move_ms < MIC_MOVE_MS) why = "device being handled";
+        else if (s->dir_peak < MIC_MIN_PEAK) why = "too quiet";
+        else if (s->dir_conf < MIC_MIN_BAL) why = "uneven between the mics";
+        else if (s->dir_corr < MIC_MIN_CORR) why = "edges do not match";
+    }
+    const bool accept = fresh && !why;
+    if (fresh) {
+        ESP_LOGI(TAG, "miccal: %s %d clap %d: lag %+.2f bal %.2f corr %.2f peak %d L %d R %d%s%s",
                  u->mic_step < MIC_PLACES ? "place" : "check", u->mic_step + 1, u->mic_n + 1, s->dir_lag, s->dir_conf,
-                 s->mic_rms_l, s->mic_rms_r, accept ? "" : " (ignored)");
+                 s->dir_corr, s->dir_peak, s->mic_rms_l, s->mic_rms_r, why ? " ignored: " : "", why ? why : "");
     }
     if (u->mic_step >= MIC_PLACES) {
         if (accept && u->mic_ok) {
@@ -655,7 +687,7 @@ static void miccal_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *s)
     if (!accept) return;
     u->mic_clap_ms = now_ms;
     u->mic_lag[u->mic_step][u->mic_n++] = s->dir_lag;
-    snprintf(u->text_b, sizeof u->text_b, "clap %d: lag %+.2f conf %.2f", u->mic_n, s->dir_lag, s->dir_conf);
+    snprintf(u->text_b, sizeof u->text_b, "clap %d: lag %+.2f corr %.2f", u->mic_n, s->dir_lag, s->dir_corr);
     dirty_add(u, 40, CAL_VAL_Y + 20, W - 40, CAL_VAL_Y + 44);
     dirty_add(u, 80, CAL_BAR_Y, W - 80, CAL_BAR_Y + 32);
     if (u->mic_n < MIC_CLAPS) return;

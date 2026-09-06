@@ -711,6 +711,8 @@ static void render_task(void *arg)
             sens.dir_conf = af.dir_conf;
             sens.dir_lag = af.dir_lag;
             sens.dir_n = af.dir_n;
+            sens.dir_corr = af.dir_corr;
+            sens.dir_peak = af.dir_peak;
             sens.mic_rms = (int)af.raw_loud;
             sens.mic_rms_l = (int)af.rms_l;
             sens.mic_rms_r = (int)af.rms_r;
@@ -779,10 +781,10 @@ static void render_task(void *arg)
             const uint32_t elapsed_ms = (uint32_t)((now_us - stats_t0) / 1000);
             pmic_battery_t b;
             power_battery(&b);
-            char audio_s[192] = "";
+            char audio_s[224] = "";
             if (af.active) {
-                snprintf(audio_s, sizeof audio_s, " | audio rms %.0f kick %.2f ratio %.2f, beats %" PRIu32 " %d bpm conf %.2f, L %.0f R %.0f dir %+.2f clap %u lag %+.2f c %.2f (loud %u pre %d%%)",
-                         af.raw_loud, af.kick, af.bass_ratio, af.beat_count, (int)af.bpm, af.tempo_conf, af.rms_l, af.rms_r, af.dir, af.dir_n, af.dir_lag, af.dir_conf, af.dir_loud, af.dir_pre);
+                snprintf(audio_s, sizeof audio_s, " | audio rms %.0f kick %.2f ratio %.2f, beats %" PRIu32 " %d bpm conf %.2f, L %.0f R %.0f dir %+.2f clap %u lag %+.2f bal %.2f corr %.2f pk %d (loud %u pre %d%%)",
+                         af.raw_loud, af.kick, af.bass_ratio, af.beat_count, (int)af.bpm, af.tempo_conf, af.rms_l, af.rms_r, af.dir, af.dir_n, af.dir_lag, af.dir_conf, af.dir_corr, af.dir_peak, af.dir_loud, af.dir_pre);
             }
             ESP_LOGI(TAG, "%s %s [%s, energy %.2f]: %" PRIu32 " fps | raster %" PRIu32 " us avg, %" PRIu32 " us max | push %" PRIu32 " us | %" PRIu32 " B/frame, %" PRIu32 " rect(s) | pace %s%s (%" PRIu32 " TE/s) | bri %d%% | batt %u mV %d%%%s%s%s | stack %u B free",
                      power_state_name(state), c.mode == MODE_UI ? ui_screen_name(c.ui.screen) : anim_name(c.sm.id),

@@ -32,8 +32,13 @@ void micdir_reset(micdir_t *d);
 
 /*
  * One frame of interleaved stereo (L = slot 0, R = slot 1), `frame` samples, whose
- * largest magnitude is `peak`. Returns true when a transient was timed: *lag is the
- * arrival-time difference t_R - t_L in samples (positive = the sound reached L first),
- * *conf 0..1 says how evenly the two mics heard it.
+ * largest magnitude is `peak`. Returns true when a transient was timed and fills *out.
  */
-bool micdir_frame(micdir_t *d, const int16_t *pcm, int frame, int peak, float *lag, float *conf);
+typedef struct {
+    float lag;              /* arrival-time difference t_R - t_L in samples (positive = reached L first) */
+    float balance;          /* 0..1: the quieter mic's peak over the louder one's */
+    float corr;             /* 0..1: normalised correlation of the two edges at the best lag */
+    int peak;               /* the louder mic's peak in the edge window, LSB */
+} micdir_result_t;
+
+bool micdir_frame(micdir_t *d, const int16_t *pcm, int frame, int peak, micdir_result_t *out);

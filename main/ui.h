@@ -56,7 +56,8 @@ typedef struct {
     int run_min;            /* minutes into the current discharge / charge stretch */
     /* microphones (mic wizard) */
     bool mic_on;
-    float dir, dir_conf, dir_lag;
+    float dir, dir_conf, dir_lag, dir_corr;
+    int dir_peak;
     int mic_rms, mic_rms_l, mic_rms_r;
     int dir_n;
 } ui_sensors_t;
@@ -103,6 +104,9 @@ typedef struct {
     int mic_seen_n;         /* transient counter last consumed */
     uint32_t mic_step_ms;   /* when the current place started (claps ignored for a moment) */
     uint32_t mic_clap_ms;   /* last accepted clap */
+    uint32_t mic_move_ms;   /* last time the accelerometer saw the device being handled */
+    int16_t mic_prev_acc[3];
+    uint32_t mic_prev_acc_ms;
     float mic_lag[3][3];
     mic_cal_t mic_result;
     bool mic_ok;
