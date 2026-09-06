@@ -29,11 +29,11 @@
 #define GROGGY_MS           3000
 #define FACE_DOWN_MS        1500
 #define WAKING_MS           500
-#define SNIFF_MS            4200     /* long enough for six beats at 90 bpm */
-#define MUSIC_MIN_BEATS     6
+#define SNIFF_MS            5200     /* long enough for eight beats at 100 bpm */
+#define MUSIC_MIN_BEATS     8
 #define MUSIC_QUIET_MS      6000     /* no beat for this long: the music is over */
-#define MUSIC_BASS_RATIO    0.25f    /* sub-bass share below this is talk, not a kick drum */
-#define MUSIC_TEMPO_CONF    0.75f
+#define MUSIC_BASS_RATIO    0.08f    /* sub-bass share: phone speakers give 0.1-0.2 on psytrance, so only reject near-zero */
+#define MUSIC_TEMPO_CONF    0.75f    /* the steady tempo is what tells a kick drum from a conversation */
 #define GAZE_PX_X           12.f
 #define GAZE_PX_Y           8.f
 
