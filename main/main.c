@@ -654,6 +654,7 @@ static void render_task(void *arg)
                 pmic_battery_t ub;
                 power_battery(&ub);
                 bi.usb = ub.vbus;
+                bi.dancing = c.user_anim == ANIM_DANCE;
             }
             bi.have_accel = power_last_accel(bi.accel, &bi.accel_ms);
             behavior_update(&c.beh, &bi, now_ms, &bo);

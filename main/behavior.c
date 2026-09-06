@@ -205,12 +205,15 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
     out->tap_side = b->spike_side;
     b->pending = BEH_EV_NONE;
 
-    const bool shaking_hard = b->shake_time_ms >= DIZZY_AFTER_MS;
+    /* dancing: the owner is dancing with him, so shaking is part of it, never dizziness or a knock-out */
+    const bool dancing = b->state == BEH_MUSIC || in->dancing;
+    if (dancing) b->shake_time_ms = 0.f;
+    const bool shaking_hard = !dancing && b->shake_time_ms >= DIZZY_AFTER_MS;
     const bool face_down = b->face_down_since_ms && (now_ms - b->face_down_since_ms) >= FACE_DOWN_MS;
     const uint32_t in_state = now_ms - b->state_since_ms;
 
     /* --- transitions, highest priority first --- */
-    if (b->state != BEH_KNOCKED_OUT && b->shake_time_ms >= KO_AFTER_MS) {
+    if (!dancing && b->state != BEH_KNOCKED_OUT && b->shake_time_ms >= KO_AFTER_MS) {
         enter(b, BEH_KNOCKED_OUT, now_ms);
         b->shake_time_ms = 0.f;
         b->sniffing = false;

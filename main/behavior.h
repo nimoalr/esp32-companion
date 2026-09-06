@@ -21,6 +21,7 @@ typedef struct {
     bool user_interacting;      /* touch in the last few seconds */
     uint32_t tap_count;         /* running count of taps; a tap during a music reaction ends it */
     bool usb;                   /* on the charger: the microphones can stay on */
+    bool dancing;               /* the dance is on by the user's choice: heavy handling is expected */
 } behavior_in_t;
 
 typedef enum {
