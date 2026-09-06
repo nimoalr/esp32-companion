@@ -61,6 +61,13 @@ esp_err_t pmic_init(void)
                  dc, l0, l1, 500 + 100 * (v[0] & 0x1F), 500 + 100 * (v[1] & 0x1F), 500 + 100 * (v[2] & 0x1F),
                  500 + 100 * (v[3] & 0x1F), 500 + 100 * (v[4] & 0x1F), 500 + 100 * (v[5] & 0x1F));
     }
+    /* PWR button: the long-press flag after 2 s (reg 0x27 IRQLEVEL bits 5:4 = 10), the
+     * power-off hold untouched; enable the short/long press flags (reg 0x41 bits 3, 2) */
+    uint8_t lvl;
+    if (rd(0x27, &lvl) == ESP_OK) wr(0x27, (uint8_t)((lvl & ~0x30) | 0x20));
+    uint8_t en;
+    if (rd(0x41, &en) == ESP_OK) wr(0x41, (uint8_t)(en | 0x0C));
+    wr(0x49, 0x0C);                          /* clear stale flags */
     pmic_battery_t b;
     if (pmic_read_battery(&b) == ESP_OK) {
         ESP_LOGI(TAG, "AXP2101 ok: battery %s, %u mV, %d%%, %s%s", b.present ? "present" : "absent",
@@ -95,6 +102,20 @@ esp_err_t pmic_power_off(void)
     ESP_RETURN_ON_ERROR(rd(REG_COMMON_CONFIG, &v), TAG, "common config");
     ESP_LOGW(TAG, "powering off");
     return wr(REG_COMMON_CONFIG, (uint8_t)(v | 0x01));
+}
+
+esp_err_t pmic_poll_key(bool *short_press, bool *long_press)
+{
+    uint8_t st;
+    *short_press = *long_press = false;
+    ESP_RETURN_ON_ERROR(rd(0x49, &st), TAG, "irq status");
+    const uint8_t keys = st & 0x0C;         /* bit 3 short press, bit 2 long press */
+    if (keys) {
+        *short_press = (keys & 0x08) != 0;
+        *long_press = (keys & 0x04) != 0;
+        wr(0x49, keys);                     /* write 1 to clear */
+    }
+    return ESP_OK;
 }
 
 esp_err_t pmic_read_vbus(bool *vbus)

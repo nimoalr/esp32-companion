@@ -159,6 +159,9 @@ typedef struct {
     ui_t ui;
     behavior_t beh;
     persona_t persona;
+    int poke_eye;
+    uint32_t stroke_count;
+    bool stroke_forehead;
     accessories_t acc;
     uint32_t tap_count;
     bool mic_ok;
@@ -616,29 +619,42 @@ static void render_task(void *arg)
     for (;;) {
         now_ms = ms_now();
 
-        /* Gestures. Eyes: tap = next expression, swipes = next/previous, hold = setup UI. */
+        /* Gestures on the eyes: a tap is a poke, a stroke is petting; the PWR button opens the setup UI. */
         touch_event_t ev;
         while (xQueueReceive(s_tap_q, &ev, 0) == pdTRUE) {
             if (c.mode == MODE_UI) {
                 ui_input(&c.ui, map_touch(ev.type), now_ms);
             } else if (state == POWER_ACTIVE) {
+                /* the touch language: the whole glass is his body */
                 switch (ev.type) {
-                case TOUCH_TAP:
+                case TOUCH_TAP: {
                     c.tap_count++;         /* a poke: the character reacts, the expression is his */
+                    const int lx = BOARD_LCD_H_RES / 2 - 95, rx = BOARD_LCD_H_RES / 2 + 95, cy = BOARD_LCD_V_RES / 2;
+                    const int dxl = (int)ev.x - lx, dxr = (int)ev.x - rx, dy = (int)ev.y - cy;
+                    c.poke_eye = (abs(dxl) < 75 && abs(dy) < 95) ? 1 : (abs(dxr) < 75 && abs(dy) < 95) ? 2 : 0;
                     break;
-                case TOUCH_SWIPE_LEFT:     /* swipes still step through the expressions by hand */
-                    c.user_anim = (anim_id_t)((c.user_anim + 1) % ANIM_COUNT);
-                    break;
+                }
+                case TOUCH_SWIPE_LEFT:
                 case TOUCH_SWIPE_RIGHT:
-                    c.user_anim = (anim_id_t)((c.user_anim + ANIM_COUNT - 1) % ANIM_COUNT);
+                case TOUCH_SWIPE_UP:
+                case TOUCH_SWIPE_DOWN:
+                    c.stroke_count++;      /* a stroke; across the forehead it is petting */
+                    c.stroke_forehead = ev.y < 150 && (ev.type == TOUCH_SWIPE_LEFT || ev.type == TOUCH_SWIPE_RIGHT);
                     break;
-                case TOUCH_SWIPE_DOWN:  enter_ui(&c, false, now_ms); break;
                 default: break;   /* a long press is attention (handled below), not a gesture */
                 }
             }
         }
         if (c.mode == MODE_UI) {
             run_ui_actions(&c, now_ms);
+        }
+        /* the PWR button: a 2 s hold opens or closes the setup screens */
+        {
+            const int key = power_take_key();
+            if (key == 2 && state != POWER_SLEEP) {
+                if (c.mode == MODE_UI) leave_ui(&c, now_ms);
+                else enter_ui(&c, false, now_ms);
+            }
         }
 
         /* Character: environment reactions decide what is shown and whether the mics run. */
@@ -655,6 +671,9 @@ static void render_task(void *arg)
                 power_battery(&ub);
                 bi.usb = ub.vbus;
                 bi.dancing = c.user_anim == ANIM_DANCE;
+                bi.poke_eye = c.poke_eye;
+                bi.stroke_count = c.stroke_count;
+                bi.stroke_forehead = c.stroke_forehead;
             }
             bi.have_accel = power_last_accel(bi.accel, &bi.accel_ms);
             behavior_update(&c.beh, &bi, now_ms, &bo);
@@ -702,11 +721,13 @@ static void render_task(void *arg)
                 .batt_pct = pb.present ? pb.percent : -1,
                 .speaking = speech_busy(),
                 .speech = af.active && af.speech,
+                .valence = behavior_valence(&c.beh),
                 .event = c.mode == MODE_EYES ? bo.event : BEH_EV_NONE,
                 .chattiness = g_settings.chattiness,
             };
             persona_say_t say;
             persona_tick(&c.persona, &pi, now_ms, &say);
+            if (say.feel != 0.f) behavior_feel(&c.beh, say.feel);
             switch (say.kind) {
             case SAY_GESTURE: speech_gesture((voice_id_t)say.id, say.level, say.interrupt); break;
             case SAY_WORD:    speech_word(say.id, say.level, say.interrupt); break;
@@ -859,9 +880,9 @@ static void render_task(void *arg)
                 snprintf(audio_s, sizeof audio_s, " | audio rms %.0f kick %.2f ratio %.2f, beats %" PRIu32 " %d bpm conf %.2f, speech %d/%.2f, L %.0f R %.0f dir %+.2f clap %u lag %+.2f bal %.2f corr %.2f pk %d (loud %u pre %d%%)",
                          af.raw_loud, af.kick, af.bass_ratio, af.beat_count, (int)af.bpm, af.tempo_conf, af.speech, af.speech_depth, af.rms_l, af.rms_r, af.dir, af.dir_n, af.dir_lag, af.dir_conf, af.dir_corr, af.dir_peak, af.dir_loud, af.dir_pre);
             }
-            ESP_LOGI(TAG, "%s %s [%s, energy %.2f]: %" PRIu32 " fps | raster %" PRIu32 " us avg, %" PRIu32 " us max | push %" PRIu32 " us | %" PRIu32 " B/frame, %" PRIu32 " rect(s) | pace %s%s (%" PRIu32 " TE/s) | bri %d%% | batt %u mV %d%%%s%s%s | stack %u B free",
+            ESP_LOGI(TAG, "%s %s [%s, energy %.2f, valence %+.2f]: %" PRIu32 " fps | raster %" PRIu32 " us avg, %" PRIu32 " us max | push %" PRIu32 " us | %" PRIu32 " B/frame, %" PRIu32 " rect(s) | pace %s%s (%" PRIu32 " TE/s) | bri %d%% | batt %u mV %d%%%s%s%s | stack %u B free",
                      power_state_name(state), c.mode == MODE_UI ? ui_screen_name(c.ui.screen) : anim_name(c.sm.id),
-                     behavior_state_name(c.beh.state), behavior_energy(&c.beh),
+                     behavior_state_name(c.beh.state), behavior_energy(&c.beh), behavior_valence(&c.beh),
                      (frames * 1000u + elapsed_ms / 2) / elapsed_ms,
                      (uint32_t)(raster_us_sum / frames), raster_us_max, s_push_frames ? s_push_us_sum / s_push_frames : 0,
                      bytes / frames, (rects_sum + frames / 2) / frames,

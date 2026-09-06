@@ -110,7 +110,7 @@ used as a wake button. Holding PWR for 6 s forces the PMIC off at any time
 (AXP2101 hardware default). The state machine can be disabled entirely
 (`EYES_POWER_ENABLE=n`) for benchmarking.
 
-**Setup UI.** Swipe down over the eyes to open a small setup menu
+**Setup UI.** Hold the PWR button for 2 s to open a small setup menu
 styled like a terminal UI and laid out for the disc: title with a rule, a list
 with an inverted selection bar, bracketed progress bars, a thin ring at the
 edge, hints along the bottom. Navigation is single-touch: swipe up/down to
@@ -127,7 +127,7 @@ move, tap to select, hold (or swipe right) to go back. The menu leaves after
 | Back to eyes | Leave the menu. |
 
 Text is Spleen (BSD-2-Clause, `tools/bdf2c.py` converts the BDF files into
-`main/font_spleen_*.c`). In the eyes, a tap is a poke (the character reacts with a face of his own choosing), a swipe left/right steps through the expressions by hand.
+`main/font_spleen_*.c`). The setup screens open with a 2 s hold of the PWR button and close the same way. The whole glass belongs to the character: a tap is a poke (on an eye, that eye shuts), a stroke across the forehead is petting, a finger resting is attention.
 
 **Persistence.** Brightness and the accelerometer calibration live in NVS
 (namespace `companion`). `idf.py erase-flash` brings back the first-boot

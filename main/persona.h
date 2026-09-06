@@ -18,7 +18,8 @@ typedef struct {
     int power;                  /* 0 active, 1 drowsy, 2 asleep */
     behavior_state_t beh;
     anim_id_t anim;             /* what the eyes show */
-    float energy;               /* 0..1 mood energy */
+    float energy;               /* 0..1 stimulation */
+    float valence;              /* -1..1 how well he has been treated */
     bool finger;                /* a finger resting on the screen */
     uint32_t tap_count;         /* running count of taps on the eyes */
     bool usb;
@@ -37,6 +38,7 @@ typedef struct {
     float level;                /* 0..1 */
     float energy;               /* babble */
     bool interrupt;             /* cut whatever is playing */
+    float feel;                 /* valence nudge that goes with the event (0 = none) */
 } persona_say_t;
 
 typedef struct {

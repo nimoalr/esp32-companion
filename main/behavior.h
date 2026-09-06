@@ -22,6 +22,10 @@ typedef struct {
     uint32_t tap_count;         /* running count of taps; a tap during a music reaction ends it */
     bool usb;                   /* on the charger: the microphones can stay on */
     bool dancing;               /* the dance is on by the user's choice: heavy handling is expected */
+    /* touch language: counters, so an event is a change */
+    int poke_eye;               /* with the latest tap: 0 elsewhere, 1 left eye, 2 right eye */
+    uint32_t stroke_count;      /* swipes across the glass */
+    bool stroke_forehead;       /* the latest stroke was across the top (petting) */
 } behavior_in_t;
 
 typedef enum {
@@ -54,6 +58,7 @@ typedef enum {
     BEH_CARRIED,                /* walking rhythm for a while: content */
     BEH_STARTLED,               /* a knock on the body */
     BEH_POKED,                  /* a tap on the eyes */
+    BEH_PETTED,                 /* strokes across the forehead */
 } behavior_state_t;
 
 
@@ -91,7 +96,13 @@ typedef struct {
     uint32_t listen_roll_ms;
     anim_id_t poke_anim;
     /* mood */
-    float energy;               /* 0..1, drifts; fed by handling and touch */
+    float energy;               /* 0..1 stimulation, Vector's sense: rises with anything happening, decays */
+    float valence;              /* -1..1: how well he has been treated lately */
+    anim_id_t idle_anim;        /* the face of the moment while nothing happens, from the mood */
+    uint32_t idle_roll_ms;
+    uint32_t strokes_seen;
+    uint32_t last_stroke_ms;
+    int poked_eye;              /* 0 none, 1 left, 2 right, during BEH_POKED */
     uint32_t mood_tick_ms;
     uint32_t rng;
     uint32_t taps_seen;
@@ -102,6 +113,9 @@ typedef struct {
 } behavior_t;
 
 float behavior_energy(const behavior_t *b);
+float behavior_valence(const behavior_t *b);
+/* a nudge to the valence from outside the behaviour (the persona's judgement of an event) */
+void behavior_feel(behavior_t *b, float valence_delta);
 
 void behavior_init(behavior_t *b, uint32_t now_ms);
 void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, behavior_out_t *out);

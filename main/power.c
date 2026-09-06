@@ -20,7 +20,7 @@ static const char *TAG = "power";
 #define SAMPLE_MS_DROWSY   200
 #define MOTION_EVAL_MS     50       /* the "someone is handling it" detector keeps its own cadence */
 #define BATTERY_MS         5000
-#define VBUS_MS            250      /* plug/unplug shows up within a quarter second */
+#define VBUS_MS            100      /* plug/unplug and the PWR button show up within a tenth of a second */
 #define MOTION_HITS        2        /* consecutive samples above threshold */
 
 static power_state_t s_state = POWER_ACTIVE;
@@ -34,6 +34,7 @@ static bool s_cpu_held, s_nosleep_held;
 
 static bool s_imu_ok, s_pmic_ok;
 static uint32_t s_last_sample_ms, s_last_motion_eval_ms, s_last_battery_ms, s_last_vbus_ms;
+static volatile int s_key;
 static int32_t s_grav[3];
 static bool s_grav_init;
 static int s_motion_hits;
@@ -193,6 +194,11 @@ power_state_t power_update(uint32_t now_ms, uint32_t touch_ms)
         if (pmic_read_vbus(&vbus) == ESP_OK && vbus != s_batt.vbus) {
             s_last_battery_ms = 0;      /* charge state changed: refresh everything now */
         }
+        bool sp, lp;
+        if (pmic_poll_key(&sp, &lp) == ESP_OK && (sp || lp)) {
+            s_key = lp ? 2 : 1;
+            s_last_activity_ms = now_ms;
+        }
     }
     if (s_pmic_ok && now_ms - s_last_battery_ms >= BATTERY_MS) {
         s_last_battery_ms = now_ms;
@@ -252,6 +258,13 @@ void power_allow_light_sleep(bool allow)
         hold_cpu(!allow);
         hold_nosleep(!allow);
     }
+}
+
+int power_take_key(void)
+{
+    const int k = s_key;
+    s_key = 0;
+    return k;
 }
 
 power_wake_t power_light_sleep(uint32_t max_ms)

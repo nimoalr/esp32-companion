@@ -39,7 +39,7 @@ static void write_ppm(const char *path)
 
 int main(void)
 {
-    static const float lean[3] = { 22.f, 0.f, -22.f };   /* dy: + is down; a voice at the USB end (bottom) pulls the eyes down */
+    static const float lean[3] = { 55.f, 0.f, -55.f };   /* dy: + is down; a voice at the USB end (bottom) pulls the eyes down */
     static const char *names[3] = { "usb_end", "centre", "lanyard_end" };
     for (int i = 0; i < 3; i++) {
         eyes_t eyes; anim_sm_t sm; raster_shape_t sh[2];

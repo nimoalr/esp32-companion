@@ -55,6 +55,9 @@ bool power_on_usb(void);
 void power_allow_light_sleep(bool allow);
 
 /* SLEEP: block in light sleep for at most `max_ms`. Restores the IMU to polling mode on return. */
+/* PWR button press since the last call: 0 none, 1 short, 2 long (2 s). A press counts as activity. */
+int power_take_key(void);
+
 power_wake_t power_light_sleep(uint32_t max_ms);
 
 /* Back to ACTIVE after a wake (resets the inactivity timer). */

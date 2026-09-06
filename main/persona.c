@@ -122,6 +122,7 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
     else if (in->tap_count != pv->tap_count && in->power == 0 && !in->in_ui && poke_flurry(p, now_ms) && chance(p, 60)) {
         static const int w[] = { CLIP_DO_NOT_TOUCH_ME, CLIP_EXCUSE_ME, CLIP_HOW_RUDE, CLIP_NOPE };
         say_word(out, pick(p, w, 4), 1.f, true);
+        out->feel = -0.1f;
         p->taps_n = 0;
     }
     /* the behaviour's reactions */
@@ -133,6 +134,7 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
             for (int i = 0; i < p->dizzy_n; i++) if ((int32_t)(now_ms - p->dizzy_ms[i]) < 120000) n++;
             if (p->dizzy_n < 4) p->dizzy_ms[p->dizzy_n++] = now_ms;
             else { memmove(p->dizzy_ms, p->dizzy_ms + 1, sizeof(uint32_t) * 3); p->dizzy_ms[3] = now_ms; }
+            out->feel = -0.12f;
             if (n == 0) say_gesture(out, VOICE_PROTEST, 1.f, true);
             else if (n == 1) say_word(out, chance(p, 50) ? CLIP_HOW_RUDE : CLIP_DO_NOT_TOUCH_ME, 1.f, true);
             else {
@@ -153,7 +155,24 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
         }
         case BEH_UNIMPRESSED: say_word(out, chance(p, 50) ? CLIP_BORING : CLIP_MEH, 0.9f, false); break;
         case BEH_CARRIED:     say_gesture(out, VOICE_PURR, 0.8f, false); break;
-        case BEH_POKED:       if (chance(p, 45)) react_to_anim(p, in->anim, level, out); break;
+        case BEH_POKED:
+            if (in->valence < -0.3f && chance(p, 50)) {
+                static const int w[] = { CLIP_DO_NOT_TOUCH_ME, CLIP_GO_AWAY, CLIP_LEAVE_ME_ALONE, CLIP_NOPE, CLIP_BUZZ_OFF };
+                say_word(out, pick(p, w, 5), 1.f, false);
+            } else if (chance(p, 45)) react_to_anim(p, in->anim, level, out);
+            break;
+        case BEH_PETTED:
+            out->feel = 0.05f;
+            if (chance(p, 60)) say_gesture(out, VOICE_PURR, 0.8f, false);
+            else say_word(out, chance(p, 50) ? CLIP_OOH_LA_LA : CLIP_YUMMY, level, false);
+            break;
+        case BEH_STARTLED: {
+            static const int w[] = { CLIP_EXCUSE_ME, CLIP_HOW_RUDE, CLIP_DO_NOT_TOUCH_ME, CLIP_NOPE };
+            out->feel = -0.05f;
+            if (chance(p, 50)) say_gesture(out, VOICE_SURPRISED, 1.f, true);
+            else say_word(out, pick(p, w, 4), 1.f, true);
+            break;
+        }
         default: break;
         }
     }
@@ -170,13 +189,7 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
             if (chance(p, 40)) say_gesture(out, VOICE_HM, level, false);
             else if (chance(p, 50)) say_word(out, chance(p, 50) ? CLIP_OKAY : CLIP_BYE_BYE, level, false);
             break;
-        case BEH_EV_BODY_TAP: {
-            static const int w[] = { CLIP_EXCUSE_ME, CLIP_HOW_RUDE, CLIP_DO_NOT_TOUCH_ME, CLIP_NOPE };
-            if (chance(p, 50)) say_gesture(out, VOICE_SURPRISED, 1.f, true);
-            else say_word(out, pick(p, w, 4), 1.f, true);
-            break;
-        }
-        default: break;
+        default: break;     /* a body tap speaks through the startled state */
         }
     }
     /* the charger: every plug and unplug gets a line, and the line depends on how hungry he is */
@@ -254,9 +267,11 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
                 react_to_anim(p, in->anim, level, out);
                 if (out->kind == SAY_NONE) say_gesture(out, VOICE_HM, level, false);
             } else {
-                static const int w[] = { CLIP_HELLO, CLIP_I_AM_BORED, CLIP_MEH, CLIP_WHATEVER_HUMAN, CLIP_I_AM_WATCHING_YOU,
-                                         CLIP_PEEKABOO, CLIP_AHA, CLIP_HI_THERE };
-                int id = pick(p, w, 8);
+                static const int nice[] = { CLIP_HELLO, CLIP_PEEKABOO, CLIP_AHA, CLIP_HI_THERE, CLIP_OOH_LA_LA, CLIP_YUMMY, CLIP_BRAVO, CLIP_HOORAY };
+                static const int flat[] = { CLIP_HELLO, CLIP_I_AM_BORED, CLIP_MEH, CLIP_WHATEVER_HUMAN, CLIP_I_AM_WATCHING_YOU,
+                                            CLIP_PEEKABOO, CLIP_AHA, CLIP_HI_THERE };
+                static const int sour[] = { CLIP_BORING, CLIP_MEH, CLIP_WHATEVER, CLIP_AS_IF, CLIP_YOU_WISH, CLIP_NERD, CLIP_LOSER, CLIP_I_AM_BORED };
+                int id = in->valence > 0.35f ? pick(p, nice, 8) : in->valence < -0.35f ? pick(p, sour, 8) : pick(p, flat, 8);
                 if (in->batt_pct >= 0 && in->batt_pct < 40 && chance(p, 30)) id = CLIP_FEED_ME;
                 say_word(out, id, level, false);
             }
