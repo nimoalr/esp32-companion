@@ -5,10 +5,14 @@
  * the speech's own pitch (autocorrelation) shifted up, or noise where the speech is
  * unvoiced. A little of the speech above 3 kHz is added back for the consonants.
  *
- *   vocode in.wav out.wav [pitch_mult=1.6] [robot=0.85]
+ *   vocode in.wav out.wav [base_hz=587] [expand=2.0] [robot=0.85]
  *
- * pitch_mult scales the carrier's pitch relative to the speech; robot is the share of
- * vocoded signal against the dry speech (1 = pure vocoder).
+ * The carrier is the procedural voice's own tone (main/voice.c: five harmonics, an
+ * octave partner, 5.5 Hz vibrato, a 2.8 kHz one-pole) so the words match the chirps.
+ * Its pitch sits at base_hz (587 = the high register) and follows the speech's
+ * intonation measured in semitones around the speech's median pitch, multiplied by
+ * expand, because text-to-speech is flat. robot is the share of vocoded signal against
+ * the dry speech (1 = pure vocoder).
  */
 #include <math.h>
 #include <stdbool.h>
@@ -108,8 +112,9 @@ static void pitch_track(const float *x, int n, float *hz_out, int frames)
 int main(int argc, char **argv)
 {
     if (argc < 3) { fprintf(stderr, "usage: vocode in.wav out.wav [pitch_mult] [robot]\n"); return 1; }
-    const float pitch_mult = argc > 3 ? (float)atof(argv[3]) : 1.6f;
-    const float robot = argc > 4 ? (float)atof(argv[4]) : 0.85f;
+    const float base_hz = argc > 3 ? (float)atof(argv[3]) : 587.f;
+    const float expand = argc > 4 ? (float)atof(argv[4]) : 2.f;
+    const float robot = argc > 5 ? (float)atof(argv[5]) : 0.85f;
     int n;
     int16_t *pcm = wav_read(argv[1], &n);
     float *x = malloc(sizeof(float) * (size_t)n), *y = calloc((size_t)n, sizeof(float));
@@ -118,6 +123,12 @@ int main(int argc, char **argv)
     const int hop = FS * 10 / 1000, frames = n / hop + 1;
     float *hz = calloc((size_t)frames, sizeof(float));
     pitch_track(x, n, hz, frames);
+    /* the speech's median voiced pitch: intonation is measured around it */
+    float voiced_list[4096];
+    int nv = 0;
+    for (int f = 0; f < frames && nv < 4096; f++) if (hz[f] > 0.f) voiced_list[nv++] = hz[f];
+    for (int a = 1; a < nv; a++) { const float t = voiced_list[a]; int b = a; while (b > 0 && voiced_list[b - 1] > t) { voiced_list[b] = voiced_list[b - 1]; b--; } voiced_list[b] = t; }
+    const float median_hz = nv ? voiced_list[nv / 2] : 200.f;
 
     biq_t an[BANDS][2], sy[BANDS][2];
     float env[BANDS] = { 0 };
@@ -129,9 +140,10 @@ int main(int argc, char **argv)
     biq_t hp1, hp2;     /* sibilance path: the speech above ~3 kHz */
     bp_init(&hp1, 4500.f, 0.7f); bp_init(&hp2, 4500.f, 0.7f);
     const float env_k_up = 1.f - expf(-2.f * (float)M_PI * 60.f / FS), env_k_dn = 1.f - expf(-2.f * (float)M_PI * 25.f / FS);
-    float ph = 0.f, cur_hz = 200.f, vib = 0.f;
+    float ph = 0.f, cur_st = 0.f, vib = 0.f;
     unsigned seed = 1;
     float lp_car = 0.f;
+    const float lp_k = 1.f - expf(-2.f * (float)M_PI * 2800.f / FS);
     for (int i = 0; i < n; i++) {
         /* carrier: pitch from the track (interpolated), shifted; noise where unvoiced */
         const int f = i / hop;
@@ -139,17 +151,26 @@ int main(int argc, char **argv)
         const float h0 = hz[f], h1 = f + 1 < frames ? hz[f + 1] : h0;
         const float voiced_hz = h0 > 0.f && h1 > 0.f ? h0 + (h1 - h0) * t : (h0 > 0.f ? h0 : h1);
         const bool voiced = voiced_hz > 0.f;
-        if (voiced) cur_hz += (voiced_hz * pitch_mult - cur_hz) * 0.02f;
+        if (voiced) {
+            /* intonation in semitones around the median, expanded, clamped to the register's range */
+            float st = expand * 12.f * log2f(voiced_hz / median_hz);
+            if (st > 12.f) st = 12.f;
+            if (st < -4.f) st = -4.f;
+            cur_st += (st - cur_st) * 0.03f;
+        }
         vib += 5.5f / FS;
         if (vib >= 1.f) vib -= 1.f;
-        const float hzv = cur_hz * (1.f + 0.02f * sinf(2.f * (float)M_PI * vib));
+        const float hzv = base_hz * exp2f((cur_st + 0.3f * sinf(2.f * (float)M_PI * vib)) / 12.f);
         ph += hzv / FS;
         if (ph >= 1.f) ph -= 1.f;
-        const float saw = 2.f * ph - 1.f;
         seed = seed * 1664525u + 1013904223u;
         const float noise = (float)(int32_t)seed / 2147483648.f;
-        float car = voiced ? saw + 0.15f * noise : 0.7f * noise;
-        lp_car += (car - lp_car) * 0.75f;       /* tame the saw's top */
+        const float tp = 2.f * (float)M_PI * ph;
+        /* the procedural voice's tone: harmonics 1..5 at 1/k and an octave partner */
+        const float tone = sinf(tp) + 0.5f * sinf(2.f * tp) + 0.33f * sinf(3.f * tp) + 0.25f * sinf(4.f * tp) +
+                           0.2f * sinf(5.f * tp) + 0.35f * sinf(2.f * tp);
+        float car = voiced ? 0.6f * tone + 0.08f * noise : 0.7f * noise;
+        lp_car += (car - lp_car) * lp_k;
         car = lp_car;
         /* bands */
         float out = 0.f;
@@ -170,6 +191,6 @@ int main(int argc, char **argv)
     wav_write(argv[2], pcm, n);
     int voiced_frames = 0;
     for (int f = 0; f < frames; f++) voiced_frames += hz[f] > 0.f;
-    printf("%s: %d ms, %d%% voiced\n", argv[2], n * 1000 / FS, voiced_frames * 100 / (frames ? frames : 1));
+    printf("%s: %d ms, %d%% voiced, speech median %.0f Hz\n", argv[2], n * 1000 / FS, voiced_frames * 100 / (frames ? frames : 1), median_hz);
     return 0;
 }

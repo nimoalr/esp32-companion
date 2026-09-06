@@ -1,16 +1,17 @@
 #!/bin/zsh
 # Render the word clips: macOS text-to-speech -> 16 kHz mono WAV -> the channel vocoder,
 # then a medley per voice under docs/voice/ for listening.
-#   tools/host/words.sh [voice=Samantha] [pitch_mult=1.6] [robot=0.85]
+#   tools/host/words.sh [voice=Junior] [base_hz=587] [expand=2.0] [robot=0.85]
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT="$HERE/../.."
-VOICE=${1:-Samantha}
-PITCH=${2:-1.6}
-ROBOT=${3:-0.85}
+VOICE=${1:-Junior}
+BASE=${2:-587}
+EXPAND=${3:-2.0}
+ROBOT=${4:-0.85}
 OUT="$HERE/out/words/$VOICE"
 mkdir -p "$OUT"
-[ -x "$HERE/bin/vocode" ] || gcc -O2 -Wall -o "$HERE/bin/vocode" "$HERE/vocode.c" -lm
+gcc -O2 -Wall -o "$HERE/bin/vocode" "$HERE/vocode.c" -lm
 WORDS=(
   "hello" "uh oh" "wow" "oh no" "okay" "bye bye" "oopsie" "really?" "seriously?" "whatever" "no way"
   "thank you" "hooray" "sorry" "peekaboo" "bingo" "wakey wakey" "good night" "good morning" "ooh la la"
@@ -24,14 +25,14 @@ i=0
 for w in "${WORDS[@]}"; do
   n=$(printf "%02d" $i)
   slug=$(echo "$w" | tr -c 'a-zA-Z0-9\n' '_' | tr -s '_' | sed 's/_$//')
-  say -v "$VOICE" -r 175 -o "$OUT/$n.aiff" "$w"
+  say -v "$VOICE" -r 170 -o "$OUT/$n.aiff" "[[pmod 70]] $w"
   afconvert -f WAVE -d LEI16@16000 -c 1 "$OUT/$n.aiff" "$OUT/${n}_${slug}_dry.wav"
-  "$HERE/bin/vocode" "$OUT/${n}_${slug}_dry.wav" "$OUT/${n}_${slug}.wav" "$PITCH" "$ROBOT" >/dev/null
+  "$HERE/bin/vocode" "$OUT/${n}_${slug}_dry.wav" "$OUT/${n}_${slug}.wav" "$BASE" "$EXPAND" "$ROBOT" >/dev/null
   echo "$n $w" >> "$OUT/list.txt"
   i=$((i+1))
 done
 # medley: every clip with 400 ms of silence between
-python3 - "$OUT" "$ROOT/docs/voice/tts_words_${VOICE}_p${PITCH}.wav" <<'PY'
+python3 - "$OUT" "$ROOT/docs/voice/tts_words_${VOICE}_${BASE}hz_x${EXPAND}.wav" <<'PY'
 import sys, wave, glob, os
 out_dir, dest = sys.argv[1], sys.argv[2]
 files = sorted(f for f in glob.glob(os.path.join(out_dir, "*.wav")) if not f.endswith("_dry.wav") and "medley" not in f)
