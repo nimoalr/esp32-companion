@@ -6,6 +6,8 @@ idf_component_register(
         "raster.c"
         "eyes.c"
         "eye_symbols.c"
+        "dance_fill.c"
+        "dance_lasers.c"
         "anim.c"
         "i2c_bus.c"
         "imu.c"

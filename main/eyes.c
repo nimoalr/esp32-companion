@@ -377,6 +377,7 @@ static void update_color(eyes_t *e, uint32_t now_ms)
 void eyes_init(eyes_t *e, uint32_t now_ms)
 {
     memset(e, 0, sizeof(*e));
+    dance_fill_init();                 /* prepare sphere projection before the first dance frame */
     eye_init(&e->eye[0], BOARD_LCD_H_RES / 2 - EYE_SEP_PX, now_ms);
     eye_init(&e->eye[1], BOARD_LCD_H_RES / 2 + EYE_SEP_PX, now_ms);
 
@@ -743,6 +744,9 @@ static void params_to_shape(eyes_t *e, int which, const EyeParams *p, raster_sha
     s->hot = e->hot && !e->fx;
     s->fx = e->fx;
     if (e->fx) {
+        s->fx_tex=e->dance_fill.tex;
+        s->fx_sx=(int32_t)((32LL<<32)/(s->hw>0?s->hw:1));
+        s->fx_sy=e->fx==RASTER_FX_DISCO?s->fx_sx:(int32_t)((32LL<<32)/(s->hh>0?s->hh:1));
         s->fx_mix = (int)(e->fx_mix * 256.f);
         s->bar_lit = 31;
         s->bar_dim = 4;
@@ -753,17 +757,6 @@ static void params_to_shape(eyes_t *e, int which, const EyeParams *p, raster_sha
             const float hf = e->bar_h[which][i];
             s->bar_top[i] = hf <= 0.f ? s->hh + Q16_ONE : s->hh - (int32_t)(hf * (float)(2 * s->hh));
         }
-        /* disco: facets a tenth of the eye's height, the turn in eye widths */
-        s->disco_facet = s->hh / 5;
-        s->disco_spin = (int32_t)(e->disco_spin * (float)(2 * s->hw));
-        s->disco_seed = e->disco_seed;
-        /* spots */
-        s->spots_n = e->spots_n;
-        for (int i = 0; i < s->spots_n; i++) {
-            s->spot_x[i] = (int32_t)(e->spot_x[i] * (float)s->hw);
-            s->spot_y[i] = (int32_t)(e->spot_y[i] * (float)s->hh);
-        }
-        s->spot_r = (int32_t)(e->spot_r * (float)s->hh);
     }
     if (s->hot) {
         hot_fill(e->hot_gx[which], e->hot_gy[which], hx, hy, q16_mul(p->h, HOT_SIGMA));
@@ -820,6 +813,8 @@ void eyes_update(eyes_t *e, uint32_t now_ms, raster_shape_t out[2])
         }
     }
     update_color(e, now_ms);
+    if(e->fx==RASTER_FX_DISCO) dance_fill_disco(&e->dance_fill,e->disco_spin);
+    else if(e->fx==RASTER_FX_SPOTS) dance_fill_spots(&e->dance_fill,e->spots_n,e->spot_x,e->spot_y,e->spot_r);
     for (int i = 0; i < 2; i++) {
         params_to_shape(e, i, &p[i], &out[i]);
     }

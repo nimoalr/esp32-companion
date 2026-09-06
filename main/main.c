@@ -34,6 +34,7 @@
 #include "audio.h"
 #include "speech.h"
 #include "persona.h"
+#include "dance_lasers.h"
 #include "accessories.h"
 #include "behavior.h"
 
@@ -152,6 +153,7 @@ typedef struct {
     eyes_t eyes;
     anim_sm_t sm;
     raster_shape_t shapes[2];
+    dance_lasers_t lasers;
     rect_t prev[2];
     anim_id_t saved_anim;      /* expression to restore after DROWSY */
     anim_id_t user_anim;       /* what the user picked by tapping; behaviour may override it */
@@ -176,6 +178,7 @@ typedef struct {
     uint16_t *dst;
     int x0, y, w, rows;
     const raster_shape_t *shapes;
+    const dance_lasers_t *lasers;
 } raster_job_t;
 
 static raster_job_t s_wjob;
@@ -186,21 +189,21 @@ static void raster_worker(void *arg)
 {
     for (;;) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        raster_band(s_wjob.dst, s_wjob.x0, s_wjob.y, s_wjob.w, s_wjob.rows, s_wjob.shapes, 2);
+        dance_lasers_paint(s_wjob.lasers,s_wjob.dst, s_wjob.x0, s_wjob.y, s_wjob.w, s_wjob.rows, s_wjob.shapes);
         xTaskNotifyGive(s_render);
     }
 }
 
-static void raster_split(uint16_t *band, int x0, int y, int w, int rows, const raster_shape_t *shapes)
+static void raster_split(uint16_t *band, int x0, int y, int w, int rows, const raster_shape_t *shapes, const dance_lasers_t *lasers)
 {
     if (!s_worker || rows < 4) {
-        raster_band(band, x0, y, w, rows, shapes, 2);
+        dance_lasers_paint(lasers,band, x0, y, w, rows, shapes);
         return;
     }
     const int top = rows / 2;
-    s_wjob = (raster_job_t){ band + (size_t)top * w, x0, y + top, w, rows - top, shapes };
+    s_wjob = (raster_job_t){ band + (size_t)top * w, x0, y + top, w, rows - top, shapes, lasers };
     xTaskNotifyGive(s_worker);
-    raster_band(band, x0, y, w, top, shapes, 2);
+    dance_lasers_paint(lasers,band, x0, y, w, top, shapes);
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 }
 
@@ -212,7 +215,7 @@ static void paint_piece(uint16_t *band, int x0, int y, int w, int rows, const re
         const gfx_band_t gb = { .dst = band, .x0 = x0, .y0 = y, .w = w, .rows = rows };
         ui_paint(&c->ui, &gb);
     } else {
-        raster_split(band, x0, y, w, rows, c->shapes);
+        raster_split(band, x0, y, w, rows, c->shapes, &c->lasers);
         if (acc_any(&c->acc)) {
             const gfx_band_t gb = { .dst = band, .x0 = x0, .y0 = y, .w = w, .rows = rows };
             acc_paint(&c->acc, &gb, now_ms);
@@ -811,6 +814,7 @@ static void render_task(void *arg)
         } else {
             anim_update(&c.sm, &c.eyes, now_ms);
             eyes_update(&c.eyes, now_ms, c.shapes);
+            const bool laser_changed=dance_lasers_update(&c.lasers,c.eyes.laser_mix,c.eyes.laser_beat,now_ms,c.eyes.face_deg);
 
             /* Dirty rects: union of each eye's previous and current bounding box. */
             for (int i = 0; i < 2; i++) {
@@ -830,6 +834,13 @@ static void render_task(void *arg)
             for (int i = 0; i < na; i++) {
                 const rect_t r = rect_align((rect_t){ ar[i].x0, ar[i].y0, ar[i].x1, ar[i].y1 });
                 if (!rect_is_empty(&r)) dirty[ndirty++] = r;
+            }
+            /* Background changes are capped at 30 Hz; intervening eye frames
+             * repaint their own rectangles over the unchanged laser snapshot. */
+            if(laser_changed){
+                rect_t r=rect_align((rect_t){c.lasers.damage[0],c.lasers.damage[1],c.lasers.damage[2],c.lasers.damage[3]});
+                for(int i=0;i<ndirty;i++)r=rect_union(&r,&dirty[i]);
+                dirty[0]=r;ndirty=1;
             }
         }
 

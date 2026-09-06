@@ -75,7 +75,8 @@ typedef struct {
     uint32_t next_sniff_ms;
     uint32_t sniff_start_ms;
     bool sniffing;
-    uint32_t music_quiet_since_ms;
+    uint32_t music_quiet_since_ms; /* last confirmed rhythm; breakdown grace */
+    uint32_t music_silence_since_ms;
     uint32_t speech_last_ms;    /* last frame with speech */
     float voice_dir;            /* smoothed direction of the voice along the mic axis */
     /* handling */

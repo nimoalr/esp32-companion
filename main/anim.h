@@ -78,12 +78,14 @@ typedef struct {
     audio_features_t audio;
     uint32_t dance_beats_seen;
     uint32_t dance_beat_ms;
+    uint32_t dance_frame_ms;
+    float dance_hit_level;
     int dance_side;         /* +1 / -1, alternates on beats */
     float dance_bass, dance_loud, dance_bal;   /* smoothed */
     uint32_t dance_last_sound_ms;
     int dance_flourish;         /* 0 none, 2 a slow sway (a stroke) */
     float dance_bars[2][8];     /* smoothed spectrum heights, left eye low bands, right eye high */
-    int dance_visual;           /* the passing visual on top of the dance: 0 plain, 1 spectrum, 2 mirror ball, 3 spotlights */
+    int dance_visual;           /* the passing visual on top of the dance: 0 plain, 1 spectrum, 2 mirror ball, 3 spotlights, 4 background lasers */
     int dance_visual_last;
     float disco_spin;
     uint32_t dance_visual_ms;   /* when the current one began */

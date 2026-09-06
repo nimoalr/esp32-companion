@@ -31,7 +31,8 @@
 #define WAKING_MS           500
 #define SNIFF_MS            5200     /* long enough for eight beats at 100 bpm */
 #define MUSIC_MIN_BEATS     8
-#define MUSIC_QUIET_MS      6000     /* no beat for this long: the music is over */
+#define MUSIC_QUIET_MS      45000     /* maximum audible breakdown without confirmed rhythm */
+#define MUSIC_SILENCE_MS    2200    /* genuinely quiet: leave promptly, not after the breakdown grace */
 #define MUSIC_BASS_RATIO    0.08f    /* sub-bass share: phone speakers give 0.1-0.2 on psytrance, so only reject near-zero */
 #define MUSIC_TEMPO_CONF    0.75f    /* the steady tempo is what tells a kick drum from a conversation */
 #define GAZE_PX_X           12.f
@@ -300,12 +301,15 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
             if (face_down) { enter(b, BEH_FACE_DOWN, now_ms); break; }
             /* still music while the beats keep coming with a kick under them */
             if (in->audio.active && in->audio.last_beat_ms && now_ms - in->audio.last_beat_ms < 2500 &&
-                in->audio.bass_ratio >= MUSIC_BASS_RATIO * 0.6f) {
+                in->audio.bass_ratio >= MUSIC_BASS_RATIO * 0.6f && in->audio.tempo_conf >= MUSIC_TEMPO_CONF) {
                 b->music_quiet_since_ms = now_ms;
             }
+            if (in->audio.raw_loud >= 45.f) b->music_silence_since_ms = 0;
+            else if (!b->music_silence_since_ms) b->music_silence_since_ms = now_ms;
             /* touch never stops the dance and never changes the face: a stroke adds a slow sway, that is all */
             if (stroked) out->dance_flourish = 2;
-            if (!in->audio.active || now_ms - b->music_quiet_since_ms >= MUSIC_QUIET_MS) {
+            if (!in->audio.active || now_ms - b->music_quiet_since_ms >= MUSIC_QUIET_MS ||
+                (b->music_silence_since_ms && now_ms-b->music_silence_since_ms >= MUSIC_SILENCE_MS)) {
                 enter(b, BEH_IDLE, now_ms);
                 b->next_sniff_ms = now_ms + CONFIG_EYES_SNIFF_INTERVAL_S * 1000u;
             }
@@ -375,6 +379,7 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
             else if (in->audio.active && music_detected(&in->audio)) {
                 b->sniffing = false;
                 b->music_quiet_since_ms = now_ms;
+                b->music_silence_since_ms = 0;
                 /* roll the reaction against his mood */
                 const float r = frand(b);
                 if (r < 0.12f + 0.25f * (1.f - b->energy)) {
