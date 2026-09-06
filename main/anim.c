@@ -1,6 +1,7 @@
 #include "anim.h"
 
 #include <stddef.h>
+#include <string.h>
 #include <math.h>
 #include "esp_log.h"
 
@@ -279,6 +280,8 @@ static void anim_enter(anim_sm_t *sm, eyes_t *eyes, anim_id_t id, uint32_t now_m
     sm->dance_bass = sm->dance_loud = sm->dance_bal = 0.f;
     sm->dance_side = 1;
     sm->dance_last_sound_ms = now_ms;
+    memset(sm->dance_bars, 0, sizeof sm->dance_bars);
+    eyes_set_bars(eyes, false);
     eyes_clear_mod(eyes);
     eyes_set_idle_rates(eyes, d->blink_interval_scale, d->blink_speed_scale, d->dart_scale);
     eyes_set_tint(eyes, d->tint, 450, now_ms);
@@ -449,6 +452,19 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
             m->dy += (int32_t)(4.f * sag * 65536.f);
         }
     }
+    /* spectrum eyes: sixteen bands across the face, low on the left, rising from the bottom of each eye;
+     * they jump up with the sound and fall back at their own pace */
+    for (int e = 0; e < 2; e++) {
+        for (int i = 0; i < 8; i++) {
+            const float want = a->bands[e * 8 + i] * music;
+            float *h = &sm->dance_bars[e][i];
+            if (want > *h) *h += (want - *h) * 0.6f;
+            else *h -= 0.045f;
+            if (*h < 0.f) *h = 0.f;
+        }
+        eyes_set_bar_heights(eyes, e, sm->dance_bars[e]);
+    }
+    eyes_set_bars(eyes, music > 0.02f);
     /* the whole face pulses with the bass */
     eyes->face_mod_scale = (int32_t)((0.06f * bass) * 65536.f);
     /* the colour flashes a little brighter on the hit and shimmers with the bass */

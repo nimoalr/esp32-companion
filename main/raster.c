@@ -421,10 +421,29 @@ static inline uint16_t IRAM_ATTR blend565(uint16_t dst, uint16_t col, uint32_t a
 /* 2x2 ordered dither for the hot spot, in falloff units (one lightness level is about 18). */
 static const DRAM_ATTR uint8_t k_dither[4] = { 0, 9, 13, 4 };
 
+/* lightness level of a spectrum-bar pixel at screen (x, py) */
+static inline uint32_t IRAM_ATTR bar_level(const raster_shape_t *s, int x, int py)
+{
+    const int top = s->bar_top[x];
+    return py >= top ? s->bar_lit : py == top - 1 ? s->bar_edge[x] : s->bar_dim;
+}
+
+/* Solid core of the spectrum bars. */
+static inline void IRAM_ATTR fill_bars(uint16_t *dst, int n, const raster_shape_t *s, int x, int py)
+{
+    const uint16_t *lut2 = s->lut2 + 63;
+    for (int i = 0; i < n; i++) dst[i] = lut2[bar_level(s, x + i, py) << 6];
+}
+
 /* Edge pixels: coverage -> colour, optionally shaded by the hot spot. x = screen x of dst[0]. */
 static inline void IRAM_ATTR blit_cov(uint16_t *dst, const uint8_t *cov, int n, const raster_shape_t *s, int x, int py, bool over)
 {
     const uint16_t *lut = s->lut;
+    if (s->bars && !over) {
+        const uint16_t *lut2 = s->lut2;
+        for (int i = 0; i < n; i++) dst[i] = lut2[(bar_level(s, x + i, py) << 6) | (cov[i] >> 2)];
+        return;
+    }
     if (s->hot && !over) {
         const uint8_t *gx = s->hot_gx + x, *g2l = s->hot_g2l;
         const uint32_t gy = s->hot_gy[py];
@@ -547,7 +566,9 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
             blit_cov(row + (pl - bx0), cov, n, s, pl, py, over);
         }
         if (cr > cl) {
-            if (s->hot) {
+            if (s->bars) {
+                fill_bars(row + (cl - bx0), cr - cl, s, cl, py);
+            } else if (s->hot) {
                 fill_hot(row + (cl - bx0), cr - cl, s, cl, py);
             } else {
                 fill16(row + (cl - bx0), lut[255], cr - cl);
@@ -638,6 +659,8 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
                     }
                 }
                 blit_cov(row + (cl - bx0), cov, n, s, cl, py, over);
+            } else if (s->bars) {
+                fill_bars(row + (cl - bx0), cr - cl, s, cl, py);
             } else if (s->hot) {
                 fill_hot(row + (cl - bx0), cr - cl, s, cl, py);
             } else {

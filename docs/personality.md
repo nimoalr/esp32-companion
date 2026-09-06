@@ -150,10 +150,12 @@ before any of it goes into firmware.
 
 ## 4. New visuals
 
-* **Spectrum eyes** for the dance: the eye shape stays the mask, the fill
-  becomes vertical bars driven by the 16 FFT bands, rising from the bottom
-  lid. This is a fill mode in the rasteriser (a per-column height test on
-  the solid core), pixel-identical edges, a few percent of frame cost.
+* **Spectrum eyes** for the dance (done): the eye shape stays the mask, the
+  fill becomes eight bars per eye driven by sixteen log-spaced FFT bands, low
+  on the left eye and high on the right, rising from the bottom of the eye's
+  box; a fill mode in the rasteriser (a per-column top with an anti-aliased
+  edge, through the hot spot's lightness LUT), pixel-identical edges. See
+  `docs/images/spectrum_eyes.png`.
 * **Hearts** for the loving mood, and for petting (strokes across the forehead already put him in the love face with a purr; the heart eyes go there): a new shape kind. A heart is two discs and
   a wedge, so its rows are one or two spans, and it beats by scaling with a
   60-100 bpm envelope. The eye system already animates size, so the beat is a

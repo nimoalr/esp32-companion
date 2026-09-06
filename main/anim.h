@@ -47,6 +47,7 @@ typedef struct {
     float dance_bass, dance_loud, dance_bal;   /* smoothed */
     uint32_t dance_last_sound_ms;
     int dance_flourish;         /* 0 none, 2 a slow sway (a stroke) */
+    float dance_bars[2][8];     /* smoothed spectrum heights, left eye low bands, right eye high */
     uint32_t dance_flourish_ms; /* when it started */
 } anim_sm_t;
 

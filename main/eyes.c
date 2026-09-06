@@ -236,6 +236,17 @@ void eyes_set_attention(eyes_t *e, bool on, int x_px, int y_px)
     }
 }
 
+void eyes_set_bars(eyes_t *e, bool on)
+{
+    if (on && !e->bars) e->rgb[0] = e->rgb[1] = 0xFFFFFFFF;   /* lut2 is only kept fresh while it is needed */
+    e->bars = on;
+}
+
+void eyes_set_bar_heights(eyes_t *e, int eye, const float h[8])
+{
+    for (int i = 0; i < 8; i++) e->bar_h[eye][i] = h[i] < 0.f ? 0.f : h[i] > 1.f ? 1.f : h[i];
+}
+
 void eyes_set_mood(eyes_t *e, int32_t lum_q16, int32_t sat_q16)
 {
     e->mood_lum = lum_q16;
@@ -342,7 +353,7 @@ static void update_color(eyes_t *e, uint32_t now_ms)
         if (rgb != e->rgb[i]) {
             e->rgb[i] = rgb;
             raster_build_lut(e->lut[i], (rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
-            if (e->hot) {
+            if (e->hot || e->bars) {
                 build_lut2(e->lut2[i], rgb);
             }
         }
@@ -706,8 +717,34 @@ static void params_to_shape(eyes_t *e, int which, const EyeParams *p, raster_sha
     s->bot_slant = p->slant_b;
     s->curve = p->curve;
     s->lut = e->lut[which];
-    s->hot = e->hot;
-    if (e->hot) {
+    s->hot = e->hot && !e->bars;
+    s->bars = e->bars;
+    if (e->bars) {
+        /* the bars span the box's width, eight of them with a one-pixel dark gap, rising from its bottom */
+        raster_shape_finalize(s, BOARD_LCD_H_RES, BOARD_LCD_V_RES);      /* for the pixel box */
+        const int x0 = s->px0, w = s->px1 - s->px0, y1 = s->py1, hgt = s->py1 - s->py0;
+        int16_t *top = e->bar_top[which];
+        uint8_t *edge = e->bar_edge[which];
+        for (int x = s->px0; x < s->px1; x++) {
+            const int rel = (x - x0) * 8;
+            const int bar = w > 0 ? rel / w : 0;
+            const int in_bar = w > 0 ? rel - bar * w : 0;
+            const bool gap = x > x0 && in_bar < 8 && bar > 0;         /* the first column of a bar after the first */
+            const float hf = gap ? 0.f : e->bar_h[which][bar > 7 ? 7 : bar];
+            const float topf = (float)y1 - hf * (float)hgt;
+            const int ti = (int)topf;
+            const float frac = topf - (float)ti;
+            top[x] = (int16_t)(hf <= 0.f ? y1 + 1 : ti + 1);
+            const float lvl = 4.f + 27.f * (1.f - frac);
+            edge[x] = (uint8_t)(lvl < 4.f ? 4 : lvl > 31.f ? 31 : (int)lvl);
+        }
+        s->bar_top = top;
+        s->bar_edge = edge;
+        s->bar_lit = 31;
+        s->bar_dim = 4;
+        s->lut2 = e->lut2[which];
+    }
+    if (s->hot) {
         hot_fill(e->hot_gx[which], e->hot_gy[which], hx, hy, q16_mul(p->h, HOT_SIGMA));
         s->hot_gx = e->hot_gx[which];
         s->hot_gy = e->hot_gy[which];

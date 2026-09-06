@@ -73,6 +73,7 @@ static float s_dir_corr;
 static int s_dir_peak;
 static float s_dir_level_db;
 static float s_presence;              /* 0..1: is there real sound, from the raw level (quiet room ~18 LSB) */
+static float s_band_max[16], s_bands[16];
 /* speech: the mid band's envelope pulses at syllable rate (3-8 Hz) */
 static float s_sp_fast, s_sp_slow, s_sp_mod;
 static int s_sp_on, s_sp_off;
@@ -176,6 +177,20 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     bass = sqrtf(bass);
     mid = sqrtf(mid);
     high = sqrtf(high);
+    /* sixteen log-spaced bands for the spectrum eyes, each against its own slow-decaying maximum */
+    {
+        static const uint8_t k_edge[17] = { 1, 2, 3, 4, 5, 6, 7, 9, 12, 16, 21, 28, 38, 51, 68, 91, 128 };
+        for (int b = 0; b < 16; b++) {
+            float pw = 0.f;
+            for (int k = k_edge[b]; k < k_edge[b + 1]; k++) pw += s_re[k] * s_re[k] + s_im[k] * s_im[k];
+            const float lv = sqrtf(pw);
+            s_band_max[b] *= 0.998f;
+            if (lv > s_band_max[b]) s_band_max[b] = lv;
+            if (s_band_max[b] < 1e-4f) s_band_max[b] = 1e-4f;
+            float n = lv / s_band_max[b];
+            s_bands[b] = sqrtf(n) * s_presence;       /* a gentle curve so the quiet bands still show */
+        }
+    }
     const float loud = sqrtf((l_e + r_e) / (2.f * FRAME));
 
     /*
@@ -364,6 +379,7 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     s_feat.speech = s_speech;
     s_feat.speech_depth = sp_depth;
 
+    memcpy(s_feat.bands, s_bands, sizeof s_bands);
     s_feat.bass = agc(bass, &s_max_bass) * s_presence;
     s_feat.mid = agc(mid, &s_max_mid) * s_presence;
     s_feat.high = agc(high, &s_max_high) * s_presence;
@@ -527,6 +543,7 @@ esp_err_t audio_start(void)
     s_lp_x1 = s_lp_x2 = s_lp_y1 = s_lp_y2 = 0.f;
     s_max_kick = 1e-3f;
     s_presence = 0.f;
+    for (int b = 0; b < 16; b++) { s_band_max[b] = 1e-3f; s_bands[b] = 0.f; }
     s_sp_fast = s_sp_slow = s_sp_mod = 0.f;
     s_sp_on = s_sp_off = 0;
     s_speech = false;

@@ -19,6 +19,7 @@ typedef struct {
 typedef struct {
     bool active;            /* analyser running */
     float bass, mid, high;  /* band levels, 0..1 after automatic gain */
+    float bands[16];        /* log-spaced spectrum 62 Hz - 8 kHz, 0..1 after per-band gain: the spectrum eyes */
     float kick;             /* sub-bass (below ~80 Hz) level, 0..1: the kick drum's body */
     float loud;             /* overall level, 0..1 */
     float raw_loud;         /* overall level before automatic gain: RMS of the 16-bit samples, in LSB */

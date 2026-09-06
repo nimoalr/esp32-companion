@@ -61,6 +61,15 @@ typedef struct {
     const uint8_t *hot_gy;  /* indexed by screen y */
     const uint8_t *hot_g2l; /* RASTER_G2L_N entries -> 0..31 */
     const uint16_t *lut2;   /* 32 x 64 entries */
+    /*
+     * Spectrum bars (the dance): the fill is lit below a per-column top and dim above it,
+     * through lut2 like the hot spot: rows >= bar_top[x] at level bar_lit, row bar_top[x] - 1
+     * at bar_edge[x] (the anti-aliased top), rows above at bar_dim. Takes precedence over hot.
+     */
+    bool bars;
+    const int16_t *bar_top;     /* indexed by screen x */
+    const uint8_t *bar_edge;    /* indexed by screen x, 0..31 */
+    uint8_t bar_lit, bar_dim;   /* lightness levels 0..31 */
     /* Pixel bounding box, [x0, x1) x [y0, y1), already clipped to the screen */
     int px0, py0, px1, py1;
     const uint16_t *lut;    /* 256-entry coverage -> RGB565 (byte order as sent) */
