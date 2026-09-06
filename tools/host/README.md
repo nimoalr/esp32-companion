@@ -19,7 +19,8 @@ python3 tools/host/tile.py sheet.png 6 2 tools/host/out/e_*.ppm   # cols, downsc
 | `feat_harness` | hot spot on/off, gaze-following hot spot, attention, face scale; prints per-frame timings |
 | `char_harness` | accessories and rotated faces, plus a behaviour simulation printout |
 | `character_test` | shake/KO/recovery integration, interrupted transitions, blink timing, rotated symbol bounds, scrolling reels and star dirty coverage; build with `-fsanitize=undefined -fno-sanitize-recover=all` |
-| `expression_preview` | all 41 poses plus attitude, playful, high-roller, transition and before/after recovery videos; use `expressions.sh` to encode into `docs/expressions/` |
+| `rim_test` | physical-disc visibility, hidden pauses, staggered peeks, rotated touch retreat, interrupted orbit and loop recovery for all ten rim actions |
+| `expression_preview` | all 51 poses plus attitude, playful, rim, high-roller, transition and before/after recovery videos; use `expressions.sh` to encode into `docs/expressions/` |
 | `ui_harness` | every setup screen with synthetic sensor data |
 | `imu_cal_test` | accelerometer calibration maths: the three wizard poses on five sensor mountings, rejected poses, motion restart; exits non-zero on failure |
 | `sweep` | 60 Hz sweep through every expression with rotation, hot spot, face scale and attention; asserts nothing is drawn outside a shape's bounding box. Build with `-fsanitize=address,undefined` |

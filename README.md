@@ -51,14 +51,18 @@ NEUTRAL, HAPPY, SAD, ANGRY, SURPRISED, SLEEPY, LOOK_AROUND, WINK, CURIOUS,
 CONFUSED, LOVE, DIZZY, LAUGHING, SCARED, SKEPTICAL, THINKING, BORED, EXCITED,
 SHY, ANNOYED, SLEEPING, SQUINT, DANCE, SMUG, SUSPICIOUS, DETERMINED, PLEADING,
 MISCHIEVOUS, EMBARRASSED, RELIEVED, DOUBLE_TAKE, KNOCKED_OUT, RECOVERING,
-HEARTS, HEARTBREAK, HIGH_ROLLER, NOD, PEEKABOO, LOADING, BOOP, SNEEZE.
+HEARTS, HEARTBREAK, HIGH_ROLLER, NOD, PEEKABOO, LOADING, BOOP, SNEEZE,
+CAUTIOUS_PEEK, HIDE_RELOCATE, TOO_CLOSE, RIM_BONK, HANGING_ON, LAZY_PUDDLE,
+AROUND_BEND, SECRET_OBSERVER, WRONG_ENTRANCE, JACKPOT_ESCAPE.
 
 See the [character preview guide](docs/expressions/README.md) for the full
 catalog, animated previews, and a comparison of the old and new shake reaction.
 Heart eyes beat twice, break and mend; slot-machine eyes scroll through clipped
 reel windows, stop separately on sevens, then celebrate. Silhouette changes
 close the old eyes and reopen the new ones over 280 ms, including interrupted
-transitions. These actions are selectable independently of mood.
+transitions. These actions are selectable independently of mood. Ten more
+[round-display scenes](docs/expressions/RIM_ACTIONS.md) use the edge for hiding,
+peeking, clinging, bouncing and orbiting.
 
 Each expression is a keyframe pose per eye (size, position, both lids with
 slant and bend, angle, four elliptical corner radii) plus up to three
@@ -188,7 +192,7 @@ main/
   touch.c/.h              CST9217 via esp_lcd_touch, ISR -> task (core 0) -> gesture queue (tap, swipes) + finger position
   raster.c/.h             Q16.16 scanline rasteriser, 4x vertical sampling, coverage LUT, hot spot, dance fill effects
   eyes.c/.h               EyeParams / EyeState, per-field easing, blink + dart layer, squash/stretch, gaze scaling
-  anim.c/.h               41 expressions/actions, transitions and dance choreography
+  anim.c/.h               51 expressions/actions, transitions and dance choreography
   eye_symbols.c/.h        heart, broken-heart and scrolling reel contours
   audio.c/.h              ES7210 mics and ES8311 speaker over I2S via esp_codec_dev; FFT, bands, beats, tempo, speech, direction
   micdir.c/.h             arrival-time difference of a transient between the two mics; pure C, host-tested
@@ -270,9 +274,9 @@ board. See `tools/host/README.md`.
 Host build of the rasteriser (`raster.c`, `eyes.c`, `anim.c` compile unchanged
 with gcc): neutral eyes are 2 x 31 302 px per frame, about 62.6 kB pushed per
 frame, 14 % of a full frame. Bus time at 40 MHz QSPI is 3.1 ms per frame
-(1.6 ms at 80 MHz). The current host sweep covers all 41 animations twice,
-including rotation, increased face scale, shading and attention: 35,916 frames,
-113.5 kB average and 401.0 kB peak rectangle traffic, with no bbox/guard
+(1.6 ms at 80 MHz). The current host sweep covers all 51 animations twice,
+including rotation, increased face scale, shading and attention: 44,676 frames,
+112.1 kB average and 474.1 kB peak rectangle traffic, with no bbox/guard
 violations under UBSan. These deliberately enlarged/rotated cases are not
 on-board frame-time measurements. Overlaid
 props (`raster_shapes_over`, used by `gfx_disc` and `gfx_line`) blend their

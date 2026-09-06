@@ -73,7 +73,7 @@ Shape (`raster.c`, `eyes.h`):
   and are clipped before rotation; each reel accelerates, slows and settles
   independently. No bitmap frames or dynamic allocations are used.
 
-The [character expansion guide](expressions/README.md) catalogs all 41
+The [character expansion guide](expressions/README.md) catalogs all 51
 animations and links to videos rendered from these firmware sources.
 
 Secondary motion (`eyes.c`):

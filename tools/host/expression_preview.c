@@ -13,9 +13,9 @@ uint32_t esp_random(void) { return 0x12345678u; }
 #define CELL 233
 #define FPS 20
 typedef struct { eyes_t eyes; anim_sm_t anim; accessories_t acc; raster_shape_t shapes[2]; } scene_t;
-static scene_t scenes[8];
+static scene_t scenes[10];
 static uint16_t fb[W * W], band[W * 32];
-static unsigned char canvas[CELL * 6 * CELL * ((ANIM_COUNT+5)/6) * 3];
+static unsigned char canvas[CELL * 6 * (CELL+24) * ((ANIM_COUNT+5)/6) * 3];
 
 static FILE *open_output(const char *path)
 {
@@ -72,17 +72,23 @@ static void draw(scene_t *s, uint32_t t, const char *caption, bool old_ko)
         const gfx_band_t gb = { band, 0, y, W, rows };
         acc_paint(&s->acc, &gb, t);
         if (old_ko) legacy_crosses(&gb);
+        /* The real AMOLED is a disc, not a square framebuffer. Reproduce its
+         * physical crop so offstage entrances are honest in host previews. */
+        for (int yy = 0; yy < rows; yy++) for (int x = 0; x < W; x++) {
+            const int dx = 2*x+1-W, dy = 2*(y+yy)+1-W;
+            if (dx*dx+dy*dy > W*W) band[yy*W+x] = 0;
+        }
         /* Captions and subtle disc boundary are host annotations, not new on-device UI. */
-        gfx_ring(&gb, 233, 233, 230, 1, 0, 360, gfx_rgb(35, 39, 45));
+        gfx_ring(&gb, 233, 233, 232, 1, 0, 360, gfx_rgb(35, 39, 45));
         const int x = (W - gfx_text_width(&font_spleen_16x32, caption)) / 2;
         gfx_text(&gb, &font_spleen_16x32, x, 382, caption, gfx_rgb(190, 196, 205), GFX_TRANSPARENT);
         memcpy(fb + y * W, band, (size_t)W * rows * 2);
     }
 }
 
-static void put_cell(int index, int cols)
+static void put_cell_ex(int index, int cols, int row_height)
 {
-    const int ox = index % cols * CELL, oy = index / cols * CELL;
+    const int ox = index % cols * CELL, oy = index / cols * row_height;
     for (int y = 0; y < CELL; y++) for (int x = 0; x < CELL; x++) {
         int rgb[3] = {0};
         for (int yy = 0; yy < 2; yy++) for (int xx = 0; xx < 2; xx++) {
@@ -95,13 +101,33 @@ static void put_cell(int index, int cols)
     }
 }
 
-static void ppm(const char *path, int cols, int rows)
+static void put_cell(int index, int cols) { put_cell_ex(index,cols,CELL); }
+
+/* Rim scenes need the bottom of the circle for acting, so captions sit below it. */
+static void rim_cell(int index, int cols, const char *caption)
+{
+    put_cell_ex(index,cols,CELL+24);
+    memset(fb,0,W*48*sizeof *fb);
+    const gfx_band_t label = {fb,0,0,W,48};
+    gfx_text(&label,&font_spleen_16x32,(W-gfx_text_width(&font_spleen_16x32,caption))/2,
+             8,caption,gfx_rgb(190,196,205),GFX_TRANSPARENT);
+    const int ox = index%cols*CELL, oy = index/cols*(CELL+24)+CELL;
+    for (int y=0; y<24; y++) for (int x=0; x<CELL; x++) {
+        const uint16_t a=fb[(2*y)*W+2*x], c=(uint16_t)(a>>8|a<<8);
+        unsigned char *p=&canvas[((oy+y)*cols*CELL+ox+x)*3];
+        p[0]=((c>>11)&31)*255/31; p[1]=((c>>5)&63)*255/63; p[2]=(c&31)*255/31;
+    }
+}
+
+static void ppm_sized(const char *path, int width, int height)
 {
     FILE *f = open_output(path);
-    fprintf(f, "P6\n%d %d\n255\n", cols * CELL, rows * CELL);
-    fwrite(canvas, 3, (size_t)cols * rows * CELL * CELL, f);
+    fprintf(f, "P6\n%d %d\n255\n", width, height);
+    fwrite(canvas, 3, (size_t)width * height, f);
     fclose(f);
 }
+
+static void ppm(const char *path, int cols, int rows) { ppm_sized(path,cols*CELL,rows*CELL); }
 
 int main(void)
 {
@@ -116,11 +142,15 @@ int main(void)
         if (id == ANIM_HIGH_ROLLER) sample = 4500;
         if (id == ANIM_LOADING) sample = 1850;
         if (id == ANIM_SNEEZE) sample = 1290;
+        if (id >= ANIM_CAUTIOUS_PEEK) {
+            static const uint32_t rim_sample[] = {3100,2450,2100,1160,2100,3400,2400,3100,2300,4850};
+            sample = rim_sample[id-ANIM_CAUTIOUS_PEEK];
+        }
         for (uint32_t t = 0; t <= sample; t += 10) tick(s, t);
-        draw(s, sample, anim_name((anim_id_t)id), false);
-        put_cell(id, 6);
+        draw(s, sample, "", false);
+        rim_cell(id, 6, anim_name((anim_id_t)id));
     }
-    ppm("out/character/catalog.ppm", 6, (ANIM_COUNT + 5) / 6);
+    ppm_sized("out/character/catalog.ppm", 6*CELL, (CELL+24)*((ANIM_COUNT + 5)/6));
 
     static const anim_id_t ids[] = { ANIM_SMUG, ANIM_SUSPICIOUS, ANIM_DETERMINED, ANIM_PLEADING,
                                     ANIM_MISCHIEVOUS, ANIM_EMBARRASSED, ANIM_RELIEVED, ANIM_DOUBLE_TAKE };
@@ -206,6 +236,37 @@ int main(void)
         if (t == 2400) ppm("out/character/knocked_out.ppm", 2, 1);
     }
     fclose(video);
-    printf("wrote %d-pose catalog and 20 fps new/playful/transitions/recovery previews\n", ANIM_COUNT);
+    FILE *solo[10];
+    for (int i=0; i<10; i++) {
+        init(&scenes[i],(anim_id_t)(ANIM_CAUTIOUS_PEEK+i));
+        char path[120]; snprintf(path,sizeof path,"out/character/%s.rgb",anim_name(scenes[i].anim.id));
+        solo[i]=open_output(path);
+    }
+    video=open_output("out/character/rim.rgb");
+    static unsigned char solo_canvas[CELL*(CELL+24)*3];
+    for (uint32_t frame=0; frame<8*60; frame++) {
+        const uint32_t t=frame*1000/60;
+        for (int i=0; i<10; i++) {
+            tick(&scenes[i],t);
+            if (frame%3 == 0) {
+                draw(&scenes[i],t,"",false);
+                rim_cell(i,5,anim_name(scenes[i].anim.id));
+                for (int y=0; y<CELL+24; y++)
+                    memcpy(solo_canvas+y*CELL*3,
+                           canvas+((i/5*(CELL+24)+y)*5*CELL+i%5*CELL)*3,CELL*3);
+                fwrite(solo_canvas,3,CELL*(CELL+24),solo[i]);
+            }
+        }
+        if (frame%3 == 0) fwrite(canvas,3,5*2*CELL*(CELL+24),video);
+        if (t==2300) {
+            FILE *still=open_output("out/character/rim.ppm");
+            fprintf(still,"P6\n%d %d\n255\n",5*CELL,2*(CELL+24));
+            fwrite(canvas,3,5*2*CELL*(CELL+24),still); fclose(still);
+        }
+    }
+    fclose(video);
+    for (int i=0; i<10; i++) fclose(solo[i]);
+
+    printf("wrote %d-pose catalog and 20 fps attitude/playful/rim/transition/recovery previews\n", ANIM_COUNT);
     return 0;
 }

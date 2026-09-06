@@ -47,6 +47,16 @@ typedef enum {
     ANIM_LOADING,
     ANIM_BOOP,
     ANIM_SNEEZE,
+    ANIM_CAUTIOUS_PEEK,
+    ANIM_HIDE_RELOCATE,
+    ANIM_TOO_CLOSE,
+    ANIM_RIM_BONK,
+    ANIM_HANGING_ON,
+    ANIM_LAZY_PUDDLE,
+    ANIM_AROUND_BEND,
+    ANIM_SECRET_OBSERVER,
+    ANIM_WRONG_ENTRANCE,
+    ANIM_JACKPOT_ESCAPE,
     ANIM_COUNT
 } anim_id_t;
 
@@ -58,6 +68,7 @@ typedef struct {
     int32_t previous_split;
     int32_t previous_reel[2];
     int32_t previous_gate[2];
+    uint32_t rim_retreat_ms; /* secret-observer touch retreat, reset on entry/loop */
     int next_kf;            /* index of the next keyframe to apply */
     /* jitter modulator state */
     int32_t jit_from[2][EYE_POSE_FIELDS], jit_to[2][EYE_POSE_FIELDS];

@@ -21,6 +21,10 @@ Start-Process .\docs\expressions\playful.mp4
 Start-Process .\docs\expressions\recovery.mp4
 ```
 
+The next round adds [ten actions around the circular edge](RIM_ACTIONS.md):
+[watch the full grid](rim.mp4), including peeks, a rim collision, an orbit and
+a jackpot escape. The catalog below includes all 51 animations.
+
 ## Preview order
 
 | Preview | Order, left to right, top row then bottom |
@@ -56,7 +60,7 @@ Start-Process .\docs\expressions\recovery.mp4
 | KNOCKED_OUT | Collapse into unequal slumped capsules, with tiny breathing motion and orbiting stars. Replaces the orange X overlays. |
 | RECOVERING | Left eye opens before right, a clearing blink, then normal eyes and idle motion return over 3 s. |
 
-The 16 new expressions/actions are available through the existing tap/swipe
+These 16 expressions/actions are available through the existing tap/swipe
 selector independently of mood. KO and recovery also replace the existing shake
 reaction automatically. A spontaneous action scheduler is not added here; the
 separate personality layer can select these IDs through `anim_set()`.
@@ -67,7 +71,7 @@ Existing voice responses are reused for applicable selections.
 The original 23 IDs remain unchanged; new IDs are appended. LOVE retains the
 original rounded-eye pulse; HEARTS adds an actual heart silhouette.
 
-![All 41 animations](catalog.png)
+![All 51 animations](catalog.png)
 
 ## Transitions and rendering
 
@@ -106,7 +110,7 @@ Validation on the development Mac:
   visible eyes, authored blink control, long idle blink intervals, rotated symbol
   bounds, reel scrolling and staggered stops, interrupted silhouette changes,
   and coverage of all changed star pixels by their dirty rectangles.
-- UBSan sweep passes across 35,916 frames and all 41 animations, including
+- UBSan sweep passes across 44,676 frames and all 51 animations, including
   rotation, enlarged face scale, shading and attention; zero bbox/guard violations.
 - Host raster samples: shaded hearts about 52 µs/frame, broken hearts rotated
   33° about 73 µs, and shaded reels about 33 µs. These are desktop comparisons,
