@@ -60,8 +60,10 @@ a jackpot escape. The catalog below includes all 51 animations.
 | KNOCKED_OUT | Collapse into unequal slumped capsules, with tiny breathing motion and orbiting stars. Replaces the orange X overlays. |
 | RECOVERING | Left eye opens before right, a clearing blink, then normal eyes and idle motion return over 3 s. |
 
-All 28 additions are now connected to the character: KO/recovery through
-shaking, and the other 26 as mood-qualified idle cameos. Each cameo plays one
+All 28 additions are connected to the character. The [situational wiring guide](PERSONALITY.md)
+lists petting/purr affection, handling and recovery, conversation, food, and
+voice-linked gestures; [watch the personality preview](personality.mp4). KO/recovery
+follow shaking, and the other 26 also remain available as mood-qualified idle cameos. Each cameo plays one
 authored cycle (five seconds for a static pose), then returns to the ordinary
 mood face. Cameos are spaced 25–55 seconds apart, avoid immediate repeats,
 and give way to taps, handling, speech and music. A resting finger lets the
@@ -70,11 +72,12 @@ a 20-second quiet interval before another can start. Happy moods admit hearts
 and playful reels; sour moods admit suspicion and heartbreak; low energy
 admits pleading, loading and the lazy puddle. The high-energy rim antics need
 more stimulation. They remain available through `anim_set()` and host previews.
-Existing voice responses are reused when the mouth chooses to speak; an idle
-scene does not force an utterance.
+Voice reactions can suggest a matching face when free. During an authored scene,
+spontaneous speech matches that scene and leaves its choreography in control.
+An idle scene does not force an utterance.
 
 The touch/motion refinement requires two forehead strokes within 2.5 seconds
-for petting. Carrying gets a curious face and no automatic purr. A stationary
+for petting. Carrying gets a curious or energetic determined face and no automatic purr. A stationary
 forehead touch (away from the rim) can purr after 3.5 seconds, once per hold;
 movement, release or leaving the active face restarts that timer. Poking an
 eye eases its lower lid and happy arc away while the upper lid closes, then

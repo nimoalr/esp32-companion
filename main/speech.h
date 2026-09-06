@@ -20,6 +20,7 @@ bool speech_babble(float level, float energy);
 /* a word clip */
 bool speech_word(int clip, float level, bool interrupt);
 bool speech_busy(void);
+bool speech_purring(void);      /* currently rendering a purr; excludes queued/dropped requests */
 /* settings */
 void speech_set_register(voice_register_t reg);
 void speech_set_volume(int pct);

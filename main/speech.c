@@ -1,6 +1,7 @@
 #include "speech.h"
 
 #include <string.h>
+#include <stdatomic.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -24,6 +25,7 @@ typedef struct {
 
 static QueueHandle_t s_q;
 static volatile bool s_busy;
+static atomic_bool s_purring;
 static voice_t s_voice;
 static voice_register_t s_reg = VOICE_REG_HIGH;
 static int16_t s_block[BLOCK];
@@ -54,6 +56,7 @@ static void say(const req_t *r)
     audio_pa(true);
     play_silence(PA_LEAD_MS);
     const int64_t t0 = esp_timer_get_time();
+    atomic_store_explicit(&s_purring, r->kind == REQ_GESTURE && r->id == VOICE_PURR, memory_order_relaxed);
     if (r->kind == REQ_WORD) {
         const clip_t *c = &k_clips[r->id];
         adpcm_state_t st = { 0, 0 };
@@ -77,6 +80,7 @@ static void say(const req_t *r)
             if (guard == 30) voice_stop(&s_voice);
         }
     }
+    atomic_store_explicit(&s_purring, false, memory_order_relaxed);
     play_silence(PA_TAIL_MS);
     audio_pa(false);
     audio_set_muted(false);
@@ -134,6 +138,11 @@ bool speech_word(int clip, float level, bool interrupt)
 bool speech_busy(void)
 {
     return s_busy || (s_q && uxQueueMessagesWaiting(s_q) > 0);
+}
+
+bool speech_purring(void)
+{
+    return atomic_load_explicit(&s_purring, memory_order_relaxed);
 }
 
 void speech_set_register(voice_register_t reg)

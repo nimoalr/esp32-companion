@@ -42,6 +42,7 @@ typedef struct {
     float energy;               /* babble */
     bool interrupt;             /* cut whatever is playing */
     float feel;                 /* valence nudge that goes with the event (0 = none) */
+    int face;                   /* animation for an accepted utterance, -1 = keep current */
 } persona_say_t;
 
 typedef struct {

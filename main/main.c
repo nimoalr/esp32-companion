@@ -666,6 +666,7 @@ static void render_task(void *arg)
             audio_get_features(&af);
         }
         behavior_out_t bo = { .override_anim = -1 };
+        if (c.mode != MODE_EYES || state != POWER_ACTIVE) behavior_suspend_scenes(&c.beh, now_ms);
         if (c.mode == MODE_EYES) {
             behavior_in_t bi = { .cal = &g_settings.cal, .audio = af, .mic_available = c.mic_ok,
                                  .user_interacting = (int32_t)(now_ms - touch_last_activity_ms()) < 3000, .tap_count = c.tap_count };
@@ -673,12 +674,15 @@ static void render_task(void *arg)
                 pmic_battery_t ub;
                 power_battery(&ub);
                 bi.usb = ub.vbus;
+                bi.battery_known = ub.present;
+                bi.batt_pct = ub.percent;
                 bi.dancing = c.user_anim == ANIM_DANCE;
                 bi.poke_eye = c.poke_eye;
                 bi.stroke_count = c.stroke_count;
                 bi.stroke_forehead = c.stroke_forehead;
             }
             bi.idle_allowed = state == POWER_ACTIVE;
+            bi.purring = speech_purring();
             bi.shown_anim = c.sm.id;
             bi.shown_anim_done = now_ms-c.sm.t_change_ms >= anim_action_ms(c.sm.id);
             bi.have_accel = power_last_accel(bi.accel, &bi.accel_ms);
@@ -739,12 +743,15 @@ static void render_task(void *arg)
             persona_say_t say;
             persona_tick(&c.persona, &pi, now_ms, &say);
             if (say.feel != 0.f) behavior_feel(&c.beh, say.feel);
+            bool accepted = false;
             switch (say.kind) {
-            case SAY_GESTURE: speech_gesture((voice_id_t)say.id, say.level, say.interrupt); break;
-            case SAY_WORD:    speech_word(say.id, say.level, say.interrupt); break;
-            case SAY_BABBLE:  speech_babble(say.level, say.energy); break;
+            case SAY_GESTURE: accepted = speech_gesture((voice_id_t)say.id, say.level, say.interrupt); break;
+            case SAY_WORD:    accepted = speech_word(say.id, say.level, say.interrupt); break;
+            case SAY_BABBLE:  accepted = speech_babble(say.level, say.energy); break;
             default: break;
             }
+            if (accepted && say.face >= 0 && state == POWER_ACTIVE && c.mode == MODE_EYES && c.sm.id != ANIM_DANCE)
+                behavior_cue(&c.beh, (anim_id_t)say.face, now_ms);
         }
 
         /* Power state machine. The UI counts as activity while it is being used. */
