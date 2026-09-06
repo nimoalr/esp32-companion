@@ -1,0 +1,435 @@
+{
+  "sample_rate": 16000,
+  "channels": 1,
+  "bits": 16,
+  "gap_ms": 350,
+  "source_voice": "Junior",
+  "source_rate": 165,
+  "source_markup": "[[pmod 60]]",
+  "macos": "26.6.2",
+  "ffmpeg": "ffmpeg version 7.1.1 Copyright (c) 2000-2025 the FFmpeg developers",
+  "treatments": {
+    "A": "robot speed=1.55, ring=0, peak=0, HP=320 Hz",
+    "B": "rubberband pitch=2.6, tempo=1.35, formant=preserved; HP=400 Hz, LP=7000 Hz",
+    "C": "B + 90 Hz modulation depth=0.22 + flanger delay=0.7ms depth=0.5ms regen=10% width=28% speed=0.8Hz"
+  },
+  "variants": {
+    "A": {
+      "file": "creature_A_familiar.wav",
+      "samples": 133674,
+      "sha256": "e79b6a980b9cd82e0d8c2a165123568821e0184d322c458bb73a3ffae955b7aa",
+      "clips": [
+        {
+          "number": 1,
+          "name": "hello",
+          "text": "hello",
+          "start_s": 0.0,
+          "duration_s": 0.349,
+          "samples": 5580,
+          "adpcm_bytes": 2790,
+          "peak_dbfs": -8.29,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 2,
+          "name": "delight",
+          "text": "ooh!",
+          "start_s": 0.699,
+          "duration_s": 0.264,
+          "samples": 4220,
+          "adpcm_bytes": 2110,
+          "peak_dbfs": -10.59,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 3,
+          "name": "uh_oh",
+          "text": "uh oh",
+          "start_s": 1.312,
+          "duration_s": 0.345,
+          "samples": 5528,
+          "adpcm_bytes": 2764,
+          "peak_dbfs": -7.5,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 4,
+          "name": "surprise",
+          "text": "aah!",
+          "start_s": 2.008,
+          "duration_s": 0.285,
+          "samples": 4556,
+          "adpcm_bytes": 2278,
+          "peak_dbfs": -5.08,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 5,
+          "name": "seriously",
+          "text": "seriously?",
+          "start_s": 2.643,
+          "duration_s": 0.534,
+          "samples": 8552,
+          "adpcm_bytes": 4276,
+          "peak_dbfs": -8.55,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 6,
+          "name": "curious",
+          "text": "hmm?",
+          "start_s": 3.527,
+          "duration_s": 0.317,
+          "samples": 5076,
+          "adpcm_bytes": 2538,
+          "peak_dbfs": -8.91,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 7,
+          "name": "whatever",
+          "text": "whatever",
+          "start_s": 4.194,
+          "duration_s": 0.443,
+          "samples": 7086,
+          "adpcm_bytes": 3543,
+          "peak_dbfs": -4.37,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 8,
+          "name": "disgust",
+          "text": "ugh",
+          "start_s": 4.987,
+          "duration_s": 0.271,
+          "samples": 4330,
+          "adpcm_bytes": 2165,
+          "peak_dbfs": -6.84,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 9,
+          "name": "fuck_you",
+          "text": "fuck you",
+          "start_s": 5.608,
+          "duration_s": 0.454,
+          "samples": 7258,
+          "adpcm_bytes": 3629,
+          "peak_dbfs": -6.36,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 10,
+          "name": "laugh",
+          "text": "ha ha ha",
+          "start_s": 6.412,
+          "duration_s": 0.409,
+          "samples": 6540,
+          "adpcm_bytes": 3270,
+          "peak_dbfs": -5.76,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 11,
+          "name": "nice_try",
+          "text": "nice try",
+          "start_s": 7.17,
+          "duration_s": 0.533,
+          "samples": 8524,
+          "adpcm_bytes": 4262,
+          "peak_dbfs": -5.24,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 12,
+          "name": "celebration",
+          "text": "wheee!",
+          "start_s": 8.053,
+          "duration_s": 0.301,
+          "samples": 4824,
+          "adpcm_bytes": 2412,
+          "peak_dbfs": -9.04,
+          "rms_dbfs": -18.42
+        }
+      ]
+    },
+    "B": {
+      "file": "creature_B_round.wav",
+      "samples": 145628,
+      "sha256": "7016c1490cc9670fd868f0ad6cdd400a1286bc1328dcdaad825f8c63ca26cd31",
+      "clips": [
+        {
+          "number": 1,
+          "name": "hello",
+          "text": "hello",
+          "start_s": 0.0,
+          "duration_s": 0.419,
+          "samples": 6708,
+          "adpcm_bytes": 3354,
+          "peak_dbfs": -9.79,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 2,
+          "name": "delight",
+          "text": "ooh!",
+          "start_s": 0.769,
+          "duration_s": 0.297,
+          "samples": 4760,
+          "adpcm_bytes": 2380,
+          "peak_dbfs": -9.05,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 3,
+          "name": "uh_oh",
+          "text": "uh oh",
+          "start_s": 1.417,
+          "duration_s": 0.408,
+          "samples": 6522,
+          "adpcm_bytes": 3261,
+          "peak_dbfs": -8.53,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 4,
+          "name": "surprise",
+          "text": "aah!",
+          "start_s": 2.174,
+          "duration_s": 0.321,
+          "samples": 5142,
+          "adpcm_bytes": 2571,
+          "peak_dbfs": -7.0,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 5,
+          "name": "seriously",
+          "text": "seriously?",
+          "start_s": 2.846,
+          "duration_s": 0.607,
+          "samples": 9714,
+          "adpcm_bytes": 4857,
+          "peak_dbfs": -7.41,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 6,
+          "name": "curious",
+          "text": "hmm?",
+          "start_s": 3.803,
+          "duration_s": 0.359,
+          "samples": 5752,
+          "adpcm_bytes": 2876,
+          "peak_dbfs": -8.28,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 7,
+          "name": "whatever",
+          "text": "whatever",
+          "start_s": 4.512,
+          "duration_s": 0.523,
+          "samples": 8366,
+          "adpcm_bytes": 4183,
+          "peak_dbfs": -5.44,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 8,
+          "name": "disgust",
+          "text": "ugh",
+          "start_s": 5.385,
+          "duration_s": 0.326,
+          "samples": 5216,
+          "adpcm_bytes": 2608,
+          "peak_dbfs": -7.5,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 9,
+          "name": "fuck_you",
+          "text": "fuck you",
+          "start_s": 6.061,
+          "duration_s": 0.539,
+          "samples": 8632,
+          "adpcm_bytes": 4316,
+          "peak_dbfs": -6.44,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 10,
+          "name": "laugh",
+          "text": "ha ha ha",
+          "start_s": 6.951,
+          "duration_s": 0.482,
+          "samples": 7706,
+          "adpcm_bytes": 3853,
+          "peak_dbfs": -7.53,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 11,
+          "name": "nice_try",
+          "text": "nice try",
+          "start_s": 7.782,
+          "duration_s": 0.629,
+          "samples": 10066,
+          "adpcm_bytes": 5033,
+          "peak_dbfs": -7.13,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 12,
+          "name": "celebration",
+          "text": "wheee!",
+          "start_s": 8.761,
+          "duration_s": 0.34,
+          "samples": 5444,
+          "adpcm_bytes": 2722,
+          "peak_dbfs": -8.91,
+          "rms_dbfs": -18.42
+        }
+      ]
+    },
+    "C": {
+      "file": "creature_C_alloy.wav",
+      "samples": 145702,
+      "sha256": "f84a0be11bf26ff6255f5a1670a7e7d6e14dae19c82c82bbdc6f2fddba209f3a",
+      "clips": [
+        {
+          "number": 1,
+          "name": "hello",
+          "text": "hello",
+          "start_s": 0.0,
+          "duration_s": 0.416,
+          "samples": 6662,
+          "adpcm_bytes": 3331,
+          "peak_dbfs": -7.0,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 2,
+          "name": "delight",
+          "text": "ooh!",
+          "start_s": 0.766,
+          "duration_s": 0.301,
+          "samples": 4822,
+          "adpcm_bytes": 2411,
+          "peak_dbfs": -6.51,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 3,
+          "name": "uh_oh",
+          "text": "uh oh",
+          "start_s": 1.418,
+          "duration_s": 0.407,
+          "samples": 6514,
+          "adpcm_bytes": 3257,
+          "peak_dbfs": -6.28,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 4,
+          "name": "surprise",
+          "text": "aah!",
+          "start_s": 2.175,
+          "duration_s": 0.324,
+          "samples": 5178,
+          "adpcm_bytes": 2589,
+          "peak_dbfs": -6.79,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 5,
+          "name": "seriously",
+          "text": "seriously?",
+          "start_s": 2.849,
+          "duration_s": 0.612,
+          "samples": 9790,
+          "adpcm_bytes": 4895,
+          "peak_dbfs": -4.7,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 6,
+          "name": "curious",
+          "text": "hmm?",
+          "start_s": 3.81,
+          "duration_s": 0.359,
+          "samples": 5752,
+          "adpcm_bytes": 2876,
+          "peak_dbfs": -5.88,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 7,
+          "name": "whatever",
+          "text": "whatever",
+          "start_s": 4.52,
+          "duration_s": 0.525,
+          "samples": 8394,
+          "adpcm_bytes": 4197,
+          "peak_dbfs": -4.49,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 8,
+          "name": "disgust",
+          "text": "ugh",
+          "start_s": 5.394,
+          "duration_s": 0.326,
+          "samples": 5212,
+          "adpcm_bytes": 2606,
+          "peak_dbfs": -7.27,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 9,
+          "name": "fuck_you",
+          "text": "fuck you",
+          "start_s": 6.07,
+          "duration_s": 0.539,
+          "samples": 8624,
+          "adpcm_bytes": 4312,
+          "peak_dbfs": -5.55,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 10,
+          "name": "laugh",
+          "text": "ha ha ha",
+          "start_s": 6.959,
+          "duration_s": 0.48,
+          "samples": 7676,
+          "adpcm_bytes": 3838,
+          "peak_dbfs": -3.95,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 11,
+          "name": "nice_try",
+          "text": "nice try",
+          "start_s": 7.789,
+          "duration_s": 0.629,
+          "samples": 10058,
+          "adpcm_bytes": 5029,
+          "peak_dbfs": -5.1,
+          "rms_dbfs": -18.42
+        },
+        {
+          "number": 12,
+          "name": "celebration",
+          "text": "wheee!",
+          "start_s": 8.768,
+          "duration_s": 0.339,
+          "samples": 5420,
+          "adpcm_bytes": 2710,
+          "peak_dbfs": -6.55,
+          "rms_dbfs": -18.42
+        }
+      ]
+    }
+  }
+}

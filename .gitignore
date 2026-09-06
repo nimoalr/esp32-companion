@@ -1,0 +1,10 @@
+# ESP-IDF build outputs and generated files
+build/
+managed_components/
+sdkconfig
+sdkconfig.old
+
+# host harness output
+tools/host/out/
+tools/host/bin/
+*.ppm

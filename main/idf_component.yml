@@ -1,0 +1,12 @@
+## IDF Component Manager manifest for the `main` component.
+## Managed components are fetched from https://components.espressif.com on
+## the first `idf.py build` and cached under managed_components/.
+dependencies:
+  idf: ">=5.5"
+  # CO5300 AMOLED controller driver (SPI/QSPI), maintained by Espressif.
+  espressif/esp_lcd_co5300: "^2.1.0"
+  # CST9217 capacitive touch driver, maintained by Waveshare. Pulls in
+  # espressif/esp_lcd_touch as a public dependency.
+  waveshare/esp_lcd_touch_cst9217: "^2.0.0"
+  # ES7210 microphone ADC driver and the I2S/I2C glue around it (Espressif).
+  espressif/esp_codec_dev: "~1.5"
