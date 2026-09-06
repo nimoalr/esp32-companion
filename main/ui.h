@@ -31,6 +31,7 @@ typedef enum {
     UI_SCREEN_BATTERY,
     UI_SCREEN_COLOR,
     UI_SCREEN_MICCAL,       /* microphone axis wizard: claps from three places */
+    UI_SCREEN_VOICE,
 } ui_screen_t;
 
 typedef enum {
@@ -41,6 +42,9 @@ typedef enum {
     UI_ACT_DANCE,           /* leave the UI into the dance mode */
     UI_ACT_COLOR,           /* apply g_settings.eye_color now */
     UI_ACT_MICCAL,          /* apply g_settings.mic now */
+    UI_ACT_VOICE,           /* apply voice register / volume now */
+    UI_ACT_SAY_WORD,        /* speak a sample word (ui_say_arg) */
+    UI_ACT_SAY_MOOD,        /* speak a sample mood gesture (ui_say_arg) */
 } ui_action_t;
 
 typedef struct {
@@ -111,6 +115,10 @@ typedef struct {
     float mic_db[3][3];
     mic_cal_t mic_result;
     bool mic_ok;
+    /* voice */
+    int voice_row;          /* 0 register, 1 chattiness, 2 volume, 3 say a word, 4 say a mood */
+    int say_arg;            /* argument of the last SAY action */
+    int say_next;           /* rotating sample index */
     /* brightness / battery */
     char text_a[40], text_b[40], text_c[40], text_d[64], text_e[64];
     uint32_t text_ms;

@@ -19,6 +19,14 @@ bool audio_running(void);
  * wizard asks for less so a clap 30 cm away does not clip and its edge stays intact. */
 void audio_set_gain_db(int db);
 int audio_gain_db(void);
+/* Speaker: ES8311 into the NS4150B amplifier, on the same I2S bus. Mono 16 kHz 16-bit blocks;
+ * blocks until the DMA has taken them. Volume 0..100. The amplifier is switched by audio_pa. */
+esp_err_t audio_write(const int16_t *mono, int n);
+void audio_set_volume(int pct);
+void audio_pa(bool on);
+/* While the character speaks, the microphone features are held (his own voice is not a beat). */
+void audio_set_muted(bool muted);
+
 /* Map raw arrival-time differences to the direction value: dir = (lag - offset) * gain. */
 void audio_set_dir_cal(const mic_cal_t *cal);
 void audio_get_features(audio_features_t *out);

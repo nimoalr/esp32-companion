@@ -32,6 +32,7 @@
 #include "ui.h"
 #include "gfx.h"
 #include "audio.h"
+#include "speech.h"
 #include "accessories.h"
 #include "behavior.h"
 
@@ -419,7 +420,7 @@ static void leave_ui(render_ctx_t *c, uint32_t now_ms)
 static void sync_audio(render_ctx_t *c, bool want)
 {
     const bool wizard = c->mode == MODE_UI && c->ui.screen == UI_SCREEN_MICCAL;
-    want = (want && c->mode == MODE_EYES) || wizard;
+    want = (want && c->mode == MODE_EYES) || wizard || speech_busy();
     /* the wizard listens at a lower gain so claps do not clip; restart the mics when it changes */
     const int gain = wizard ? MICCAL_GAIN_DB : CONFIG_EYES_AUDIO_GAIN_DB;
     if (audio_running() && audio_gain_db() != gain) audio_stop();
@@ -455,6 +456,19 @@ static void run_ui_actions(render_ctx_t *c, uint32_t now_ms)
             break;
         case UI_ACT_MICCAL:
             audio_set_dir_cal(&g_settings.mic);
+    ESP_ERROR_CHECK(speech_init());
+    speech_set_register((voice_register_t)g_settings.voice_register);
+    speech_set_volume(g_settings.volume);
+            break;
+        case UI_ACT_VOICE:
+            speech_set_register((voice_register_t)g_settings.voice_register);
+            speech_set_volume(g_settings.volume);
+            break;
+        case UI_ACT_SAY_WORD:
+            speech_word(c->ui.say_arg, 1.f, true);
+            break;
+        case UI_ACT_SAY_MOOD:
+            speech_gesture((voice_id_t)c->ui.say_arg, 1.f, true);
             break;
         case UI_ACT_EXIT:
             leave_ui(c, now_ms);

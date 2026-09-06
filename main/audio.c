@@ -10,6 +10,8 @@
 #include "esp_codec_dev.h"
 #include "esp_codec_dev_defaults.h"
 #include "es7210_adc.h"
+#include "es8311_codec.h"
+#include "driver/gpio.h"
 #include "esp_timer.h"
 #include "esp_check.h"
 #include "esp_log.h"
@@ -33,6 +35,13 @@ static const char *TAG = "audio";
 static i2s_chan_handle_t s_rx, s_tx;
 
 static esp_codec_dev_handle_t s_dev;
+static esp_codec_dev_handle_t s_spk;                /* ES8311 playback device, same data interface */
+static const audio_codec_ctrl_if_t *s_spk_ctrl_if;  /* kept across start/stop like the ES7210's */
+static const audio_codec_if_t *s_spk_codec_if;
+static bool s_spk_opened;
+static int s_volume = 70;
+static volatile bool s_muted;
+static int16_t s_stereo[2 * 320];
 static const audio_codec_ctrl_if_t *s_ctrl_if;   /* created once, kept across start/stop */
 static bool s_opened;                             /* esp_codec_dev_open succeeded */
 static const audio_codec_if_t *s_codec_if;
@@ -362,6 +371,13 @@ static void audio_task(void *arg)
             continue;
         }
         const int64_t t0 = esp_timer_get_time();
+        if (s_muted) {
+            /* his own voice: keep the level flowing (presence) but no beats, no direction */
+            portENTER_CRITICAL(&s_lock);
+            s_feat.kick = 0.f;
+            portEXIT_CRITICAL(&s_lock);
+            continue;
+        }
         analyse(pcm, (uint32_t)(t0 / 1000));
         const uint32_t us = (uint32_t)(esp_timer_get_time() - t0);
         portENTER_CRITICAL(&s_lock);
@@ -435,6 +451,37 @@ esp_err_t audio_start(void)
     }
     s_opened = true;
 
+    /* the speaker: ES8311 on the shared I2S data interface; failure here is not fatal */
+    if (!s_spk_ctrl_if) {
+        audio_codec_i2c_cfg_t i2c_cfg = { .port = BOARD_I2C_PORT, .addr = ES8311_CODEC_DEFAULT_ADDR, .bus_handle = i2c_bus_get() };
+        s_spk_ctrl_if = audio_codec_new_i2c_ctrl(&i2c_cfg);
+    }
+    es8311_codec_cfg_t spk_cfg = {
+        .ctrl_if = s_spk_ctrl_if,
+        .codec_mode = ESP_CODEC_DEV_WORK_MODE_DAC,
+        .pa_pin = -1,                    /* the amplifier is switched here, only while something plays */
+        .use_mclk = true,
+        .hw_gain = { .pa_voltage = 5.0, .codec_dac_voltage = 3.3, .pa_gain = 6.0 },
+        .mclk_div = 256,
+    };
+    s_spk_codec_if = s_spk_ctrl_if ? es8311_codec_new(&spk_cfg) : NULL;
+    esp_codec_dev_cfg_t spk_dev_cfg = { .dev_type = ESP_CODEC_DEV_TYPE_OUT, .codec_if = s_spk_codec_if, .data_if = s_data_if };
+    s_spk = s_spk_codec_if ? esp_codec_dev_new(&spk_dev_cfg) : NULL;
+    if (s_spk) {
+        esp_codec_dev_sample_info_t ofs = { .sample_rate = SAMPLE_RATE, .channel = 2, .bits_per_sample = 16 };
+        if (esp_codec_dev_open(s_spk, &ofs) == ESP_CODEC_DEV_OK) {
+            s_spk_opened = true;
+            esp_codec_dev_set_out_vol(s_spk, (float)s_volume);
+        } else {
+            ESP_LOGW(TAG, "ES8311 open failed: no speaker");
+        }
+    } else {
+        ESP_LOGW(TAG, "ES8311 setup failed: no speaker");
+    }
+    gpio_config_t pa = { .pin_bit_mask = 1ULL << BOARD_PA_EN, .mode = GPIO_MODE_OUTPUT };
+    gpio_config(&pa);
+    gpio_set_level(BOARD_PA_EN, 0);
+
     portENTER_CRITICAL(&s_lock);
     memset(&s_feat, 0, sizeof(s_feat));
     portEXIT_CRITICAL(&s_lock);
@@ -471,6 +518,14 @@ void audio_stop(void)
     /* let the task fall out of its read loop */
     for (int i = 0; i < 50 && s_task; i++) vTaskDelay(pdMS_TO_TICKS(10));
     bool rx_enabled = s_rx != NULL;
+    gpio_set_level(BOARD_PA_EN, 0);
+    if (s_spk) {
+        if (s_spk_opened) esp_codec_dev_close(s_spk);
+        esp_codec_dev_delete(s_spk);
+        s_spk = NULL;
+        s_spk_opened = false;
+    }
+    if (s_spk_codec_if) { audio_codec_delete_codec_if(s_spk_codec_if); s_spk_codec_if = NULL; }
     if (s_dev) {
         /* closing an opened codec device disables the I2S channel through the data interface */
         if (s_opened) {
@@ -497,6 +552,35 @@ void audio_stop(void)
     s_feat.active = false;
     portEXIT_CRITICAL(&s_lock);
     ESP_LOGI(TAG, "microphones off");
+}
+
+esp_err_t audio_write(const int16_t *mono, int n)
+{
+    if (!s_spk_opened) return ESP_ERR_INVALID_STATE;
+    while (n > 0) {
+        const int k = n < 320 ? n : 320;
+        for (int i = 0; i < k; i++) s_stereo[2 * i] = s_stereo[2 * i + 1] = mono[i];
+        if (esp_codec_dev_write(s_spk, s_stereo, k * 4) != ESP_CODEC_DEV_OK) return ESP_FAIL;
+        mono += k;
+        n -= k;
+    }
+    return ESP_OK;
+}
+
+void audio_set_volume(int pct)
+{
+    s_volume = pct < 0 ? 0 : pct > 100 ? 100 : pct;
+    if (s_spk_opened) esp_codec_dev_set_out_vol(s_spk, (float)s_volume);
+}
+
+void audio_pa(bool on)
+{
+    gpio_set_level(BOARD_PA_EN, on);
+}
+
+void audio_set_muted(bool muted)
+{
+    s_muted = muted;
 }
 
 void audio_set_gain_db(int db)

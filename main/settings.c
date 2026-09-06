@@ -38,6 +38,9 @@ esp_err_t settings_init(void)
     g_settings.brightness_active = CONFIG_EYES_BRIGHTNESS_ACTIVE;
     g_settings.brightness_aod = CONFIG_EYES_BRIGHTNESS_AOD;
     imu_cal_default(&g_settings.cal);
+    g_settings.voice_register = 2;
+    g_settings.chattiness = 2;
+    g_settings.volume = 70;
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -59,6 +62,9 @@ esp_err_t settings_init(void)
     if (nvs_get_u8(h, "bri_act", &v) == ESP_OK && v >= 1 && v <= 100) g_settings.brightness_active = v;
     if (nvs_get_u8(h, "bri_aod", &v) == ESP_OK && v >= 1 && v <= 100) g_settings.brightness_aod = v;
     if (nvs_get_u8(h, "eye_col", &v) == ESP_OK && v < EYE_PALETTE_N) g_settings.eye_color = v;
+    if (nvs_get_u8(h, "vreg", &v) == ESP_OK && v <= 2) g_settings.voice_register = v;
+    if (nvs_get_u8(h, "chat", &v) == ESP_OK && v <= 3) g_settings.chattiness = v;
+    if (nvs_get_u8(h, "vol", &v) == ESP_OK && v <= 100) g_settings.volume = v;
     imu_cal_t cal;
     size_t len = sizeof(cal);
     if (nvs_get_blob(h, "cal2", &cal, &len) == ESP_OK && len == sizeof(cal) && cal.valid) {
@@ -88,6 +94,9 @@ esp_err_t settings_save(void)
     if (err == ESP_OK) err = nvs_set_u8(h, "bri_act", g_settings.brightness_active);
     if (err == ESP_OK) err = nvs_set_u8(h, "bri_aod", g_settings.brightness_aod);
     if (err == ESP_OK) err = nvs_set_u8(h, "eye_col", g_settings.eye_color);
+    if (err == ESP_OK) err = nvs_set_u8(h, "vreg", g_settings.voice_register);
+    if (err == ESP_OK) err = nvs_set_u8(h, "chat", g_settings.chattiness);
+    if (err == ESP_OK) err = nvs_set_u8(h, "vol", g_settings.volume);
     if (err == ESP_OK) err = nvs_set_blob(h, "cal2", &g_settings.cal, sizeof(g_settings.cal));
     if (err == ESP_OK) err = nvs_set_blob(h, "mic2", &g_settings.mic, sizeof(g_settings.mic));
     if (err == ESP_OK) err = nvs_commit(h);

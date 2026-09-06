@@ -48,7 +48,8 @@
 #define BOARD_I2S_BCLK         GPIO_NUM_9       /* [HWREF][BSP BSP_I2S_SCLK][SCH I2S_SCLK] */
 #define BOARD_I2S_LRCK         GPIO_NUM_45      /* [HWREF][BSP BSP_I2S_LCLK][SCH I2S_LRCK] */
 #define BOARD_I2S_DIN          GPIO_NUM_10      /* [HWREF][BSP BSP_I2S_DSIN][SCH I2S_ASDOUT]: ES7210 -> ESP32 */
-#define BOARD_I2S_DOUT         GPIO_NUM_8       /* [BSP BSP_I2S_DOUT]: ESP32 -> ES8311 (unused audio out; the BSP always runs I2S full duplex) */
+#define BOARD_I2S_DOUT         GPIO_NUM_8       /* [BSP BSP_I2S_DOUT]: ESP32 -> ES8311 */
+#define BOARD_PA_EN            GPIO_NUM_46      /* [BSP BSP_POWER_AMP_IO]: NS4150B amplifier enable, high = on */
 #define BOARD_ES7210_ADDR_7BIT 0x40             /* [HWREF]; esp_codec_dev takes the 8-bit form 0x80 */
 
 /* ---- AXP2101 PMIC (shared I2C bus) ---------------------------------------- */

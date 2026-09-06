@@ -13,6 +13,9 @@ typedef struct {
     uint8_t eye_color;           /* index into k_eye_palette */
     imu_cal_t cal;               /* cal.valid == false until the wizard has run */
     mic_cal_t mic;               /* microphone axis, same rule */
+    uint8_t voice_register;      /* 0 low, 1 mid, 2 high */
+    uint8_t chattiness;          /* 0 quiet .. 3 talkative */
+    uint8_t volume;              /* percent */
 } settings_t;
 
 extern settings_t g_settings;

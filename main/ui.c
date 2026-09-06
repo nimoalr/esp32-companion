@@ -1,4 +1,6 @@
 #include "ui.h"
+#include "voice.h"
+#include "clips_gen.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -117,15 +119,15 @@ static void goto_screen(ui_t *u, ui_screen_t s, uint32_t now_ms)
 
 const char *ui_screen_name(ui_screen_t s)
 {
-    static const char *n[] = { "MENU", "CALIBRATE", "LEVEL", "BRIGHTNESS", "BATTERY", "COLOR", "MICCAL" };
-    return (s <= UI_SCREEN_MICCAL) ? n[s] : "?";
+    static const char *n[] = { "MENU", "CALIBRATE", "LEVEL", "BRIGHTNESS", "BATTERY", "COLOR", "MICCAL", "VOICE" };
+    return (s <= UI_SCREEN_VOICE) ? n[s] : "?";
 }
 
 /* ---- menu ------------------------------------------------------------------ */
 
 static void miccal_begin(ui_t *u, uint32_t now_ms);
 
-enum { MENU_CALIBRATE, MENU_LEVEL, MENU_BRIGHTNESS, MENU_COLOR, MENU_BATTERY, MENU_MICCAL, MENU_DANCE, MENU_EYES, MENU_COUNT };
+enum { MENU_CALIBRATE, MENU_LEVEL, MENU_BRIGHTNESS, MENU_COLOR, MENU_BATTERY, MENU_MICCAL, MENU_VOICE, MENU_DANCE, MENU_EYES, MENU_COUNT };
 
 static const char *menu_label(const ui_t *u, int i, char *buf, int len)
 {
@@ -136,6 +138,7 @@ static const char *menu_label(const ui_t *u, int i, char *buf, int len)
     case MENU_COLOR:      snprintf(buf, (size_t)len, "Eye colour %s", k_eye_palette[u->settings->eye_color % EYE_PALETTE_N].name); return buf;
     case MENU_BATTERY:    return "Battery";
     case MENU_MICCAL:     return u->settings->mic.valid ? "Calibrate mics" : "Calibrate mics  !";
+    case MENU_VOICE:      return "Voice";
     case MENU_DANCE:      return "Dance mode";
     default:              return "Back to eyes";
     }
@@ -192,6 +195,10 @@ static void menu_input(ui_t *u, ui_input_t in, uint32_t now_ms)
             break;
         case MENU_MICCAL:
             miccal_begin(u, now_ms);
+            break;
+        case MENU_VOICE:
+            u->voice_row = 0;
+            goto_screen(u, UI_SCREEN_VOICE, now_ms);
             break;
         case MENU_DANCE:
             action(u, UI_ACT_DANCE);
@@ -458,6 +465,82 @@ static void brightness_input(ui_t *u, ui_input_t in, uint32_t now_ms)
     } else if (in == UI_IN_LONG || in == UI_IN_RIGHT) {
         action(u, UI_ACT_SAVE);
         goto_screen(u, UI_SCREEN_MENU, now_ms);
+    }
+}
+
+/* ---- voice ------------------------------------------------------------------ */
+
+static const char *k_reg_names[3] = { "low", "mid", "high" };
+static const char *k_chat_names[4] = { "quiet", "a little", "normal", "talkative" };
+#define VOICE_ROWS 5
+
+static void paint_voice(const ui_t *u, const gfx_band_t *b)
+{
+    chrome(b, "VOICE", "up/down  tap=change  hold=back");
+    char line[40];
+    for (int i = 0; i < VOICE_ROWS; i++) {
+        const int y = LIST_Y + 10 + i * ROW_H;
+        const bool sel = i == u->voice_row;
+        if (sel) gfx_fill(b, BODY_X - 8, y, BODY_W + 16, ROW_H, C.sel_bg);
+        switch (i) {
+        case 0: snprintf(line, sizeof line, "Register    %s", k_reg_names[u->settings->voice_register % 3]); break;
+        case 1: snprintf(line, sizeof line, "Chattiness  %s", k_chat_names[u->settings->chattiness % 4]); break;
+        case 2: snprintf(line, sizeof line, "Volume      %3u%%", u->settings->volume); break;
+        case 3: snprintf(line, sizeof line, "Say a word"); break;
+        default: snprintf(line, sizeof line, "Say a mood"); break;
+        }
+        gfx_text(b, &font_spleen_12x24, BODY_X, y + 4, line, sel ? C.white : C.fg, GFX_TRANSPARENT);
+    }
+}
+
+static void voice_input(ui_t *u, ui_input_t in, uint32_t now_ms)
+{
+    switch (in) {
+    case UI_IN_UP:
+        u->voice_row = (u->voice_row + VOICE_ROWS - 1) % VOICE_ROWS;
+        dirty_all(u);
+        break;
+    case UI_IN_DOWN:
+        u->voice_row = (u->voice_row + 1) % VOICE_ROWS;
+        dirty_all(u);
+        break;
+    case UI_IN_TAP:
+        switch (u->voice_row) {
+        case 0:
+            u->settings->voice_register = (u->settings->voice_register + 1) % 3;
+            action(u, UI_ACT_VOICE);
+            u->say_arg = 0;
+            action(u, UI_ACT_SAY_MOOD);
+            break;
+        case 1:
+            u->settings->chattiness = (u->settings->chattiness + 1) % 4;
+            break;
+        case 2:
+            u->settings->volume = u->settings->volume >= 100 ? 20 : u->settings->volume + 20;
+            action(u, UI_ACT_VOICE);
+            u->say_arg = 0;
+            action(u, UI_ACT_SAY_WORD);
+            break;
+        case 3:
+            u->say_arg = u->say_next % CLIP_COUNT;
+            u->say_next++;
+            action(u, UI_ACT_SAY_WORD);
+            break;
+        default:
+            u->say_arg = u->say_next % VOICE_HELLO;    /* the mood gestures come first in the table */
+            u->say_next++;
+            action(u, UI_ACT_SAY_MOOD);
+            break;
+        }
+        dirty_all(u);
+        break;
+    case UI_IN_LONG:
+    case UI_IN_RIGHT:
+        action(u, UI_ACT_SAVE);
+        goto_screen(u, UI_SCREEN_MENU, now_ms);
+        break;
+    default:
+        break;
     }
 }
 
@@ -902,6 +985,7 @@ void ui_input(ui_t *u, ui_input_t in, uint32_t now_ms)
     case UI_SCREEN_BRIGHTNESS: brightness_input(u, in, now_ms); break;
     case UI_SCREEN_COLOR:      color_input(u, in, now_ms); break;
     case UI_SCREEN_MICCAL:     miccal_input(u, in, now_ms); break;
+    case UI_SCREEN_VOICE:      voice_input(u, in, now_ms); break;
     case UI_SCREEN_LEVEL:
     case UI_SCREEN_BATTERY:
         if (in == UI_IN_LONG || in == UI_IN_RIGHT) goto_screen(u, UI_SCREEN_MENU, now_ms);
@@ -934,6 +1018,7 @@ void ui_paint(const ui_t *u, const gfx_band_t *band)
     case UI_SCREEN_COLOR:      paint_color(u, band); break;
     case UI_SCREEN_BATTERY:    paint_battery(u, band); break;
     case UI_SCREEN_MICCAL:     paint_miccal(u, band); break;
+    case UI_SCREEN_VOICE:      paint_voice(u, band); break;
     }
 }
 
