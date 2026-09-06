@@ -23,6 +23,13 @@ typedef struct {
     bool usb;                   /* on the charger: the microphones can stay on */
 } behavior_in_t;
 
+typedef enum {
+    BEH_EV_NONE = 0,
+    BEH_EV_PICKED_UP,
+    BEH_EV_PUT_DOWN,
+    BEH_EV_BODY_TAP,
+} behavior_event_t;
+
 typedef struct {
     int override_anim;          /* anim_id_t to show, or -1 for the user's choice */
     bool knocked_out, zz;
@@ -47,12 +54,6 @@ typedef enum {
     BEH_STARTLED,               /* a knock on the body */
 } behavior_state_t;
 
-typedef enum {
-    BEH_EV_NONE = 0,
-    BEH_EV_PICKED_UP,
-    BEH_EV_PUT_DOWN,
-    BEH_EV_BODY_TAP,
-} behavior_event_t;
 
 typedef struct {
     behavior_state_t state;
