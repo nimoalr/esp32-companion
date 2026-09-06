@@ -57,6 +57,7 @@ static float s_bass_ratio;
 static float s_dir, s_dir_conf, s_dir_lag;
 static int s_gain_db = CONFIG_EYES_AUDIO_GAIN_DB;
 static float s_dir_off = 0.f, s_dir_gain = 0.5f;   /* raw lag -> -1..+1; the wizard sets these */
+static float s_dir_db_off = 0.f, s_dir_db_gain = 0.f; /* level difference (dB) -> -1..+1; 0 = unused */
 #define DIR_MAX_LAG 3                 /* cross-correlation lags for sustained sound */
 static micdir_t s_micdir;
 static float s_dir_corr;
@@ -247,16 +248,34 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
             measured = true;
         }
     }
-    if (measured) {
+    /*
+     * Two cues, fused: the arrival-time difference and the level difference between the
+     * mics. In this shell each alone is marginal; together they agreed on every wizard clap.
+     * A transient is one clean measurement and takes most of the estimate; a voice averages.
+     */
+    if (measured || raw_lsb > 60.f) {
+        float est = 0.f, w = 0.f;
+        if (measured && s_dir_gain != 0.f) {
+            float e = (meas_lag - s_dir_off) * s_dir_gain;
+            est += e > 1.f ? 1.f : e < -1.f ? -1.f : e;
+            w += 1.f;
+        }
+        if (s_dir_db_gain != 0.f) {
+            const float db = transient ? tr.level_db : 20.f * log10f((sqrtf(l_e) + 1e-6f) / (sqrtf(r_e) + 1e-6f));
+            float e = (db - s_dir_db_off) * s_dir_db_gain;
+            est += e > 1.f ? 1.f : e < -1.f ? -1.f : e;
+            w += 1.f;
+        }
         if (transient) {
             s_dir_lag = meas_lag;
             s_dir_conf = meas_conf;
         }
-        /* a transient is one clean measurement: take most of it; a voice is averaged */
-        s_dir += ((meas_lag - s_dir_off) * s_dir_gain - s_dir) * (transient ? 0.7f : 0.12f);
-        if (s_dir > 1.f) s_dir = 1.f;
-        if (s_dir < -1.f) s_dir = -1.f;
-    } else if (raw_lsb <= 60.f) {
+        if (w > 0.f) {
+            s_dir += (est / w - s_dir) * (transient ? 0.7f : 0.12f);
+            if (s_dir > 1.f) s_dir = 1.f;
+            if (s_dir < -1.f) s_dir = -1.f;
+        }
+    } else {
         s_dir *= 0.995f;                 /* fade back to centre in silence, slowly */
     }
 
@@ -495,9 +514,13 @@ void audio_set_dir_cal(const mic_cal_t *cal)
     if (cal && cal->valid) {
         s_dir_off = cal->offset;
         s_dir_gain = cal->gain;
+        s_dir_db_off = cal->db_offset;
+        s_dir_db_gain = cal->db_gain;
     } else {
         s_dir_off = 0.f;
         s_dir_gain = 0.5f;
+        s_dir_db_off = 0.f;
+        s_dir_db_gain = 0.f;
     }
 }
 

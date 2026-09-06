@@ -46,9 +46,11 @@ bearing: the time difference between them says how far the sound is towards
 the USB end or the lanyard end of the device, with left/right ambiguous.
 The spacing is roughly 40 mm, which at 16 kHz is about two samples of delay
 end to end, so the estimate is coarse but real: cross-correlate the two
-channels over lags of -3..+3 samples on speech frames only, take the peak
-with parabolic interpolation, smooth over a second. Cost: 7 lags x 256
-samples per frame, well under 0.1 ms.
+channels over lags of -3..+3 samples, take the peak with parabolic
+interpolation, and average it with the level difference between the mics
+(which the shell makes the more reliable of the two cues), each mapped
+through the wizard's calibration; smooth over a second. Cost: 7 lags x 256
+samples per frame, well under 0.1 ms. Done, see `micdir.c` and the wizard.
 
 What it gives the face: on a desk, lying flat, the axis is "the USB edge
 versus the lanyard edge", so when someone talks from one side of the table
@@ -186,9 +188,15 @@ before any of it goes into firmware.
 
 ## Open questions
 
-* Microphone positions: the description above follows the spec sheet
-  (bottom-left near USB, top-left near the lanyard); to be confirmed with a
-  clap test once direction estimation logs a value.
+* Microphone positions: confirmed with the wizard on 2026-09-06. MIC1 (I2S
+  slot 0, the left channel) is the microphone next to the USB port, MIC2 the
+  one next to the lanyard holes. The shell is one shared cavity fed by the mic
+  holes, two open lanyard holes and the USB cutout, so the arrival-time
+  difference alone was a coin toss per clap until the mics were sealed to
+  their holes with foam tape; even then the ends differ by about a sample and
+  2-4 dB. The direction estimate therefore fuses timing and level, and is a
+  coarse "USB end or lanyard end" cue, not a bearing. Details in
+  [hardware.md](hardware.md).
 * Time of day: setting the RTC needs a way in (the setup UI, or a one-off
   from a phone over Wi-Fi). Without it, "evening" can only be inferred from
   how long he has been awake.

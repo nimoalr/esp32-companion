@@ -9,8 +9,11 @@
 typedef struct {
     bool valid;
     float offset;           /* lag of a sound facing the screen (equidistant from both mics) */
-    float gain;             /* signed, per sample: dir = (lag - offset) * gain */
+    float gain;             /* signed, per sample: dir = (lag - offset) * gain; 0 = timing unusable */
     float sep;              /* lag difference between the two ends, samples (diagnostic) */
+    float db_offset;        /* MIC1/MIC2 level difference of a sound facing the screen, dB */
+    float db_gain;          /* signed, per dB: dir = (db - db_offset) * db_gain; 0 = level unusable */
+    float db_sep;           /* level difference between the two ends, dB (diagnostic) */
 } mic_cal_t;
 
 typedef struct {

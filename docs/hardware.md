@@ -249,3 +249,36 @@ example). The ES8311 playback codec and the NS4150B amplifier are not used.
 ES8311 playback, NS4150B amplifier (GPIO46), PCF85063 RTC, TCA9554 expander
 (0x20), SD card (GPIO1/2/3/41), USB, Wi-Fi, Bluetooth. Their GPIOs are never
 configured.
+
+## Microphones and direction
+
+Two MEMS microphones on the ES7210: MIC1 (I2S slot 0, the left channel of the
+16-bit stereo stream) sits next to the USB port, MIC2 (slot 1) next to the
+lanyard holes, about 40 mm apart. Established with the mic wizard on
+2026-09-06: claps at the USB end reach MIC1 first and louder, claps at the
+lanyard end reach MIC2 first and louder.
+
+What the shell does to the sound matters more than the spacing. The mics
+share one cavity, fed by their own holes, by two open lanyard holes and by
+the USB cutout, and the sound entering anywhere fills the cavity and reaches
+both mics at nearly the same instant. Measured before any change, the
+arrival-time difference of a clap from one end scattered over a full sample
+and changed sign from run to run, while claps from the front (symmetric
+paths) agreed to 0.03 sample, which is how the estimator was cleared and the
+shell blamed. Two fixes together made it usable:
+
+* foam tape sealing each mic to its own hole (a ring between the PCB and the
+  shell; the lanyard holes and the USB cutout stay open and feed only the
+  cavity);
+* listening at 12 dB instead of 30 during the wizard, because a clap at
+  30 cm clips within the first 2 ms at 30 dB and the timing works on exactly
+  that stretch.
+
+After that, six of six end claps landed on the right side by timing (ends
+about one sample apart) and six of six by level (2-4 dB). Each cue alone is
+marginal, so the direction estimate averages both. It is a coarse "USB end or
+lanyard end" cue; nothing here can give a bearing.
+
+Numbers: the wizard's log lines (`miccal:` from the `ui` tag) and its replay
+after USB returns list every transient with its lag, level difference, edge
+correlation and peak.

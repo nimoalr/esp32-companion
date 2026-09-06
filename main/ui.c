@@ -518,7 +518,8 @@ static void color_input(ui_t *u, ui_input_t in, uint32_t now_ms)
 #define MIC_MIN_PEAK  2500        /* LSB, at the wizard's 12 dB gain */
 #define MIC_MOVE_RAW  150         /* accel step between samples that counts as handling (~35 mg) */
 #define MIC_MOVE_MS   500         /* claps this soon after handling are ignored */
-#define MIC_MIN_SEP   0.5f        /* samples between the ends, below which the axis is unusable */
+#define MIC_MIN_SEP   0.5f        /* samples between the ends, below which the timing cue is unusable */
+#define MIC_MIN_DB_SEP 1.5f       /* dB between the ends, below which the level cue is unusable */
 
 /* the last run's transients, kept for ui_miccal_dump */
 #define MIC_LOG_N 40
@@ -578,9 +579,10 @@ void ui_miccal_dump(void)
                  s_mic_run_lag[1][2], s_mic_run_lag[2][0], s_mic_run_lag[2][1], s_mic_run_lag[2][2],
                  s_mic_run_ok ? "ok" : "FAILED: ", s_mic_run_ok ? "" : s_mic_run_err);
         if (s_mic_run_ok) {
-            ESP_LOGI(TAG, "  sep %.2f samples (%s mic is at the USB end), offset %+.2f, gain %+.2f",
-                     s_mic_run_result.sep, s_mic_run_result.sep > 0.f ? "R/MIC2" : "L/MIC1", s_mic_run_result.offset,
-                     s_mic_run_result.gain);
+            const mic_cal_t *r = &s_mic_run_result;
+            ESP_LOGI(TAG, "  timing sep %.2f smp offset %+.2f gain %+.2f | level sep %.1f dB offset %+.1f gain %+.2f | %s mic at the USB end",
+                     r->sep, r->offset, r->gain, r->db_sep, r->db_offset, r->db_gain,
+                     (r->gain != 0.f ? r->gain : r->db_gain) < 0.f ? "L/MIC1" : "R/MIC2");
         }
     }
 }
@@ -616,24 +618,53 @@ static void miccal_begin(ui_t *u, uint32_t now_ms)
     ESP_LOGI(TAG, "miccal: start");
 }
 
-static bool miccal_compute(const float lag[MIC_PLACES][MIC_CLAPS], mic_cal_t *out, char *err, size_t errlen)
+/* one cue's axis from its three medians: zero from the front clap (sanity-checked against the
+ * midpoint of the ends) and a gain that puts an end clap at +-1; gain 0 when the ends are alike */
+static void mic_axis(const float v[MIC_PLACES][MIC_CLAPS], float min_sep, float *offset, float *gain, float *sep)
 {
-    const float usb = median3(lag[0][0], lag[0][1], lag[0][2]);
-    const float lan = median3(lag[1][0], lag[1][1], lag[1][2]);
-    const float front = median3(lag[2][0], lag[2][1], lag[2][2]);
-    const float sep = lan - usb;
+    const float usb = median3(v[0][0], v[0][1], v[0][2]);
+    const float lan = median3(v[1][0], v[1][1], v[1][2]);
+    const float front = median3(v[2][0], v[2][1], v[2][2]);
+    *sep = lan - usb;
+    const float mid = 0.5f * (usb + lan);
+    *offset = fabsf(front - mid) < 0.5f * fabsf(*sep) ? 0.5f * (front + mid) : mid;
+    *gain = fabsf(*sep) < min_sep ? 0.f : 2.f / *sep;
+}
+
+static bool miccal_compute(const float lag[MIC_PLACES][MIC_CLAPS], const float db[MIC_PLACES][MIC_CLAPS],
+                           mic_cal_t *out, char *err, size_t errlen)
+{
     memset(out, 0, sizeof *out);
-    out->sep = sep;
-    if (fabsf(sep) < MIC_MIN_SEP) {
-        snprintf(err, errlen, "ends alike: %.2f vs %.2f", usb, lan);
+    mic_axis(lag, MIC_MIN_SEP, &out->offset, &out->gain, &out->sep);
+    mic_axis(db, MIC_MIN_DB_SEP, &out->db_offset, &out->db_gain, &out->db_sep);
+    if (out->gain == 0.f && out->db_gain == 0.f) {
+        snprintf(err, errlen, "ends alike: %.2f smp, %.0f dB", out->sep, out->db_sep);
         return false;
     }
-    /* zero: the front clap, sanity-checked against the midpoint of the two ends */
-    const float mid = 0.5f * (usb + lan);
-    out->offset = fabsf(front - mid) < 0.5f * fabsf(sep) ? 0.5f * (front + mid) : mid;
-    out->gain = 2.f / sep;               /* an end clap lands at +-1 */
+    /* the two cues must agree on which mic is at the USB end */
+    if (out->gain != 0.f && out->db_gain != 0.f && (out->gain > 0.f) != (out->db_gain > 0.f)) {
+        snprintf(err, errlen, "timing and level disagree");
+        return false;
+    }
     out->valid = true;
     return true;
+}
+
+/* the direction of one transient through a calibration: both cues, averaged */
+static float mic_dir_of(const mic_cal_t *c, float lag, float db)
+{
+    float est = 0.f, w = 0.f;
+    if (c->gain != 0.f) {
+        const float e = (lag - c->offset) * c->gain;
+        est += e > 1.f ? 1.f : e < -1.f ? -1.f : e;
+        w += 1.f;
+    }
+    if (c->db_gain != 0.f) {
+        const float e = (db - c->db_offset) * c->db_gain;
+        est += e > 1.f ? 1.f : e < -1.f ? -1.f : e;
+        w += 1.f;
+    }
+    return w > 0.f ? est / w : 0.f;
 }
 
 static void paint_miccal(const ui_t *u, const gfx_band_t *b)
@@ -668,7 +699,7 @@ static void paint_miccal(const ui_t *u, const gfx_band_t *b)
             }
             gfx_disc(b, CX, CY, 4, C.white);
             text_center(b, &font_spleen_8x16, 104, "clap to check: up = lanyard end", C.grey);
-            snprintf(line, sizeof line, "ends %.2f apart  zero %+.2f", u->mic_result.sep, u->mic_result.offset);
+            snprintf(line, sizeof line, "ends %.2f smp, %.0f dB apart", u->mic_result.sep, u->mic_result.db_sep);
             text_center(b, &font_spleen_8x16, 344, line, C.grey);
             text_center(b, &font_spleen_12x24, 364, u->text_a, C.white);
         } else {
@@ -690,7 +721,7 @@ static void miccal_input(ui_t *u, ui_input_t in, uint32_t now_ms)
         u->settings->mic = u->mic_result;
         action(u, UI_ACT_SAVE);
         action(u, UI_ACT_MICCAL);
-        ESP_LOGI(TAG, "miccal: saved offset %+.2f gain %+.2f sep %.2f", u->mic_result.offset, u->mic_result.gain, u->mic_result.sep);
+        ESP_LOGI(TAG, "miccal: saved");
         goto_screen(u, UI_SCREEN_MENU, now_ms);
     } else {
         miccal_begin(u, now_ms);
@@ -734,11 +765,9 @@ static void miccal_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *s)
     if (u->mic_step >= MIC_PLACES) {
         if (accept && u->mic_ok) {
             u->mic_clap_ms = now_ms;
-            float d = (s->dir_lag - u->mic_result.offset) * u->mic_result.gain;
-            if (d > 1.f) d = 1.f;
-            if (d < -1.f) d = -1.f;
+            const float d = mic_dir_of(&u->mic_result, s->dir_lag, s->dir_level_db);
             u->arrow_len = (int)(d * MIC_ARROW_MAX);
-            snprintf(u->text_a, sizeof u->text_a, "lag %+.2f  ->  %+.2f", s->dir_lag, d);
+            snprintf(u->text_a, sizeof u->text_a, "%+.2f smp %+.0f dB -> %+.2f", s->dir_lag, s->dir_level_db, d);
             dirty_all(u);
         }
         return;
@@ -766,7 +795,7 @@ static void miccal_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *s)
     u->text_b[0] = 0;
     if (u->mic_step == MIC_PLACES) {
         char err[48];
-        u->mic_ok = miccal_compute(u->mic_lag, &u->mic_result, err, sizeof err);
+        u->mic_ok = miccal_compute(u->mic_lag, u->mic_db, &u->mic_result, err, sizeof err);
         if (!u->mic_ok) snprintf(u->cal_msg, sizeof u->cal_msg, "%s", err);
         memcpy(s_mic_run_lag, u->mic_lag, sizeof s_mic_run_lag);
         memcpy(s_mic_run_db, u->mic_db, sizeof s_mic_run_db);
@@ -779,9 +808,13 @@ static void miccal_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *s)
         ESP_LOGI(TAG, "miccal: usb %+.2f %+.2f %+.2f | lanyard %+.2f %+.2f %+.2f | front %+.2f %+.2f %+.2f -> %s%s",
                  u->mic_lag[0][0], u->mic_lag[0][1], u->mic_lag[0][2], u->mic_lag[1][0], u->mic_lag[1][1], u->mic_lag[1][2],
                  u->mic_lag[2][0], u->mic_lag[2][1], u->mic_lag[2][2], u->mic_ok ? "ok" : "FAILED: ", u->mic_ok ? "" : err);
+        ESP_LOGI(TAG, "miccal: L/R dB: usb %+.0f %+.0f %+.0f | lanyard %+.0f %+.0f %+.0f | front %+.0f %+.0f %+.0f",
+                 u->mic_db[0][0], u->mic_db[0][1], u->mic_db[0][2], u->mic_db[1][0], u->mic_db[1][1], u->mic_db[1][2],
+                 u->mic_db[2][0], u->mic_db[2][1], u->mic_db[2][2]);
         if (u->mic_ok) {
-            ESP_LOGI(TAG, "miccal: sep %.2f samples (%s mic is at the USB end), offset %+.2f, gain %+.2f",
-                     u->mic_result.sep, u->mic_result.sep > 0.f ? "R/MIC2" : "L/MIC1", u->mic_result.offset, u->mic_result.gain);
+            ESP_LOGI(TAG, "miccal: timing sep %.2f smp offset %+.2f gain %+.2f | level sep %.1f dB offset %+.1f gain %+.2f | %s mic at the USB end",
+                     u->mic_result.sep, u->mic_result.offset, u->mic_result.gain, u->mic_result.db_sep, u->mic_result.db_offset,
+                     u->mic_result.db_gain, (u->mic_result.gain != 0.f ? u->mic_result.gain : u->mic_result.db_gain) < 0.f ? "L/MIC1" : "R/MIC2");
         }
     }
     dirty_all(u);
