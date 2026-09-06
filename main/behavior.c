@@ -29,9 +29,11 @@
 #define GROGGY_MS           3000
 #define FACE_DOWN_MS        1500
 #define WAKING_MS           500
-#define SNIFF_MS            3200
-#define MUSIC_MIN_BEATS     5
-#define MUSIC_QUIET_MS      12000
+#define SNIFF_MS            4200     /* long enough for six beats at 90 bpm */
+#define MUSIC_MIN_BEATS     6
+#define MUSIC_QUIET_MS      6000     /* no beat for this long: the music is over */
+#define MUSIC_BASS_RATIO    0.25f    /* sub-bass share below this is talk, not a kick drum */
+#define MUSIC_TEMPO_CONF    0.75f
 #define GAZE_PX_X           12.f
 #define GAZE_PX_Y           8.f
 
@@ -123,7 +125,9 @@ static void feel_motion(behavior_t *b, const behavior_in_t *in, uint32_t now_ms)
 
 static bool music_detected(const audio_features_t *a)
 {
-    return a->active && a->beat_count >= MUSIC_MIN_BEATS && a->bpm >= 60.f && a->bpm <= 190.f && a->regularity >= 0.6f;
+    /* a steady tempo in the dance range, carried by a kick drum: conversation has neither */
+    return a->active && a->beat_count >= MUSIC_MIN_BEATS && a->bpm >= 85.f && a->bpm <= 185.f &&
+           a->tempo_conf >= MUSIC_TEMPO_CONF && a->bass_ratio >= MUSIC_BASS_RATIO;
 }
 
 void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, behavior_out_t *out)
@@ -164,7 +168,11 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
         case BEH_MUSIC:
             if (shaking_hard) { enter(b, BEH_DIZZY, now_ms); break; }
             if (face_down) { enter(b, BEH_FACE_DOWN, now_ms); break; }
-            if (in->audio.active && in->audio.loud > 0.08f) b->music_quiet_since_ms = now_ms;
+            /* still music while the beats keep coming with a kick under them */
+            if (in->audio.active && in->audio.last_beat_ms && now_ms - in->audio.last_beat_ms < 2500 &&
+                in->audio.bass_ratio >= MUSIC_BASS_RATIO * 0.6f) {
+                b->music_quiet_since_ms = now_ms;
+            }
             if (tapped || !in->audio.active || now_ms - b->music_quiet_since_ms >= MUSIC_QUIET_MS) {
                 enter(b, BEH_IDLE, now_ms);
                 /* a tap means "enough", so stay off the music for a good while */

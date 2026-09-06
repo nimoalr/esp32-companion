@@ -52,6 +52,7 @@ static float s_bass_mean, s_bass_prev;
 static float s_lp_b0, s_lp_b1, s_lp_b2, s_lp_a1, s_lp_a2;
 static float s_lp_x1, s_lp_x2, s_lp_y1, s_lp_y2;
 static float s_kick_mean, s_kick_prev, s_max_kick = 1.f;
+static float s_bass_ratio;
 static float s_presence;              /* 0..1: is there real sound, from the raw level (quiet room ~18 LSB) */
 static float s_gap_ms;                /* current tempo estimate as a beat interval, 0 = none */
 static uint32_t s_last_beat_ms;
@@ -186,7 +187,11 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
         }
         s_last_beat_ms = now_ms;
     }
-    float bpm = 0.f, regularity = 0.f;
+    /* sub-bass share of the sound: music with a kick has plenty, conversation almost none */
+    const float ratio = loud > 1e-5f ? kick_e / loud : 0.f;
+    s_bass_ratio += (ratio - s_bass_ratio) * (1.f / 60.f);
+
+    float bpm = 0.f, regularity = 0.f, tempo_conf = 0.f;
     if (s_gap_n >= 4) {
         /* median interval: one missed or extra beat does not drag the tempo */
         uint32_t sorted[8];
@@ -207,6 +212,15 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
             }
             dev /= (float)s_gap_n;
             regularity = dev >= 0.5f ? 0.f : 1.f - 2.f * dev;
+            /* strict version: how many intervals sit within 12 % of the median (octave-folded) */
+            int good = 0;
+            for (int i = 0; i < s_gap_n; i++) {
+                float g = (float)s_beat_gaps[i];
+                if (g > 1.5f * gap) g *= 0.5f;
+                if (g < 0.67f * gap) g *= 2.f;
+                if (fabsf(g - gap) <= 0.12f * gap) good++;
+            }
+            tempo_conf = (float)good / (float)s_gap_n;
         }
     }
     /* tempo lock for the refractory period: only while the rhythm looks regular and recent */
@@ -230,6 +244,8 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     s_feat.last_beat_ms = s_last_beat_ms;
     s_feat.bpm = bpm;
     s_feat.regularity = regularity;
+    s_feat.tempo_conf = tempo_conf;
+    s_feat.bass_ratio = s_bass_ratio;
     portEXIT_CRITICAL(&s_lock);
 }
 
@@ -322,6 +338,7 @@ esp_err_t audio_start(void)
     s_bass_mean = 0.f;
     s_bass_prev = 0.f;
     s_kick_mean = s_kick_prev = 0.f;
+    s_bass_ratio = 0.f;
     s_lp_x1 = s_lp_x2 = s_lp_y1 = s_lp_y2 = 0.f;
     s_max_kick = 1e-3f;
     s_presence = 0.f;
