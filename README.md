@@ -127,8 +127,7 @@ move, tap to select, hold (or swipe right) to go back. The menu leaves after
 | Back to eyes | Leave the menu. |
 
 Text is Spleen (BSD-2-Clause, `tools/bdf2c.py` converts the BDF files into
-`main/font_spleen_*.c`). In the eyes, a swipe left/right also steps through
-the expressions.
+`main/font_spleen_*.c`). In the eyes, a tap is a poke (the character reacts with a face of his own choosing), a swipe left/right steps through the expressions by hand.
 
 **Persistence.** Brightness and the accelerometer calibration live in NVS
 (namespace `companion`). `idf.py erase-flash` brings back the first-boot

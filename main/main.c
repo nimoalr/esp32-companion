@@ -624,12 +624,12 @@ static void render_task(void *arg)
             } else if (state == POWER_ACTIVE) {
                 switch (ev.type) {
                 case TOUCH_TAP:
-                case TOUCH_SWIPE_LEFT:
-                    c.tap_count++;
+                    c.tap_count++;         /* a poke: the character reacts, the expression is his */
+                    break;
+                case TOUCH_SWIPE_LEFT:     /* swipes still step through the expressions by hand */
                     c.user_anim = (anim_id_t)((c.user_anim + 1) % ANIM_COUNT);
                     break;
                 case TOUCH_SWIPE_RIGHT:
-                    c.tap_count++;
                     c.user_anim = (anim_id_t)((c.user_anim + ANIM_COUNT - 1) % ANIM_COUNT);
                     break;
                 case TOUCH_SWIPE_DOWN:  enter_ui(&c, false, now_ms); break;

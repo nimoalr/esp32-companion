@@ -77,6 +77,8 @@ static float s_presence;              /* 0..1: is there real sound, from the raw
 static float s_sp_fast, s_sp_slow, s_sp_mod;
 static int s_sp_on, s_sp_off;
 static bool s_speech;
+static uint16_t s_dir_seen_n;
+static uint32_t s_transient_ms;
 static float s_gap_ms;                /* current tempo estimate as a beat interval, 0 = none */
 static uint32_t s_last_beat_ms;
 static uint32_t s_beat_gaps[8];
@@ -351,7 +353,10 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     /* a voice close to the mics carries plenty of sub-bass (plosives, proximity), so the
      * bass share only rules out real music: a locked dance tempo with a kick under it */
     const bool musical = tempo_conf >= 0.75f && bpm >= 85.f && bpm <= 185.f && s_bass_ratio >= 0.08f;
-    const bool talky = s_presence > 0.15f && sp_depth > 0.3f && !musical && s_bass_ratio < 0.45f;
+    /* knocks and claps modulate the mid band too: a timed transient in the last 400 ms is not a syllable */
+    if (s_micdir.n != s_dir_seen_n) { s_dir_seen_n = s_micdir.n; s_transient_ms = now_ms; }
+    const bool knocking = s_transient_ms && (int32_t)(now_ms - s_transient_ms) < 400;
+    const bool talky = s_presence > 0.15f && sp_depth > 0.3f && !musical && !knocking && s_bass_ratio < 0.45f;
     if (talky) { s_sp_on += 2; if (s_sp_on > 60) s_sp_on = 60; s_sp_off = 0; }
     else { if (s_sp_on > 0) s_sp_on--; if (s_sp_off < 1000) s_sp_off++; }
     if (!s_speech && s_sp_on >= 30) s_speech = true;

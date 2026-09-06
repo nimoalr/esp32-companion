@@ -55,6 +55,7 @@ typedef struct {
     uint32_t talk_since_ms;     /* the current conversation started */
     uint32_t talk_last_ms;      /* last frame of it */
     bool answered;
+    int recent_kind[2], recent_id[2];   /* the last two utterances, not to be repeated */
 } persona_t;
 
 void persona_init(persona_t *p, uint32_t now_ms, uint32_t seed);

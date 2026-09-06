@@ -78,6 +78,22 @@ static void react_to_anim(persona_t *p, anim_id_t a, float level, persona_say_t 
     }
 }
 
+/* records a tap; true when three came within 2.5 s */
+static bool poke_flurry(persona_t *p, uint32_t now_ms)
+{
+    if (p->taps_n < 4) p->taps_ms[p->taps_n++] = now_ms;
+    else { memmove(p->taps_ms, p->taps_ms + 1, sizeof(uint32_t) * 3); p->taps_ms[3] = now_ms; }
+    int recent = 0;
+    for (int i = 0; i < p->taps_n; i++) if ((int32_t)(now_ms - p->taps_ms[i]) < 2500) recent++;
+    return recent >= 3;
+}
+
+static bool is_recent(const persona_t *p, const persona_say_t *o)
+{
+    for (int i = 0; i < 2; i++) if (p->recent_kind[i] == (int)o->kind && p->recent_id[i] == o->id) return true;
+    return false;
+}
+
 void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona_say_t *out)
 {
     memset(out, 0, sizeof *out);
@@ -101,6 +117,12 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
             if (chance(p, 60)) say_word(out, pick(p, w, 3), 0.8f, true);
             else say_gesture(out, VOICE_WAKE, 0.8f, true);
         } else if (pv->power == 1 && in->power == 0 && chance(p, 50)) say_gesture(out, VOICE_HM, 0.7f, false);
+    }
+    /* a flurry of pokes gets a complaint before anything else */
+    else if (in->tap_count != pv->tap_count && in->power == 0 && !in->in_ui && poke_flurry(p, now_ms) && chance(p, 60)) {
+        static const int w[] = { CLIP_DO_NOT_TOUCH_ME, CLIP_EXCUSE_ME, CLIP_HOW_RUDE, CLIP_NOPE };
+        say_word(out, pick(p, w, 4), 1.f, true);
+        p->taps_n = 0;
     }
     /* the behaviour's reactions */
     else if (in->beh != pv->beh && !in->in_ui) {
@@ -130,6 +152,8 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
             break;
         }
         case BEH_UNIMPRESSED: say_word(out, chance(p, 50) ? CLIP_BORING : CLIP_MEH, 0.9f, false); break;
+        case BEH_CARRIED:     say_gesture(out, VOICE_PURR, 0.8f, false); break;
+        case BEH_POKED:       if (chance(p, 45)) react_to_anim(p, in->anim, level, out); break;
         default: break;
         }
     }
@@ -154,10 +178,6 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
         }
         default: break;
         }
-    }
-    /* carried: settles, purrs once */
-    else if (in->beh == BEH_CARRIED && pv->beh != BEH_CARRIED && !in->in_ui) {
-        say_gesture(out, VOICE_PURR, 0.6f, false);
     }
     /* the charger: every plug and unplug gets a line, and the line depends on how hungry he is */
     else if (in->usb != pv->usb && in->power <= 1 && !in->in_ui) {
@@ -194,20 +214,6 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
             }
         }
     }
-    /* taps: a new expression gets its sound sometimes; a flurry of pokes gets a complaint */
-    else if (in->tap_count != pv->tap_count && free && in->power == 0) {
-        if (p->taps_n < 4) p->taps_ms[p->taps_n++] = now_ms;
-        else { memmove(p->taps_ms, p->taps_ms + 1, sizeof(uint32_t) * 3); p->taps_ms[3] = now_ms; }
-        int recent = 0;
-        for (int i = 0; i < p->taps_n; i++) if ((int32_t)(now_ms - p->taps_ms[i]) < 2500) recent++;
-        if (recent >= 3 && chance(p, 60)) {
-            static const int w[] = { CLIP_DO_NOT_TOUCH_ME, CLIP_EXCUSE_ME, CLIP_HOW_RUDE, CLIP_NOPE };
-            say_word(out, pick(p, w, 4), 1.f, false);
-            p->taps_n = 0;
-        } else if (chance(p, 45)) {
-            react_to_anim(p, in->anim, level, out);
-        }
-    }
     /* someone talking: a short answer when a conversation starts, then quiet (it is not about him) */
     else if (in->speech && in->power == 0 && !in->in_ui) {
         if ((int32_t)(now_ms - p->talk_last_ms) > 60000) { p->talk_since_ms = now_ms; p->answered = false; }
@@ -239,23 +245,35 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
     /* nothing happening: talk to himself, at the chattiness's pace */
     else if (free && in->power == 0 && in->beh == BEH_IDLE && in->anim != ANIM_DANCE && in->anim != ANIM_SLEEPING &&
              p->next_idle_ms && (int32_t)(now_ms - p->next_idle_ms) > 0) {
-        const int r = (int)(rnd(p) % 100u);
-        if (r < 55) {
-            out->kind = SAY_BABBLE; out->level = level; out->energy = in->energy;
-        } else if (r < 80) {
-            react_to_anim(p, in->anim, level, out);
-            if (out->kind == SAY_NONE) say_gesture(out, VOICE_HM, level, false);
-        } else {
-            static const int w[] = { CLIP_HELLO, CLIP_I_AM_BORED, CLIP_MEH, CLIP_WHATEVER_HUMAN, CLIP_I_AM_WATCHING_YOU,
-                                     CLIP_PEEKABOO, CLIP_AHA, CLIP_HI_THERE };
-            int id = pick(p, w, 8);
-            if (in->batt_pct >= 0 && in->batt_pct < 40 && chance(p, 30)) id = CLIP_FEED_ME;
-            say_word(out, id, level, false);
+        for (int attempt = 0; attempt < 4; attempt++) {
+            memset(out, 0, sizeof *out);
+            const int r = (int)(rnd(p) % 100u);
+            if (r < 50) {
+                out->kind = SAY_BABBLE; out->level = level; out->energy = in->energy;
+            } else if (r < 75) {
+                react_to_anim(p, in->anim, level, out);
+                if (out->kind == SAY_NONE) say_gesture(out, VOICE_HM, level, false);
+            } else {
+                static const int w[] = { CLIP_HELLO, CLIP_I_AM_BORED, CLIP_MEH, CLIP_WHATEVER_HUMAN, CLIP_I_AM_WATCHING_YOU,
+                                         CLIP_PEEKABOO, CLIP_AHA, CLIP_HI_THERE };
+                int id = pick(p, w, 8);
+                if (in->batt_pct >= 0 && in->batt_pct < 40 && chance(p, 30)) id = CLIP_FEED_ME;
+                say_word(out, id, level, false);
+            }
+            if (out->kind == SAY_BABBLE || !is_recent(p, out)) break;    /* never the same as the last two */
         }
         schedule_idle(p, in, now_ms);
     }
 
     if (out->kind != SAY_NONE) {
+        /* a reaction that would repeat one of the last two becomes a wordless remark instead */
+        if (out->kind != SAY_BABBLE && !out->interrupt && is_recent(p, out)) {
+            const float lv = out->level;
+            memset(out, 0, sizeof *out);
+            out->kind = SAY_BABBLE; out->level = lv; out->energy = in->energy;
+        }
+        p->recent_kind[1] = p->recent_kind[0]; p->recent_id[1] = p->recent_id[0];
+        p->recent_kind[0] = (int)out->kind; p->recent_id[0] = out->id;
         p->last_say_ms = now_ms;
         if (p->next_idle_ms) schedule_idle(p, in, now_ms);
     }

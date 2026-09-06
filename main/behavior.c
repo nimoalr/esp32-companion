@@ -36,10 +36,11 @@
 #define MUSIC_TEMPO_CONF    0.75f    /* the steady tempo is what tells a kick drum from a conversation */
 #define GAZE_PX_X           12.f
 #define GAZE_PX_Y           8.f
+#define VOICE_LEAN_PX       22.f     /* how far the eyes lean toward a voice at the end of the mic axis */
 
 const char *behavior_state_name(behavior_state_t s)
 {
-    static const char *n[] = { "idle", "dizzy", "knocked-out", "groggy", "face-down", "waking", "music", "unimpressed", "listening", "carried", "startled" };
+    static const char *n[] = { "idle", "dizzy", "knocked-out", "groggy", "face-down", "waking", "music", "unimpressed", "listening", "carried", "startled", "poked" };
     return s <= BEH_UNIMPRESSED ? n[s] : "?";
 }
 
@@ -165,11 +166,24 @@ static void feel_motion(behavior_t *b, const behavior_in_t *in, uint32_t now_ms)
     /* body tap: a spike, isolated */
     const float jump = fabsf(mag - b->prev_mag);
     b->prev_mag = mag;
-    if (jump > 0.35f && b->shake < 0.08f && !in->user_interacting && now_ms - b->spike_ms > 600) {
+    if (jump > 0.15f && b->shake < 0.05f && !in->user_interacting && now_ms - b->spike_ms > 600) {
         b->spike_ms = now_ms;
         b->spike_side = sg[0] > 0.f ? 1.f : -1.f;
         b->pending = BEH_EV_BODY_TAP;
     }
+}
+
+/* the face while someone talks: mostly curious, sometimes thinking, doubtful, amused */
+static void roll_listen_face(behavior_t *b, uint32_t now_ms)
+{
+    const float r = frand(b);
+    if (r < 0.35f) b->listen_anim = ANIM_CURIOUS;
+    else if (r < 0.55f) b->listen_anim = ANIM_THINKING;
+    else if (r < 0.70f) b->listen_anim = ANIM_SKEPTICAL;
+    else if (r < 0.80f) b->listen_anim = ANIM_LOOK_AROUND;
+    else if (r < 0.90f) b->listen_anim = ANIM_HAPPY;
+    else b->listen_anim = ANIM_SURPRISED;
+    b->listen_roll_ms = now_ms;
 }
 
 static bool music_detected(const audio_features_t *a)
@@ -234,8 +248,14 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
         case BEH_LISTENING:
             if (shaking_hard) { enter(b, BEH_DIZZY, now_ms); break; }
             if (face_down) { enter(b, BEH_FACE_DOWN, now_ms); break; }
+            if (out->event == BEH_EV_BODY_TAP) { enter(b, BEH_STARTLED, now_ms); break; }
             if (in->audio.active && in->audio.speech) b->speech_last_ms = now_ms;
-            if (!in->audio.active || now_ms - b->speech_last_ms > 2000 || tapped) enter(b, BEH_IDLE, now_ms);
+            if (!in->audio.active || now_ms - b->speech_last_ms > 2000 || tapped) { enter(b, BEH_IDLE, now_ms); break; }
+            if (now_ms - b->listen_roll_ms > 4500) roll_listen_face(b, now_ms);
+            break;
+        case BEH_POKED:
+            if (shaking_hard) { enter(b, BEH_DIZZY, now_ms); break; }
+            if (in_state >= 1100) enter(b, BEH_IDLE, now_ms);
             break;
         case BEH_CARRIED:
             if (shaking_hard) { enter(b, BEH_DIZZY, now_ms); break; }
@@ -257,8 +277,20 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
             else if (face_down) enter(b, BEH_FACE_DOWN, now_ms);
             else if (out->event == BEH_EV_BODY_TAP) enter(b, BEH_STARTLED, now_ms);
             else if (b->rhythm_since_ms && now_ms - b->rhythm_since_ms > 4000) enter(b, BEH_CARRIED, now_ms);
+            else if (tapped) {
+                /* a poke: a short reaction whose face depends on his mood */
+                const float r = frand(b);
+                if (r < 0.25f) b->poke_anim = ANIM_SURPRISED;
+                else if (r < 0.45f) b->poke_anim = b->energy > 0.5f ? ANIM_HAPPY : ANIM_ANNOYED;
+                else if (r < 0.6f) b->poke_anim = ANIM_CONFUSED;
+                else if (r < 0.75f) b->poke_anim = ANIM_SQUINT;
+                else if (r < 0.87f) b->poke_anim = ANIM_SKEPTICAL;
+                else b->poke_anim = ANIM_WINK;
+                enter(b, BEH_POKED, now_ms);
+            }
             else if (in->audio.active && in->audio.speech && !in->user_interacting) {
                 b->speech_last_ms = now_ms;
+                roll_listen_face(b, now_ms);
                 enter(b, BEH_LISTENING, now_ms);
             }
             else if (in->audio.active && music_detected(&in->audio)) {
@@ -302,7 +334,8 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
     case BEH_WAKING:      out->override_anim = ANIM_SURPRISED; break;
     case BEH_MUSIC:       out->override_anim = ANIM_DANCE; break;
     case BEH_UNIMPRESSED: out->override_anim = ANIM_ANNOYED; break;
-    case BEH_LISTENING:   out->override_anim = ANIM_CURIOUS; break;
+    case BEH_LISTENING:   out->override_anim = b->listen_anim; break;
+    case BEH_POKED:       out->override_anim = b->poke_anim; break;
     case BEH_CARRIED:     out->override_anim = ANIM_SQUINT; break;
     case BEH_STARTLED:    out->override_anim = ANIM_SURPRISED; break;
     default: break;
@@ -338,8 +371,8 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
     const float want_voice = (b->state == BEH_LISTENING && in->audio.active) ? in->audio.dir : 0.f;
     b->voice_dir += (want_voice - b->voice_dir) * 0.05f;
     if (in->have_accel && (b->state == BEH_IDLE || b->state == BEH_MUSIC || b->state == BEH_WAKING || b->state == BEH_LISTENING ||
-                           b->state == BEH_STARTLED || b->state == BEH_CARRIED)) {
-        float bx = -b->gx + (b->state == BEH_STARTLED ? b->spike_side * 0.9f : 0.f), by = -b->gy - b->voice_dir * 0.8f;
+                           b->state == BEH_STARTLED || b->state == BEH_CARRIED || b->state == BEH_POKED)) {
+        float bx = -b->gx + (b->state == BEH_STARTLED ? b->spike_side * 0.9f : 0.f), by = -b->gy;
         if (bx > 1.f) bx = 1.f;
         if (bx < -1.f) bx = -1.f;
         if (by > 1.f) by = 1.f;
@@ -366,9 +399,11 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
         if (turning > 2.f) wob *= turning >= 30.f ? 0.f : 1.f - turning / 30.f;
         const float ph = (float)(now_ms % 1000) * 0.0062831853f * 6.f;    /* 6 Hz */
         const float wx = sinf(ph) * wob, wy = cosf(ph * 1.3f) * wob * 0.6f;
+        /* the voice's lean is in screen terms: + = the lanyard end = up */
+        const float lean = -b->voice_dir * VOICE_LEAN_PX;
         for (int e = 0; e < 2; e++) {
             out->env[e].dx = (int32_t)((bx * GAZE_PX_X + wx) * 65536.f);
-            out->env[e].dy = (int32_t)((by * GAZE_PX_Y + wy) * 65536.f);
+            out->env[e].dy = (int32_t)((by * GAZE_PX_Y + wy + lean) * 65536.f);
         }
     }
 }

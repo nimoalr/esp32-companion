@@ -52,6 +52,7 @@ typedef enum {
     BEH_LISTENING,              /* someone is talking: look their way */
     BEH_CARRIED,                /* walking rhythm for a while: content */
     BEH_STARTLED,               /* a knock on the body */
+    BEH_POKED,                  /* a tap on the eyes */
 } behavior_state_t;
 
 
@@ -85,6 +86,9 @@ typedef struct {
     float spike_side;
     uint32_t last_touch_ms;     /* a touch this close disqualifies a spike */
     behavior_event_t pending;
+    anim_id_t listen_anim;      /* the face while listening, re-rolled now and then */
+    uint32_t listen_roll_ms;
+    anim_id_t poke_anim;
     /* mood */
     float energy;               /* 0..1, drifts; fed by handling and touch */
     uint32_t mood_tick_ms;
