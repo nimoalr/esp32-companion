@@ -81,7 +81,7 @@ typedef struct {
 
     ui_rect_t dirty[UI_MAX_DIRTY];
     int ndirty;
-    uint8_t actions;        /* bit mask of ui_action_t */
+    uint16_t actions;       /* bit mask of ui_action_t */
 
     /* menu */
     int menu_sel;

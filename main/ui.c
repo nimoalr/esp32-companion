@@ -89,7 +89,7 @@ static void dirty_all(ui_t *u)
 
 static void action(ui_t *u, ui_action_t a)
 {
-    u->actions |= (uint8_t)(1u << a);
+    u->actions |= (uint16_t)(1u << a);
 }
 
 static void text_center(const gfx_band_t *b, const gfx_font_t *f, int y, const char *s, uint16_t fg)
@@ -1024,9 +1024,9 @@ void ui_paint(const ui_t *u, const gfx_band_t *band)
 
 ui_action_t ui_take_action(ui_t *u)
 {
-    for (int a = 1; a < 8; a++) {
+    for (int a = 1; a < 16; a++) {
         if (u->actions & (1u << a)) {
-            u->actions &= (uint8_t)~(1u << a);
+            u->actions &= (uint16_t)~(1u << a);
             return (ui_action_t)a;
         }
     }
