@@ -122,6 +122,7 @@ move, tap to select, hold (or swipe right) to go back. The menu leaves after
 | Calibrate accel | Three poses (flat screen-up, upright USB-down, resting on the left edge), 2 s of stillness each with a `[####....]` bar. Computes per-axis bias and scale and the sensor-to-screen frame, shows the result, tap saves it to NVS. Runs automatically on first boot. |
 | Level | Ball on cross-hairs driven by the calibrated accelerometer, pitch and roll in degrees. Turns green when level. |
 | Brightness | Tap or swipe cycles 25/50/75/100 %; applied live, saved on exit. |
+| Battery | Percentage, voltage, charge state, the rim gauge, and two learned lines: the time left on this charge (or until full while charging) at the rate measured over the last five discharge or charge stretches, and what a full charge and a refill take on average. Stretches shorter than 3 % or 5 min are ignored; the running stretch is saved to NVS every ten minutes. |
 | Battery | Voltage, percent, charge state; the outer ring is the gauge. |
 | Back to eyes | Leave the menu. |
 

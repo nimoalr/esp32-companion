@@ -48,6 +48,9 @@ typedef struct {
     uint16_t batt_mv;
     int8_t batt_pct;        /* -1 unknown */
     bool charging, usb;
+    /* learned battery figures (minutes, -1 unknown) */
+    int est_left_min, est_full_min, avg_life_min, avg_charge_min;
+    int n_discharge, n_charge;
 } ui_sensors_t;
 
 typedef struct {
@@ -86,7 +89,7 @@ typedef struct {
     float pitch, roll;
     char level_text[32];
     /* brightness / battery */
-    char text_a[40], text_b[40], text_c[40];
+    char text_a[40], text_b[40], text_c[40], text_d[64], text_e[64];
     uint32_t text_ms;
 } ui_t;
 

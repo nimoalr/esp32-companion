@@ -11,6 +11,7 @@ idf_component_register(
         "pmic.c"
         "power.c"
         "settings.c"
+        "battstat.c"
         "gfx.c"
         "font_spleen_8x16.c"
         "font_spleen_12x24.c"

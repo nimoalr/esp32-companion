@@ -26,6 +26,7 @@
 #include "anim.h"
 #include "power.h"
 #include "settings.h"
+#include "battstat.h"
 #include "i2c_bus.h"
 #include "gfx.h"
 #include "ui.h"
@@ -691,6 +692,16 @@ static void render_task(void *arg)
             sens.batt_pct = b.present ? b.percent : -1;
             sens.charging = b.charging;
             sens.usb = b.vbus;
+            {
+                battstat_info_t bi;
+                battstat_get(b.present ? b.percent : -1, &bi);
+                sens.est_left_min = bi.est_left_min;
+                sens.est_full_min = bi.est_full_min;
+                sens.avg_life_min = bi.avg_life_min;
+                sens.avg_charge_min = bi.avg_charge_min;
+                sens.n_discharge = bi.n_discharge;
+                sens.n_charge = bi.n_charge;
+            }
             ui_rect_t ur[UI_MAX_DIRTY];
             const int n = ui_update(&c.ui, now_ms, &sens, ur);
             for (int i = 0; i < n; i++) {
@@ -747,6 +758,11 @@ static void render_task(void *arg)
 
         const int64_t now_us = esp_timer_get_time();
         if (now_us - stats_t0 >= STATS_PERIOD_US && frames) {
+            {
+                pmic_battery_t bb;
+                power_battery(&bb);
+                battstat_update(now_ms, bb.present, bb.vbus, bb.charging, bb.present ? bb.percent : -1);
+            }
             const uint32_t bytes = display_take_bytes();
             const uint32_t elapsed_ms = (uint32_t)((now_us - stats_t0) / 1000);
             pmic_battery_t b;
@@ -786,6 +802,7 @@ void app_main(void)
              esp_get_idf_version(), (int)esp_reset_reason(), (int)esp_sleep_get_wakeup_cause());
 
     ESP_ERROR_CHECK(settings_init());
+    battstat_init();
     ESP_ERROR_CHECK(i2c_bus_init());
     ESP_ERROR_CHECK(display_init());
 

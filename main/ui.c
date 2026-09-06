@@ -494,6 +494,8 @@ static void paint_battery(const ui_t *u, const gfx_band_t *b)
     text_center(b, &font_spleen_16x32, 136, u->text_a, C.white);
     text_center(b, &font_spleen_12x24, 196, u->text_b, C.fg);
     text_center(b, &font_spleen_12x24, 236, u->text_c, C.grey);
+    text_center(b, &font_spleen_8x16, 284, u->text_d, C.white);
+    text_center(b, &font_spleen_8x16, 306, u->text_e, C.grey);
     /* gauge on the outer ring: filled arc proportional to charge */
     int pct = 0;
     if (sscanf(u->text_a, "%d", &pct) != 1) pct = 0;
@@ -513,10 +515,28 @@ static void battery_update(ui_t *u, uint32_t now_ms, const ui_sensors_t *s)
         snprintf(bb, sizeof bb, "no battery");
     }
     snprintf(c, sizeof c, "%s%s", s->charging ? "charging" : "discharging", s->usb ? ", USB" : "");
-    if (strcmp(a, u->text_a) || strcmp(bb, u->text_b) || strcmp(c, u->text_c)) {
+    /* learned figures: what this charge should give, and what the last few cycles showed */
+    char d[64] = "", e[64] = "";
+    if (s->charging && s->est_full_min >= 0) {
+        snprintf(d, sizeof d, "full in ~%dh%02d", s->est_full_min / 60, s->est_full_min % 60);
+    } else if (!s->usb && s->est_left_min >= 0) {
+        snprintf(d, sizeof d, "~%dh%02d left", s->est_left_min / 60, s->est_left_min % 60);
+    } else {
+        snprintf(d, sizeof d, "%s", s->n_discharge || s->n_charge ? "" : "learning battery life...");
+    }
+    if (s->avg_life_min >= 0 && s->avg_charge_min >= 0) {
+        snprintf(e, sizeof e, "charge lasts ~%dh%02d, refill ~%dh%02d", s->avg_life_min / 60, s->avg_life_min % 60, s->avg_charge_min / 60, s->avg_charge_min % 60);
+    } else if (s->avg_life_min >= 0) {
+        snprintf(e, sizeof e, "a charge lasts ~%dh%02d (%d cycle%s)", s->avg_life_min / 60, s->avg_life_min % 60, s->n_discharge, s->n_discharge == 1 ? "" : "s");
+    } else if (s->avg_charge_min >= 0) {
+        snprintf(e, sizeof e, "a refill takes ~%dh%02d (%d cycle%s)", s->avg_charge_min / 60, s->avg_charge_min % 60, s->n_charge, s->n_charge == 1 ? "" : "s");
+    }
+    if (strcmp(a, u->text_a) || strcmp(bb, u->text_b) || strcmp(c, u->text_c) || strcmp(d, u->text_d) || strcmp(e, u->text_e)) {
         strcpy(u->text_a, a);
         strcpy(u->text_b, bb);
         strcpy(u->text_c, c);
+        strcpy(u->text_d, d);
+        strcpy(u->text_e, e);
         dirty_all(u);   /* the ring gauge spans the screen */
     }
 }
