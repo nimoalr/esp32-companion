@@ -62,13 +62,14 @@ typedef struct {
     const uint8_t *hot_g2l; /* RASTER_G2L_N entries -> 0..31 */
     const uint16_t *lut2;   /* 32 x 64 entries */
     /*
-     * Spectrum bars (the dance): the fill is lit below a per-column top and dim above it,
-     * through lut2 like the hot spot: rows >= bar_top[x] at level bar_lit, row bar_top[x] - 1
-     * at bar_edge[x] (the anti-aliased top), rows above at bar_dim. Takes precedence over hot.
+     * Spectrum bars (the dance): eight bars in the eye's own frame, so they tilt with it, each
+     * lit from its top down to the bottom of the eye and dim above, with a one-pixel anti-aliased
+     * top and a one-pixel dark gap between bars, through lut2 like the hot spot. Takes precedence
+     * over hot.
      */
     bool bars;
-    const int16_t *bar_top;     /* indexed by screen x */
-    const uint8_t *bar_edge;    /* indexed by screen x, 0..31 */
+    int32_t bar_top[8];         /* Q16 local y of each bar's top (local y grows downward; the bottom is +hh) */
+    int32_t bar_w;              /* Q16 local width of a bar (2 hw / 8) */
     uint8_t bar_lit, bar_dim;   /* lightness levels 0..31 */
     /* Pixel bounding box, [x0, x1) x [y0, y1), already clipped to the screen */
     int px0, py0, px1, py1;

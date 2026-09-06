@@ -134,8 +134,6 @@ typedef struct {
     /* spectrum bars (the dance): eight bars per eye rising from the bottom of the eye's box */
     bool bars;
     float bar_h[2][8];                 /* 0..1 of the eye's height */
-    int16_t bar_top[2][466];
-    uint8_t bar_edge[2][466];
 } eyes_t;
 
 void eyes_init(eyes_t *e, uint32_t now_ms);

@@ -421,18 +421,53 @@ static inline uint16_t IRAM_ATTR blend565(uint16_t dst, uint16_t col, uint32_t a
 /* 2x2 ordered dither for the hot spot, in falloff units (one lightness level is about 18). */
 static const DRAM_ATTR uint8_t k_dither[4] = { 0, 9, 13, 4 };
 
-/* lightness level of a spectrum-bar pixel at screen (x, py) */
-static inline uint32_t IRAM_ATTR bar_level(const raster_shape_t *s, int x, int py)
+/*
+ * Spectrum bars, walked along a row in the eye's local frame: lx = c X + s Y, ly = -s X + c Y
+ * with (X, Y) relative to the centre, so per pixel lx += c and ly -= s. The bar index follows
+ * lx across the bar boundaries in either direction (the face may be upside down).
+ */
+typedef struct {
+    int32_t lx, ly, lo, hi;
+    int b;
+} bar_walk_t;
+
+static inline void IRAM_ATTR bar_walk_begin(const raster_shape_t *s, int x, int py, bar_walk_t *w)
 {
-    const int top = s->bar_top[x];
-    return py >= top ? s->bar_lit : py == top - 1 ? s->bar_edge[x] : s->bar_dim;
+    const int32_t rc = s->rot ? s->rc : Q16_ONE, rs = s->rot ? s->rs : 0;
+    const int32_t X = ((int32_t)x << 16) + 0x8000 - s->cx, Y = ((int32_t)py << 16) + 0x8000 - s->cy;
+    w->lx = (int32_t)(((int64_t)rc * X + (int64_t)rs * Y) >> 16);
+    w->ly = (int32_t)(((int64_t)rc * Y - (int64_t)rs * X) >> 16);
+    int b = (int)(((int64_t)(w->lx + s->hw)) / (s->bar_w > 0 ? s->bar_w : 1));
+    if (b < 0) b = 0;
+    if (b > 7) b = 7;
+    w->b = b;
+    w->lo = b * s->bar_w - s->hw;
+    w->hi = w->lo + s->bar_w;
+}
+
+static inline uint32_t IRAM_ATTR bar_walk_level(const raster_shape_t *s, bar_walk_t *w)
+{
+    while (w->lx >= w->hi && w->b < 7) { w->b++; w->lo = w->hi; w->hi += s->bar_w; }
+    while (w->lx < w->lo && w->b > 0) { w->b--; w->hi = w->lo; w->lo -= s->bar_w; }
+    uint32_t level = s->bar_dim;
+    if (!(w->b > 0 && w->lx - w->lo < Q16_ONE)) {          /* the first column of a bar is the gap */
+        const int32_t d = w->ly - s->bar_top[w->b];
+        if (d >= 0) level = s->bar_lit;
+        else if (d > -Q16_ONE) level = s->bar_dim + (uint32_t)(((int64_t)(s->bar_lit - s->bar_dim) * (d + Q16_ONE)) >> 16);
+    }
+    const int32_t rc = s->rot ? s->rc : Q16_ONE, rs = s->rot ? s->rs : 0;
+    w->lx += rc;
+    w->ly -= rs;
+    return level;
 }
 
 /* Solid core of the spectrum bars. */
 static inline void IRAM_ATTR fill_bars(uint16_t *dst, int n, const raster_shape_t *s, int x, int py)
 {
     const uint16_t *lut2 = s->lut2 + 63;
-    for (int i = 0; i < n; i++) dst[i] = lut2[bar_level(s, x + i, py) << 6];
+    bar_walk_t w;
+    bar_walk_begin(s, x, py, &w);
+    for (int i = 0; i < n; i++) dst[i] = lut2[bar_walk_level(s, &w) << 6];
 }
 
 /* Edge pixels: coverage -> colour, optionally shaded by the hot spot. x = screen x of dst[0]. */
@@ -441,7 +476,9 @@ static inline void IRAM_ATTR blit_cov(uint16_t *dst, const uint8_t *cov, int n, 
     const uint16_t *lut = s->lut;
     if (s->bars && !over) {
         const uint16_t *lut2 = s->lut2;
-        for (int i = 0; i < n; i++) dst[i] = lut2[(bar_level(s, x + i, py) << 6) | (cov[i] >> 2)];
+        bar_walk_t w;
+        bar_walk_begin(s, x, py, &w);
+        for (int i = 0; i < n; i++) dst[i] = lut2[(bar_walk_level(s, &w) << 6) | (cov[i] >> 2)];
         return;
     }
     if (s->hot && !over) {

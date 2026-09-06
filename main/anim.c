@@ -281,6 +281,10 @@ static void anim_enter(anim_sm_t *sm, eyes_t *eyes, anim_id_t id, uint32_t now_m
     sm->dance_side = 1;
     sm->dance_last_sound_ms = now_ms;
     memset(sm->dance_bars, 0, sizeof sm->dance_bars);
+    sm->dance_visual = 0;
+    sm->dance_visual_ms = now_ms;
+    sm->dance_visual_len = 8000 + rng_next(sm) % 8000;      /* the first show piece comes soon */
+    sm->dance_visual_mix = 0.f;
     eyes_set_bars(eyes, false);
     eyes_clear_mod(eyes);
     eyes_set_idle_rates(eyes, d->blink_interval_scale, d->blink_speed_scale, d->dart_scale);
@@ -452,6 +456,24 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
             m->dy += (int32_t)(4.f * sag * 65536.f);
         }
     }
+    /*
+     * Passing visuals: the plain dance most of the time, and now and then one of the show
+     * pieces for a while (the spectrum eyes today, the disco ball next), switched on a beat,
+     * fading in and out. Each stays 10-20 s, the plain dance 15-35 s between them.
+     */
+    if (now_ms - sm->dance_visual_ms >= sm->dance_visual_len && (a->beat_count != sm->dance_beats_seen || !sm->dance_visual)) {
+        if (sm->dance_visual) {
+            sm->dance_visual = 0;
+            sm->dance_visual_len = 15000 + rng_next(sm) % 20000;
+        } else {
+            sm->dance_visual = 1;
+            sm->dance_visual_len = 10000 + rng_next(sm) % 10000;
+        }
+        sm->dance_visual_ms = now_ms;
+    }
+    const float mix_want = sm->dance_visual ? 1.f : 0.f;
+    sm->dance_visual_mix += (mix_want - sm->dance_visual_mix) * 0.06f;
+    if (sm->dance_visual_mix < 0.01f) sm->dance_visual_mix = 0.f;
     /* spectrum eyes: sixteen bands across the face, low on the left, rising from the bottom of each eye;
      * they jump up with the sound and fall back at their own pace */
     for (int e = 0; e < 2; e++) {
@@ -462,9 +484,11 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
             else *h -= 0.045f;
             if (*h < 0.f) *h = 0.f;
         }
-        eyes_set_bar_heights(eyes, e, sm->dance_bars[e]);
+        float shown[8];
+        for (int i = 0; i < 8; i++) shown[i] = sm->dance_bars[e][i] * sm->dance_visual_mix;
+        eyes_set_bar_heights(eyes, e, shown);
     }
-    eyes_set_bars(eyes, music > 0.02f);
+    eyes_set_bars(eyes, sm->dance_visual_mix > 0.f && music > 0.02f);
     /* the whole face pulses with the bass */
     eyes->face_mod_scale = (int32_t)((0.06f * bass) * 65536.f);
     /* the colour flashes a little brighter on the hit and shimmers with the bass */

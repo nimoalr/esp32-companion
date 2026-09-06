@@ -720,26 +720,12 @@ static void params_to_shape(eyes_t *e, int which, const EyeParams *p, raster_sha
     s->hot = e->hot && !e->bars;
     s->bars = e->bars;
     if (e->bars) {
-        /* the bars span the box's width, eight of them with a one-pixel dark gap, rising from its bottom */
-        raster_shape_finalize(s, BOARD_LCD_H_RES, BOARD_LCD_V_RES);      /* for the pixel box */
-        const int x0 = s->px0, w = s->px1 - s->px0, y1 = s->py1, hgt = s->py1 - s->py0;
-        int16_t *top = e->bar_top[which];
-        uint8_t *edge = e->bar_edge[which];
-        for (int x = s->px0; x < s->px1; x++) {
-            const int rel = (x - x0) * 8;
-            const int bar = w > 0 ? rel / w : 0;
-            const int in_bar = w > 0 ? rel - bar * w : 0;
-            const bool gap = x > x0 && in_bar < 8 && bar > 0;         /* the first column of a bar after the first */
-            const float hf = gap ? 0.f : e->bar_h[which][bar > 7 ? 7 : bar];
-            const float topf = (float)y1 - hf * (float)hgt;
-            const int ti = (int)topf;
-            const float frac = topf - (float)ti;
-            top[x] = (int16_t)(hf <= 0.f ? y1 + 1 : ti + 1);
-            const float lvl = 4.f + 27.f * (1.f - frac);
-            edge[x] = (uint8_t)(lvl < 4.f ? 4 : lvl > 31.f ? 31 : (int)lvl);
+        /* eight bars across the eye in its own frame, rising from its bottom edge (local +hh) */
+        s->bar_w = s->hw / 4;
+        for (int i = 0; i < 8; i++) {
+            const float hf = e->bar_h[which][i];
+            s->bar_top[i] = hf <= 0.f ? s->hh + Q16_ONE : s->hh - (int32_t)(hf * (float)(2 * s->hh));
         }
-        s->bar_top = top;
-        s->bar_edge = edge;
         s->bar_lit = 31;
         s->bar_dim = 4;
         s->lut2 = e->lut2[which];
