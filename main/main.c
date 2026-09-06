@@ -414,9 +414,16 @@ static void leave_ui(render_ctx_t *c, uint32_t now_ms)
 }
 
 /* Keep the microphones running exactly while the DANCE expression is showing. */
+#define MICCAL_GAIN_DB 12
+
 static void sync_audio(render_ctx_t *c, bool want)
 {
-    want = (want && c->mode == MODE_EYES) || (c->mode == MODE_UI && c->ui.screen == UI_SCREEN_MICCAL);
+    const bool wizard = c->mode == MODE_UI && c->ui.screen == UI_SCREEN_MICCAL;
+    want = (want && c->mode == MODE_EYES) || wizard;
+    /* the wizard listens at a lower gain so claps do not clip; restart the mics when it changes */
+    const int gain = wizard ? MICCAL_GAIN_DB : CONFIG_EYES_AUDIO_GAIN_DB;
+    if (audio_running() && audio_gain_db() != gain) audio_stop();
+    audio_set_gain_db(gain);
     if (want && !audio_running()) {
         if (audio_start() != ESP_OK) {
             ESP_LOGW(TAG, "microphones unavailable");

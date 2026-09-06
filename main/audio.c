@@ -55,6 +55,7 @@ static float s_lp_x1, s_lp_x2, s_lp_y1, s_lp_y2;
 static float s_kick_mean, s_kick_prev, s_max_kick = 1.f;
 static float s_bass_ratio;
 static float s_dir, s_dir_conf, s_dir_lag;
+static int s_gain_db = CONFIG_EYES_AUDIO_GAIN_DB;
 static float s_dir_off = 0.f, s_dir_gain = 0.5f;   /* raw lag -> -1..+1; the wizard sets these */
 #define DIR_MAX_LAG 3                 /* cross-correlation lags for sustained sound */
 static micdir_t s_micdir;
@@ -407,7 +408,7 @@ esp_err_t audio_start(void)
         return ESP_FAIL;
     }
     esp_codec_dev_sample_info_t fs = { .sample_rate = SAMPLE_RATE, .channel = 2, .bits_per_sample = 16 };
-    if (esp_codec_dev_set_in_gain(s_dev, (float)CONFIG_EYES_AUDIO_GAIN_DB) != ESP_CODEC_DEV_OK ||
+    if (esp_codec_dev_set_in_gain(s_dev, (float)s_gain_db) != ESP_CODEC_DEV_OK ||
         esp_codec_dev_open(s_dev, &fs) != ESP_CODEC_DEV_OK) {
         ESP_LOGE(TAG, "ES7210 open failed");
         audio_stop();
@@ -441,7 +442,7 @@ esp_err_t audio_start(void)
         audio_stop();
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(TAG, "microphones on: ES7210, %d Hz stereo, %d-sample frames, gain %d dB", SAMPLE_RATE, FRAME, CONFIG_EYES_AUDIO_GAIN_DB);
+    ESP_LOGI(TAG, "microphones on: ES7210, %d Hz stereo, %d-sample frames, gain %d dB", SAMPLE_RATE, FRAME, s_gain_db);
     return ESP_OK;
 }
 
@@ -477,6 +478,16 @@ void audio_stop(void)
     s_feat.active = false;
     portEXIT_CRITICAL(&s_lock);
     ESP_LOGI(TAG, "microphones off");
+}
+
+void audio_set_gain_db(int db)
+{
+    s_gain_db = db;
+}
+
+int audio_gain_db(void)
+{
+    return s_gain_db;
 }
 
 void audio_set_dir_cal(const mic_cal_t *cal)

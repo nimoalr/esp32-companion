@@ -15,6 +15,10 @@
 esp_err_t audio_start(void);
 void audio_stop(void);
 bool audio_running(void);
+/* Microphone gain in dB for the next audio_start (default CONFIG_EYES_AUDIO_GAIN_DB); the mic
+ * wizard asks for less so a clap 30 cm away does not clip and its edge stays intact. */
+void audio_set_gain_db(int db);
+int audio_gain_db(void);
 /* Map raw arrival-time differences to the direction value: dir = (lag - offset) * gain. */
 void audio_set_dir_cal(const mic_cal_t *cal);
 void audio_get_features(audio_features_t *out);
