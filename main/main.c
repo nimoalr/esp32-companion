@@ -33,6 +33,7 @@
 #include "gfx.h"
 #include "audio.h"
 #include "speech.h"
+#include "persona.h"
 #include "accessories.h"
 #include "behavior.h"
 
@@ -157,6 +158,7 @@ typedef struct {
     mode_t mode;
     ui_t ui;
     behavior_t beh;
+    persona_t persona;
     accessories_t acc;
     uint32_t tap_count;
     bool mic_ok;
@@ -508,6 +510,8 @@ static void eyes_closed_now(render_ctx_t *c, uint32_t now_ms)
 /* SLEEP: panel off, light sleep until motion/touch (-> ACTIVE) or the deadline (-> DEEP). */
 static void do_sleep(render_ctx_t *c)
 {
+    /* a last word before the lights go out */
+    for (int i = 0; i < 200 && speech_busy(); i++) vTaskDelay(pdMS_TO_TICKS(10));
     push_drain();
     if (audio_running()) audio_stop();
     brightness_set_now(0);
@@ -545,6 +549,9 @@ static void do_sleep(render_ctx_t *c)
 static void on_transition(render_ctx_t *c, power_state_t from, power_state_t to, uint32_t now_ms)
 {
     switch (to) {
+    case POWER_SLEEP:
+        speech_word(CLIP_GOOD_NIGHT, 0.7f, true);
+        break;
     case POWER_DROWSY:
         c->saved_anim = c->user_anim;
         c->user_anim = ANIM_SLEEPY;
@@ -587,6 +594,7 @@ static void render_task(void *arg)
     c.user_anim = ANIM_NEUTRAL;
     c.mic_ok = true;
     behavior_init(&c.beh, now_ms);
+    persona_init(&c.persona, now_ms, (uint32_t)esp_timer_get_time());
     acc_init(&c.acc, BOARD_LCD_H_RES / 2 - 95, BOARD_LCD_H_RES / 2 + 95, BOARD_LCD_V_RES / 2);
 
     display_fill_black();
@@ -670,6 +678,33 @@ static void render_task(void *arg)
         sync_audio(&c, (c.sm.id == ANIM_DANCE && bo.override_anim < 0) || bo.want_mic);
         if (audio_running()) {
             anim_set_audio(&c.sm, &af);
+        }
+        /* the mouth: what the situation calls for */
+        {
+            pmic_battery_t pb;
+            power_battery(&pb);
+            uint16_t fx, fy;
+            persona_in_t pi = {
+                .in_ui = c.mode == MODE_UI,
+                .power = state == POWER_ACTIVE ? 0 : state == POWER_DROWSY ? 1 : 2,
+                .beh = c.beh.state,
+                .anim = c.sm.id,
+                .energy = behavior_energy(&c.beh),
+                .finger = c.mode == MODE_EYES && touch_pressed(&fx, &fy),
+                .tap_count = c.tap_count,
+                .usb = pb.vbus,
+                .batt_pct = pb.present ? pb.percent : -1,
+                .speaking = speech_busy(),
+                .chattiness = g_settings.chattiness,
+            };
+            persona_say_t say;
+            persona_tick(&c.persona, &pi, now_ms, &say);
+            switch (say.kind) {
+            case SAY_GESTURE: speech_gesture((voice_id_t)say.id, say.level, say.interrupt); break;
+            case SAY_WORD:    speech_word(say.id, say.level, say.interrupt); break;
+            case SAY_BABBLE:  speech_babble(say.level, say.energy); break;
+            default: break;
+            }
         }
 
         /* Power state machine. The UI counts as activity while it is being used. */

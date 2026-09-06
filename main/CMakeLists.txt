@@ -22,6 +22,7 @@ idf_component_register(
         "micdir.c"
         "voice.c"
         "speech.c"
+        "persona.c"
         "adpcm.c"
         "clips_gen.c"
         "accessories.c"
