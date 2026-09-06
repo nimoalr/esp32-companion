@@ -6,8 +6,8 @@
 #include "board.h"
 
 /* Resting geometry: two orange capsules either side of the centre of the 466 px disc. */
-#define EYE_W_PX        110
-#define EYE_H_PX        140
+#define EYE_W_PX        121                 /* 110 originally; +10 % on 2026-09-06 */
+#define EYE_H_PX        154                 /* 140 originally */
 #define EYE_R_PX        48
 #define EYE_SEP_PX      95          /* centre offset from the screen centre */
 #define EYE_CY_PX       (BOARD_LCD_V_RES / 2)
