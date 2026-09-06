@@ -42,7 +42,7 @@
 const char *behavior_state_name(behavior_state_t s)
 {
     static const char *n[] = { "idle", "dizzy", "knocked-out", "groggy", "face-down", "waking", "music", "unimpressed", "listening", "carried", "startled", "poked", "petted" };
-    return s <= BEH_UNIMPRESSED ? n[s] : "?";
+    return (unsigned)s < sizeof n / sizeof n[0] ? n[s] : "?";
 }
 
 void behavior_init(behavior_t *b, uint32_t now_ms)
@@ -54,6 +54,8 @@ void behavior_init(behavior_t *b, uint32_t now_ms)
     b->energy = 0.6f;
     b->valence = 0.1f;
     b->idle_anim = ANIM_NEUTRAL;
+    b->idle_action = b->last_idle_action = -1;
+    b->next_action_ms = now_ms + 30000;
     b->idle_roll_ms = now_ms + 20000;
     b->mood_tick_ms = now_ms;
     b->rng = 0x2545F491u ^ now_ms;
@@ -83,7 +85,7 @@ static void feel_mood(behavior_t *b, const behavior_in_t *in, uint32_t now_ms)
     if (now_ms - b->mood_tick_ms < 1000) return;
     b->mood_tick_ms = now_ms;
     float e = b->energy, v = b->valence;
-    if (b->shake > 0.08f) { e += 0.03f; if (b->state != BEH_MUSIC && !in->dancing) v -= 0.06f; }
+    if (b->shake > 0.08f) { e += 0.03f; if (b->shake > SHAKE_ON_G && b->state != BEH_MUSIC && !in->dancing) v -= 0.06f; }
     if (in->user_interacting) e += 0.015f;
     if (in->audio.active && in->audio.speech) { e += 0.01f; v += 0.01f; }
     switch (b->state) {
@@ -140,6 +142,48 @@ static void roll_idle_face(behavior_t *b, uint32_t now_ms)
     }
     b->idle_anim = a;
     b->idle_roll_ms = now_ms + 15000 + (uint32_t)(frand(b) * 40000.f);
+}
+
+/* One complete cameo between ordinary mood faces. Only roll while unoccupied;
+ * all authored scenes remain interruptible by touch, handling, speech or music. */
+static void idle_action(behavior_t *b, const behavior_in_t *in, uint32_t now_ms)
+{
+    const bool busy = !in->idle_allowed || b->state != BEH_IDLE || in->dancing || b->moving_since_ms ||
+                      (in->user_interacting && b->idle_action != ANIM_SECRET_OBSERVER);
+    if (busy) { b->idle_action = -1; b->next_action_ms = now_ms + 20000; return; }
+    if (b->idle_action >= 0) {
+        if ((in->shown_anim == b->idle_action && in->shown_anim_done) || now_ms-b->action_started_ms >= 10000) {
+            b->idle_action = -1;
+            b->next_action_ms = now_ms + 25000 + (uint32_t)(frand(b)*30000.f);
+        }
+        return;
+    }
+    if ((int32_t)(now_ms-b->next_action_ms) < 0) return;
+    typedef struct { anim_id_t id; float emin, emax, vmin, vmax; } cameo_t;
+    static const cameo_t scenes[] = {
+        {ANIM_SMUG,.4,1,.2,1}, {ANIM_SUSPICIOUS,0,1,-1,.1},
+        {ANIM_DETERMINED,.6,1,-1,1}, {ANIM_PLEADING,0,.4,-1,.3},
+        {ANIM_MISCHIEVOUS,.55,1,-.2,1}, {ANIM_EMBARRASSED,0,1,-1,.2},
+        {ANIM_RELIEVED,0,1,0,1}, {ANIM_DOUBLE_TAKE,.4,1,-1,1},
+        {ANIM_HEARTS,0,1,.35,1}, {ANIM_HEARTBREAK,0,1,-1,-.35},
+        {ANIM_HIGH_ROLLER,.55,1,-.1,1}, {ANIM_NOD,.3,1,-1,1},
+        {ANIM_PEEKABOO,.35,1,-.1,1}, {ANIM_LOADING,0,.6,-1,1},
+        {ANIM_BOOP,.45,1,0,1}, {ANIM_SNEEZE,0,1,-1,1},
+        {ANIM_CAUTIOUS_PEEK,.25,1,-1,.4}, {ANIM_HIDE_RELOCATE,.4,1,-1,1},
+        {ANIM_TOO_CLOSE,.5,1,-.2,1}, {ANIM_RIM_BONK,.45,1,-1,1},
+        {ANIM_HANGING_ON,.4,1,-1,1}, {ANIM_LAZY_PUDDLE,0,.4,-1,1},
+        {ANIM_AROUND_BEND,.4,1,-1,1}, {ANIM_SECRET_OBSERVER,.25,1,-1,.4},
+        {ANIM_WRONG_ENTRANCE,.5,1,-1,1}, {ANIM_JACKPOT_ESCAPE,.7,1,.2,1},
+    };
+    int pick = -1, n = 0;
+    for (unsigned i=0; i<sizeof scenes/sizeof scenes[0]; i++) {
+        const cameo_t *c = &scenes[i];
+        if (c->id == b->last_idle_action || b->energy<c->emin || b->energy>c->emax ||
+            b->valence<c->vmin || b->valence>c->vmax) continue;
+        if (frand(b) < 1.f/(++n)) pick = c->id;
+    }
+    b->idle_action = pick; b->last_idle_action = pick; b->action_started_ms = now_ms;
+    if (pick < 0) b->next_action_ms = now_ms + 25000;
 }
 
 static void enter(behavior_t *b, behavior_state_t s, uint32_t now_ms)
@@ -265,7 +309,12 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
     b->pending = BEH_EV_NONE;
     const bool stroked = in->stroke_count != b->strokes_seen;
     b->strokes_seen = in->stroke_count;
-    if (stroked) b->last_stroke_ms = now_ms;
+    if (stroked && in->stroke_forehead && b->shake < .12f) {
+        b->pet_strokes = b->last_stroke_ms && now_ms-b->last_stroke_ms < 2500 ? 2 : 1;
+        b->last_stroke_ms = now_ms;
+    } else if (stroked || b->shake >= .12f || (b->last_stroke_ms && now_ms-b->last_stroke_ms >= 2500)) {
+        b->pet_strokes = 0;
+    }
 
     /* dancing: the owner is dancing with him, so shaking is part of it, never dizziness or a knock-out */
     const bool dancing = b->state == BEH_MUSIC || in->dancing;
@@ -354,7 +403,7 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
                 /* the dance he was put in by hand: same rule */
                 if (stroked) out->dance_flourish = 2;
             }
-            else if (stroked && in->stroke_forehead) {
+            else if (stroked && in->stroke_forehead && b->pet_strokes >= 2) {
                 enter(b, BEH_PETTED, now_ms);
             }
             else if (tapped) {
@@ -409,6 +458,8 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
     out->want_mic = b->sniffing || b->state == BEH_MUSIC || b->state == BEH_LISTENING ||
                     (in->usb && in->mic_available && (b->state == BEH_IDLE || b->state == BEH_UNIMPRESSED));
 
+    idle_action(b, in, now_ms);
+
     /* --- outputs --- */
     switch (b->state) {
     case BEH_DIZZY:       out->override_anim = ANIM_DIZZY; break;
@@ -424,11 +475,21 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
     case BEH_IDLE:
         /* idle life: the face of the moment, re-rolled every 15-55 s */
         if ((int32_t)(now_ms - b->idle_roll_ms) > 0) roll_idle_face(b, now_ms);
-        out->override_anim = b->idle_anim;
+        out->override_anim = in->dancing ? -1 : b->idle_action >= 0 ? b->idle_action : (int)b->idle_anim;
         break;
-    case BEH_CARRIED:     out->override_anim = ANIM_SQUINT; break;
+    case BEH_CARRIED:     out->override_anim = ANIM_CURIOUS; break;
     case BEH_STARTLED:    out->override_anim = ANIM_SURPRISED; break;
     default: break;
+    }
+
+    /* a poked eye shuts for the reaction, the other stays open */
+    if (b->state == BEH_POKED && b->poked_eye) {
+        const int e = b->poked_eye - 1;
+        const float in_ms = (float)(now_ms - b->state_since_ms);
+        /* shut in 150 ms, hold, reopen over half a second with an ease */
+        float shut = in_ms < 150.f ? in_ms / 150.f : in_ms < 800.f ? 1.f : in_ms < 1350.f ? (1350.f - in_ms) / 550.f : 0.f;
+        shut = shut * shut * (3.f - 2.f * shut);
+        out->env[e].lid_top = (int32_t)(shut * 0.75f * 65536.f);
     }
 
     /* gravity face: keep the face upright against gravity, like a badge on a wheel */
@@ -483,23 +544,17 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
             bx = rx; by = ry;
         }
         /* slight handling: a small wobble proportional to the motion, quiet while the face is mid-turn */
-        float wob = b->shake > 0.03f ? (b->shake - 0.03f) * 40.f : 0.f;
-        if (wob > 6.f) wob = 6.f;
+        float intensity = (b->shake - .12f) / .26f;
+        if (intensity < 0.f) intensity = 0.f;
+        if (intensity > 1.f) intensity = 1.f;
+        const float strong_wobble = 6.f * intensity * intensity;
+        float wob = strong_wobble;
         float turning = fabsf(b->face_target - b->face_angle);
         while (turning > 180.f) turning -= 360.f;
         turning = fabsf(turning);
         if (turning > 2.f) wob *= turning >= 30.f ? 0.f : 1.f - turning / 30.f;
         const float ph = (float)(now_ms % 1000) * 0.0062831853f * 6.f;    /* 6 Hz */
         const float wx = sinf(ph) * wob, wy = cosf(ph * 1.3f) * wob * 0.6f;
-        /* a poked eye shuts for the reaction, the other stays open */
-        if (b->state == BEH_POKED && b->poked_eye) {
-            const int e = b->poked_eye - 1;
-            const float in_ms = (float)(now_ms - b->state_since_ms);
-            /* shut in 150 ms, hold, reopen over half a second with an ease */
-            float shut = in_ms < 150.f ? in_ms / 150.f : in_ms < 800.f ? 1.f : in_ms < 1350.f ? (1350.f - in_ms) / 550.f : 0.f;
-            shut = shut * shut * (3.f - 2.f * shut);
-            out->env[e].lid_top = (int32_t)(shut * 0.75f * 65536.f);
-        }
         /* the voice's lean is in screen terms: + = the lanyard end = up */
         const float lean = -b->voice_dir * VOICE_LEAN_PX;
         for (int e = 0; e < 2; e++) {

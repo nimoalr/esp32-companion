@@ -60,12 +60,37 @@ a jackpot escape. The catalog below includes all 51 animations.
 | KNOCKED_OUT | Collapse into unequal slumped capsules, with tiny breathing motion and orbiting stars. Replaces the orange X overlays. |
 | RECOVERING | Left eye opens before right, a clearing blink, then normal eyes and idle motion return over 3 s. |
 
-These 16 expressions/actions are available through `anim_set()` and the host
-previews. KO and recovery replace the existing shake reaction automatically.
-The merged personality engine uses taps for pokes and swipes for strokes; it
-no longer provides manual expression cycling. Its current idle choices are
-preserved by this rebase; adding the new actions to those choices is separate.
-Existing voice responses are reused for applicable selections.
+All 28 additions are now connected to the character: KO/recovery through
+shaking, and the other 26 as mood-qualified idle cameos. Each cameo plays one
+authored cycle (five seconds for a static pose), then returns to the ordinary
+mood face. Cameos are spaced 25–55 seconds apart, avoid immediate repeats,
+and give way to taps, handling, speech and music. A resting finger lets the
+secret observer finish its authored retreat; it cancels other idle cameos. After interaction there is
+a 20-second quiet interval before another can start. Happy moods admit hearts
+and playful reels; sour moods admit suspicion and heartbreak; low energy
+admits pleading, loading and the lazy puddle. The high-energy rim antics need
+more stimulation. They remain available through `anim_set()` and host previews.
+Existing voice responses are reused when the mouth chooses to speak; an idle
+scene does not force an utterance.
+
+The touch/motion refinement requires two forehead strokes within 2.5 seconds
+for petting. Carrying gets a curious face and no automatic purr. A stationary
+forehead touch (away from the rim) can purr after 3.5 seconds, once per hold;
+movement, release or leaving the active face restarts that timer. Poking an
+eye eases its lower lid and happy arc away while the upper lid closes, then
+restores them. Mild handling below 0.12 g of smoothed magnitude deviation adds
+no oscillating wobble; stronger motion ramps quadratically up to six pixels.
+Sensor gaze corrections no longer drive elastic stretching, while authored
+animation movement still does.
+
+![A half-closed lower lid through a left-eye poke](poke-lids.png)
+
+Regenerate the poke strip from the repository root:
+
+```sh
+tools/host/build.sh interaction_preview && tools/host/bin/interaction_preview
+ffmpeg -y -i tools/host/out/poke-preview.ppm -frames:v 1 docs/expressions/poke-lids.png
+```
 
 ## Complete catalog
 

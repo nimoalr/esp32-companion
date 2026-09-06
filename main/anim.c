@@ -516,6 +516,12 @@ static const anim_def_t k_anims[ANIM_COUNT] = {
 
 };
 
+uint32_t anim_action_ms(anim_id_t id)
+{
+    if ((unsigned)id >= ANIM_COUNT) return 5000;
+    return k_anims[id].loop_ms ? k_anims[id].loop_ms : 5000;
+}
+
 const char *anim_name(anim_id_t id)
 {
     return (id < ANIM_COUNT) ? k_anims[id].name : "?";
@@ -561,6 +567,11 @@ static void anim_enter(anim_sm_t *sm, eyes_t *eyes, anim_id_t id, uint32_t now_m
     sm->dance_visual_ms = now_ms;
     sm->dance_visual_len = 8000 + rng_next(sm) % 8000;      /* the first show piece comes soon */
     sm->dance_visual_mix = 0.f;
+    sm->dance_lasers_on = false;
+    sm->dance_laser_ms = now_ms;
+    sm->dance_laser_rng = sm->rng ^ 0x6C617365u;
+    sm->dance_laser_len = 3000 + sm->dance_laser_rng % 3000;
+    sm->dance_laser_mix = 0.f;
     eyes_set_fx(eyes, 0, 0.f);
     eyes_clear_mod(eyes);
     eyes_set_idle_rates(eyes, d->blink_interval_scale, d->blink_speed_scale, d->dart_scale);
@@ -754,10 +765,10 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
             sm->dance_visual_len = 15000 + rng_next(sm) % 20000;
         } else {
             /* one of the show pieces, never the one that just went */
-            int pick = 1 + (int)(rng_next(sm) % 4u);
-            if (pick == sm->dance_visual_last) pick = 1 + pick % 4;
+            int pick = 1 + (int)(rng_next(sm) % 3u);
+            if (pick == sm->dance_visual_last) pick = 1 + pick % 3;
             sm->dance_visual = pick;
-            sm->dance_visual_len = pick == 4 ? 6500 : 10000 + rng_next(sm) % 10000;
+            sm->dance_visual_len = 10000 + rng_next(sm) % 10000;
         }
         sm->dance_visual_ms = now_ms;
     }
@@ -795,8 +806,20 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
     }
     const float visual=sm->dance_visual_mix*music;
     eyes_set_fx(eyes, visual>0.f && fx_shown<=3 ? fx_shown : 0,visual);
-    eyes->laser_mix=fx_shown==4?visual:0.f;
-    eyes->laser_beat=a->beat_count;
+    /* Background lighting has its own schedule and RNG. Changing an eye fill
+     * cannot start, stop, or reseed the laser show. */
+    const uint32_t laser_for = now_ms - sm->dance_laser_ms;
+    if (laser_for >= sm->dance_laser_len && (beat_now || laser_for >= sm->dance_laser_len + 1500)) {
+        sm->dance_lasers_on = !sm->dance_lasers_on;
+        sm->dance_laser_ms = now_ms;
+        sm->dance_laser_rng = sm->dance_laser_rng * 1664525u + 1013904223u;
+        sm->dance_laser_len = sm->dance_lasers_on ? 30000 + sm->dance_laser_rng % 30000
+                                                : 8000 + sm->dance_laser_rng % 8000;
+    }
+    const float laser_want = sm->dance_lasers_on ? 1.f : 0.f;
+    sm->dance_laser_mix += (laser_want - sm->dance_laser_mix) * dt / (400.f + dt);
+    if (sm->dance_laser_mix < .01f) sm->dance_laser_mix = 0.f;
+    eyes->laser_mix = sm->dance_laser_mix * music;
     /* Let the whole ball and the beams read through the resting dance face. */
     if(fx_shown==2 || fx_shown==3) for(int e=0;e<2;e++) {
         eyes->mod[e].curve=(int32_t)(eyes->mod[e].curve*(1.f-visual));

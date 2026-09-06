@@ -122,6 +122,12 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
     const bool gap_ok = (int32_t)(now_ms - p->last_say_ms) > MIN_GAP_MS;
     const bool free = !in->speaking && gap_ok && !in->in_ui;
 
+    /* Track touch continuously, even when a higher-priority reaction speaks.
+     * Carrying or releasing the finger restarts the deliberate hold duration. */
+    const bool gentle_touch = in->finger && !in->handling && in->power == 0 && !in->in_ui && !in->dancing;
+    if (!gentle_touch) { p->finger_since_ms = 0; p->purred = false; }
+    else if (!p->finger_since_ms) p->finger_since_ms = now_ms;
+
     /* power transitions: reflexes that may interrupt */
     if (in->power != pv->power) {
         if (pv->power == 0 && in->power == 1 && chance(p, 70)) say_gesture(out, VOICE_YAWN, 0.7f, false);
@@ -176,7 +182,7 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
             break;
         }
         case BEH_UNIMPRESSED: say_word(out, chance(p, 50) ? CLIP_BORING : CLIP_MEH, 0.9f, false); break;
-        case BEH_CARRIED:     say_gesture(out, VOICE_PURR, 0.8f, false); break;
+        case BEH_CARRIED:     if (free && chance(p, 30)) say_gesture(out, VOICE_HM, level, false); break;
         case BEH_POKED:
             if (in->valence < -0.3f && chance(p, 50)) {
                 static const int w[] = { CLIP_DO_NOT_TOUCH_ME, CLIP_GO_AWAY, CLIP_LEAVE_ME_ALONE, CLIP_NOPE, CLIP_BUZZ_OFF };
@@ -264,9 +270,8 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
         }
     }
     /* a finger resting: a purr, once per touch (not during the dance: nothing touches the dance) */
-    else if (in->finger && in->power == 0 && !in->in_ui && !in->dancing) {
-        if (!pv->finger) { p->finger_since_ms = now_ms; p->purred = false; }
-        else if (!p->purred && (int32_t)(now_ms - p->finger_since_ms) > 1500 && !in->speaking) {
+    else if (gentle_touch) {
+        if (!p->purred && (int32_t)(now_ms - p->finger_since_ms) > 3500 && free) {
             p->purred = true;
             say_gesture(out, VOICE_PURR, level, false);
         }

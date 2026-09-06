@@ -20,7 +20,8 @@ int main(void)
     for(int i=0;i<4;i++) {
         scene_t *s=&scenes[i];eyes_init(&s->eyes,0);eyes_set_hotspot(&s->eyes,true);
         anim_init(&s->sm,&s->eyes,0);anim_set(&s->sm,&s->eyes,ANIM_DANCE,0);
-        s->sm.dance_visual=i+1;s->sm.dance_visual_ms=0;s->sm.dance_visual_len=100000;
+        s->sm.dance_visual=i<3?i+1:0;s->sm.dance_visual_ms=0;s->sm.dance_visual_len=100000;
+        s->sm.dance_lasers_on=true;s->sm.dance_laser_len=100000;
     }
     uint32_t beats=0,last=0;
     for(uint32_t frame=0;frame<SECONDS*60;frame++) {
@@ -34,7 +35,7 @@ int main(void)
         for(int i=0;i<4;i++) {
             scene_t *s=&scenes[i];anim_set_audio(&s->sm,&a);anim_update(&s->sm,&s->eyes,t);
             eyes_update(&s->eyes,t,s->sh);
-            dance_lasers_update(&s->lasers,s->eyes.laser_mix,s->eyes.laser_beat,t,s->eyes.face_deg);
+            dance_lasers_update(&s->lasers,s->eyes.laser_mix,&a,t,s->eyes.face_deg);
             if(frame%2)continue; /* Animation 60 Hz; export 30 Hz. */
             for(int y=0;y<W+64;y+=32) {
                 int rows=W+64-y<32?W+64-y:32;

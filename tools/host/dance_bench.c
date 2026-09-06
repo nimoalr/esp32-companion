@@ -26,10 +26,17 @@ int main(void) {
  eyes_init(&eyes,0);eyes_set_hotspot(&eyes,true);eyes_set_idle_rates(&eyes,0,Q16_ONE,0);eyes_update(&eyes,16,sh);
  clock_t setup=0,draw=0;double pixels=0;
  for(int i=0;i<300;i++){
-  clock_t t=clock();dance_lasers_update(&laser,1,i/12,1000+i*34,0);setup+=clock()-t;t=clock();
+  audio_features_t a={.loud=.8f,.bass=.7f,.kick=.7f,.beat_count=i/12,.last_beat_ms=1000+(i/12)*408};
+  clock_t t=clock();dance_lasers_update(&laser,1,&a,1000+i*34,0);setup+=clock()-t;t=clock();
   int x0=laser.damage[0]&~15,y0=laser.damage[1]&~15,x1=(laser.damage[2]+15)&~15,y1=(laser.damage[3]+15)&~15;
   if(x1>466)x1=466;if(y1>466)y1=466;
-  for(int e=0;e<2;e++){if(sh[e].px0<x0)x0=sh[e].px0&~15;if(sh[e].px1>x1)x1=(sh[e].px1+15)&~15;}
+  for(int e=0;e<2;e++){
+   if(sh[e].px0<x0)x0=sh[e].px0&~15;
+   if(sh[e].px1>x1)x1=(sh[e].px1+15)&~15;
+   if(sh[e].py0<y0)y0=sh[e].py0&~15;
+   if(sh[e].py1>y1)y1=(sh[e].py1+15)&~15;
+  }
+  if(x1>466)x1=466;if(y1>466)y1=466;
   for(int y=y0;y<y1;y+=32)dance_lasers_paint(&laser,band,x0,y,x1-x0,y1-y<32?y1-y:32,sh);
   draw+=clock()-t;pixels+=(x1-x0)*(y1-y0);
  }

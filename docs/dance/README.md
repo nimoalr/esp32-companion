@@ -1,15 +1,16 @@
 # Dance shows and rhythm handling
 
-[Watch the 12-second preview](dance-show.mp4) (about 475 KB).
+[Watch the 12-second preview](dance-show.mp4) (under 1 MB).
 
 ![Spectrum, mirror balls, spotlights and background lasers](dance-show.png)
 
-Panels, left to right: **spectrum**, **mirror balls**, **spotlights**, **lasers**.
+Panels, left to right: **spectrum + lasers**, **mirror balls + lasers**,
+**spotlights + lasers**, **plain eyes + lasers**.
 The real C animation and rasteriser run at 60 Hz; the video exports at 30 Hz.
 The input is synthetic: 150 BPM for four seconds, an audible breakdown for
 four seconds, then the kick returns. Captions and the faint display outline
 are preview annotations. The preview forces each show for comparison; on the
-device they appear occasionally, with plain dancing between them.
+device the eye fills and laser background have independent schedules.
 
 On Windows after pulling:
 
@@ -27,10 +28,17 @@ Start-Process docs/dance/dance-show.mp4
   as the sphere rotates under a fixed light.
 - Spotlights have two visible fixtures, widening cones and bright elliptical
   pools where the beams land. Their targets sweep; kicks widen the cones.
-- Lasers are four thin coloured beams behind the opaque eyes, with eased
-  sweeps and fan/crossing patterns selected every four detected beats. A show
-  lasts 6.5 seconds and fades in/out. Old beam positions are erased on movement
-  and exit. The background follows the display orientation.
+- Lasers originate from eight fixtures spread along the horizontal middle
+  of the display (y=233) and sweep toward the circular rim.
+  Up to 24 antialiased rays form parallel fans, alternating up/down banks
+  or crossing fans. Real beats change which rays are lit; individual rays fade in/out.
+  Kick strength and loudness brighten the show, while bass opens the fans and
+  increases density. Breakdowns retain a quieter sweep without invented beats.
+- The background has its own timer and random state: the first show starts
+  after roughly 3–6 seconds, runs for 30–60 seconds, then rests for 8–16 seconds.
+  Changes wait up to 1.5 seconds for a beat and ease in/out. It can coexist with
+  every eye fill, and eye-fill changes do not restart it. Leaving dance mode
+  clears it. Old ray positions are erased on movement, fading and exit.
 - Beat motion uses the audio onset timestamp and measured kick strength.
   Its decay follows tempo, avoiding the old fixed 380 ms overlap at fast BPM.
   Smoothing, spectrum decay and ball rotation follow elapsed time.
@@ -86,7 +94,8 @@ were not reproduced, and the exact one-minute passage still needs a device
 check.
 
 ESP-IDF firmware build passes. UBSan checks pass for audio/behavior, laser
-occlusion and rotated damage bounds, clean laser exit, refresh throttling,
+occlusion with every fill, horizontal fixture origins, rotated damage bounds, tile seams,
+individual ray extinction, independent 30–60 second timing, clean laser exit, refresh throttling,
 coasting without extra kicks, and animation timing at 16/32 ms intervals.
 Character and rim integration tests pass; the 44,676-frame animation sweep
 reports zero bounding-box/guard violations.
@@ -97,8 +106,12 @@ Disco and spotlight geometry is generated once per frame into a shared 64×64
 lightness texture. Each eye's pixel loop uses integer coordinate increments
 and a lookup; the former per-pixel divisions and hashing are gone. The sphere
 projection is prepared once at initialization. Storage is 4 KiB per eye-pair
-texture plus roughly 16 KiB of static projection tables. The four-beam laser
-snapshot is approximately 7.5 KiB. No frame-time heap allocation is added.
+texture plus roughly 16 KiB of static projection tables. The 24-ray laser
+snapshot is approximately 3.2 KiB (host layout), down from 7.5 KiB for four
+polygon beams. It stores compact line increments and shares four intensity
+palettes. The pixel path visits at most three antialiased pixels per ray step,
+using integer arithmetic; geometry is prepared once per background update.
+No frame-time heap allocation is added.
 
 Representative host `dance_bench` measurements, including texture setup and
 both eye regions, in microseconds per frame:
@@ -112,9 +125,13 @@ Host timings vary with scheduling and are **not ESP32 timing measurements**.
 Laser generation is capped at 30 Hz; intermediate frames repaint only eye
 damage over the unchanged background. Changed background frames repaint the
 union of previous/current beam bounds and eye/accessory damage. The upright
-benchmark averages about 141,000 pixels per background update, 118 µs host
-CPU, and 7.1 ms theoretical RGB565 transfer at 80 MHz quad SPI. Rotation and
-wide patterns can approach a full frame (10.9 ms theoretical transfer).
+benchmark averages about 145,000 pixels per background update and 70 µs host
+CPU with the denser show, compared with 119 µs for the old four-ray renderer
+on the same host. The horizontal fixture layout costs about 7.27 ms theoretical RGB565
+transfer at 80 MHz quad SPI in this sample; wide or rotated patterns can
+approach a full frame (10.9 ms). Eye fills
+can increase raster work independently; 30 Hz limits the background update
+rate, while intermediate frames continue drawing eye damage only.
 Protocol, copying and scheduling add overhead; use the existing device
 raster/transfer/audio CPU counters to verify the hardware budget. The audio
 change adds no FFT, filter or analysis pass.

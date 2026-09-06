@@ -678,6 +678,9 @@ static void render_task(void *arg)
                 bi.stroke_count = c.stroke_count;
                 bi.stroke_forehead = c.stroke_forehead;
             }
+            bi.idle_allowed = state == POWER_ACTIVE;
+            bi.shown_anim = c.sm.id;
+            bi.shown_anim_done = now_ms-c.sm.t_change_ms >= anim_action_ms(c.sm.id);
             bi.have_accel = power_last_accel(bi.accel, &bi.accel_ms);
             behavior_update(&c.beh, &bi, now_ms, &bo);
             if (bo.dance_flourish && c.sm.id == ANIM_DANCE) anim_dance_flourish(&c.sm, bo.dance_flourish, now_ms);
@@ -719,7 +722,9 @@ static void render_task(void *arg)
                 .beh = c.beh.state,
                 .anim = c.sm.id,
                 .energy = behavior_energy(&c.beh),
-                .finger = c.mode == MODE_EYES && c.sm.id != ANIM_DANCE && touch_pressed(&fx, &fy),
+                .finger = c.mode == MODE_EYES && c.sm.id != ANIM_DANCE && touch_pressed(&fx, &fy)
+                          && fx > 50 && fx < BOARD_LCD_H_RES-50 && fy > 35 && fy < 170,
+                .handling = c.beh.moving_since_ms != 0 || c.beh.shake >= .08f || c.beh.state == BEH_CARRIED,
                 .tap_count = c.tap_count,
                 .usb = pb.vbus,
                 .batt_pct = pb.present ? pb.percent : -1,
@@ -814,7 +819,7 @@ static void render_task(void *arg)
         } else {
             anim_update(&c.sm, &c.eyes, now_ms);
             eyes_update(&c.eyes, now_ms, c.shapes);
-            const bool laser_changed=dance_lasers_update(&c.lasers,c.eyes.laser_mix,c.eyes.laser_beat,now_ms,c.eyes.face_deg);
+            const bool laser_changed=dance_lasers_update(&c.lasers,c.eyes.laser_mix,&c.sm.audio,now_ms,c.eyes.face_deg);
 
             /* Dirty rects: union of each eye's previous and current bounding box. */
             for (int i = 0; i < 2; i++) {

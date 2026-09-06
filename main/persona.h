@@ -20,6 +20,7 @@ typedef struct {
     anim_id_t anim;             /* what the eyes show */
     float energy;               /* 0..1 stimulation */
     float valence;              /* -1..1 how well he has been treated */
+    bool handling;              /* motion/carrying: prevents accidental grip purrs */
     bool finger;                /* a finger resting on the screen */
     uint32_t tap_count;         /* running count of taps on the eyes */
     bool usb;

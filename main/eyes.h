@@ -142,7 +142,6 @@ typedef struct {
     float fx_mix;                      /* 0..1 fade */
     float bar_h[2][8];                 /* bars: 0..1 of the eye's height */
     float laser_mix;                  /* background show, separate from the eye fill */
-    uint32_t laser_beat;
     dance_fill_t dance_fill;
     float disco_spin;                  /* disco: complete rotations */
     uint32_t disco_seed;

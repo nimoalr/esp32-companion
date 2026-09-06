@@ -85,12 +85,15 @@ typedef struct {
     uint32_t dance_last_sound_ms;
     int dance_flourish;         /* 0 none, 2 a slow sway (a stroke) */
     float dance_bars[2][8];     /* smoothed spectrum heights, left eye low bands, right eye high */
-    int dance_visual;           /* the passing visual on top of the dance: 0 plain, 1 spectrum, 2 mirror ball, 3 spotlights, 4 background lasers */
+    int dance_visual;           /* the passing visual on top of the dance: 0 plain, 1 spectrum, 2 mirror ball, 3 spotlights */
     int dance_visual_last;
     float disco_spin;
     uint32_t dance_visual_ms;   /* when the current one began */
     uint32_t dance_visual_len;  /* how long it stays */
     float dance_visual_mix;     /* 0..1 fade of the visual */
+    bool dance_lasers_on;       /* independent background show, can overlap any eye fill */
+    uint32_t dance_laser_ms, dance_laser_len, dance_laser_rng;
+    float dance_laser_mix;
     uint32_t dance_flourish_ms; /* when it started */
 } anim_sm_t;
 
@@ -109,3 +112,5 @@ void anim_set_audio(anim_sm_t *sm, const audio_features_t *f);
 /* Apply keyframes whose time has come and compute this frame's modulation. Call once per frame before eyes_update(). */
 void anim_update(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms);
 const char *anim_name(anim_id_t id);
+/* One authored cycle; static poses get a five-second cameo. */
+uint32_t anim_action_ms(anim_id_t id);

@@ -598,6 +598,18 @@ static void eye_effective_params(int which, EyeState *s, const eye_pose_t *mod, 
     for (int i = 0; i < EYE_POSE_FIELDS; i++) {
         c.v[i] = s->cur.v[i] + mod->v[i] + env->v[i];
     }
+    /* The environment's top-lid envelope is an eye poke. Relax that eye's
+     * lower lid and happy arc as it shuts, then restore the authored pose. */
+    if (env->lid_top > 0) {
+        const int32_t poke = clamp_q16(q16_div(env->lid_top,Q16(.75)),0,Q16_ONE);
+        const int32_t keep = Q16_ONE-poke;
+        c.lid_top = q16_mul(c.lid_top-env->lid_top,keep) + q16_mul(Q16(.9),poke);
+        c.slant = q16_mul(c.slant,keep);
+        c.bend = q16_mul(c.bend,keep);
+        c.lid_bottom = q16_mul(c.lid_bottom,keep);
+        c.curve = q16_mul(c.curve,keep);
+        c.slant_b = q16_mul(c.slant_b,keep);
+    }
     c.sx = clamp_q16(c.sx, Q16(0.2), Q16(2.0));
     c.sy = clamp_q16(c.sy, Q16(0.02), Q16(2.0));
     c.lid_top = clamp_q16(c.lid_top, 0, Q16_ONE);
@@ -616,14 +628,16 @@ static void eye_effective_params(int which, EyeState *s, const eye_pose_t *mod, 
     const int32_t bcy = scy + q16_mul(s->base.cy - scy, f->fscale) + f->fdy;
 
     /* pose-driven centre (no dart): its velocity drives the stretch */
-    const int32_t pcx = bcx + c.dx, pcy = bcy + c.dy;
+    /* Sensor gaze must not feed the elastic stretch: small gravity corrections
+     * were making even a gentle turn look wobbly. Authored motion still stretches. */
+    const int32_t pcx = bcx + s->cur.dx + mod->dx, pcy = bcy + s->cur.dy + mod->dy;
     int32_t motion_target = 0, ax = Q16(0.5);
     if (f->dt_ms >= 4 && f->dt_ms <= 250) {
         const int32_t vx = (pcx - s->prev_cx) / (int32_t)f->dt_ms;    /* Q16 px/ms */
         const int32_t vy = (pcy - s->prev_cy) / (int32_t)f->dt_ms;
         const int32_t speed = abs32(vx) + abs32(vy);
-        if (speed > 0) {
-            motion_target = q16_mul(speed, MOTION_GAIN);
+        if (speed > Q16(.025)) {
+            motion_target = q16_mul(speed-Q16(.025), MOTION_GAIN);
             if (motion_target > MOTION_MAX) motion_target = MOTION_MAX;
             ax = q16_div(abs32(vx), speed);
         }

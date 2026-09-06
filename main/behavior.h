@@ -17,6 +17,9 @@ typedef struct {
     uint32_t accel_ms;
     const imu_cal_t *cal;
     audio_features_t audio;     /* .active false when the mics are off */
+    bool idle_allowed;         /* renderer is active; no cameos queued while sleeping/in menus */
+    anim_id_t shown_anim;       /* current animation, for one-shot idle scene completion */
+    bool shown_anim_done;
     bool mic_available;         /* board has working mics */
     bool user_interacting;      /* touch in the last few seconds */
     uint32_t tap_count;         /* running count of taps; a tap during a music reaction ends it */
@@ -102,6 +105,9 @@ typedef struct {
     float valence;              /* -1..1: how well he has been treated lately */
     anim_id_t idle_anim;        /* the face of the moment while nothing happens, from the mood */
     uint32_t idle_roll_ms;
+    int idle_action, last_idle_action; /* -1 when no cameo is running */
+    uint32_t action_started_ms, next_action_ms;
+    uint8_t pet_strokes;
     uint32_t strokes_seen;
     uint32_t last_stroke_ms;
     int poked_eye;              /* 0 none, 1 left, 2 right, during BEH_POKED */
