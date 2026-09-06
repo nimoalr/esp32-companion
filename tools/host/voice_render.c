@@ -1,5 +1,6 @@
 /* Render the voice vocabulary to WAV: one file per gesture and register, plus a medley per
  * register with all gestures in a row. Listen before any of it goes into the firmware. */
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -66,7 +67,17 @@ int main(void)
             wav_write(path, g_buf, n);
             int peak = 0;
             for (int i = 0; i < n; i++) if (abs(g_buf[i]) > peak) peak = abs(g_buf[i]);
-            if (r == 2) printf("%-10s %5d ms  peak %5d\n", k_voice_gestures[id].name, n * 1000 / VOICE_RATE, peak);
+            if (r == 2) {
+                float lo = 99.f;
+                for (int k = 0; k < k_voice_gestures[id].nseg; k++) {
+                    const voice_seg_t *sg = &k_voice_gestures[id].seg[k];
+                    if (sg->st0 < lo) lo = sg->st0;
+                    if (sg->st1 < lo) lo = sg->st1;
+                    if (sg->st2 < lo) lo = sg->st2;
+                }
+                printf("%-10s %5d ms  peak %5d  lowest %4.0f Hz\n", k_voice_gestures[id].name, n * 1000 / VOICE_RATE, peak,
+                       587.f * exp2f(lo / 12.f));
+            }
         }
         char path[128];
         snprintf(path, sizeof path, "out/voice/moods_%s.wav", regs[r]);

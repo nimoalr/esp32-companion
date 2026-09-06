@@ -4,7 +4,8 @@
 #include <string.h>
 
 /* base pitch of each register, Hz: the speaker is two centimetres across and carries nothing
- * below ~300 Hz, so all three sit high */
+ * below ~400 Hz, so all three sit high and no contour goes more than 4 semitones under the base
+ * (the "low" moods get their weight from buzz, breath and a darker filter, not from pitch) */
 static const float k_base_hz[3] = { 330.f, 440.f, 587.f };
 
 /* vowel formants F1, F2 (Hz) and level; at these pitches the colour comes mostly from F2 */
@@ -15,7 +16,7 @@ static const float k_vowel[VOW_COUNT][3] = {
     [VOW_I] = { 320, 2400, 0.8f },
     [VOW_O] = { 480, 900, 1.0f },
     [VOW_U] = { 350, 750, 0.9f },
-    [VOW_M] = { 260, 1000, 0.5f },
+    [VOW_M] = { 400, 1000, 0.5f },
 };
 
 #define S(...) { __VA_ARGS__ }
@@ -23,29 +24,29 @@ const voice_gesture_t k_voice_gestures[VOICE_COUNT] = {
     /*                  name        n  syllables { ms, st0, st1, st2, vowel, onset, gap }                                         vib      trill      breath partner att rel pulses lp   level loop */
     [VOICE_HAPPY]     = { "happy",     2, S({ 160, 0, 2, 4, VOW_E, ON_NONE, 20 }, { 240, 5, 8, 9, VOW_I, ON_NONE, 0 }),            6, .3,   0, 0,      0,   .35, 2, 12, 60,   0, 2800, .8, false },
     [VOICE_LAUGH]     = { "laugh",     3, S({ 180, 4, 5, 3, VOW_A, ON_H, 30 }, { 160, 5, 6, 4, VOW_A, ON_H, 30 }, { 200, 4, 4, 1, VOW_A, ON_H, 0 }), 6, .3, 0, 0, .03, .3, 2, 5, 40, 2, 2600, .8, false },
-    [VOICE_SAD]       = { "sad",       1, S({ 700, 3, 1, -7, VOW_O, ON_NONE, 0 }),                                                 5, .5,   0, 0,      .04, .25, 1.5, 40, 120, 0, 1800, .7, false },
+    [VOICE_SAD]       = { "sad",       1, S({ 700, 4, 2, -4, VOW_O, ON_NONE, 0 }),                                                 5, .5,   0, 0,      .04, .25, 1.5, 40, 120, 0, 1800, .7, false },
     [VOICE_SURPRISED] = { "surprised", 1, S({ 320, -2, 8, 14, VOW_O, ON_NONE, 0 }),                                                0, 0,    0, 0,      0,   .3, 2, 8, 60,    0, 3200, .9, false },
     [VOICE_SCARED]    = { "scared",    1, S({ 520, 4, 12, 13, VOW_I, ON_NONE, 0 }),                                                0, 0,    22, 2,     0,   .25, 2, 8, 80,   0, 3400, .9, false },
-    [VOICE_ANGRY]     = { "angry",     1, S({ 600, -10, -9, -12, VOW_U, ON_NONE, 0 }),                                             0, 0,    38, 1,     .08, .5, 1.5, 15, 80,  0, 1500, .9, false },
-    [VOICE_ANNOYED]   = { "annoyed",   2, S({ 180, -6, -5, -6, VOW_U, ON_NONE, 30 }, { 200, -6, -7, -9, VOW_O, ON_NONE, 0 }),      0, 0,    30, 1,     .06, .4, 1.5, 20, 60,  0, 1700, .8, false },
-    [VOICE_YAWN]      = { "yawn",      1, S({ 1100, -2, 3, -9, VOW_A, ON_H, 0 }),                                                  4, .6,   0, 0,      .10, .2, 2, 120, 250, 0, 1600, .7, false },
-    [VOICE_PURR]      = { "purr",      1, S({ 1000, -14, -13, -14, VOW_M, ON_NONE, 0 }),                                           0, 0,    26, 0,     .12, .4, 2, 150, 250, 0, 900,  .7, true },
-    [VOICE_HM]        = { "hm",        1, S({ 380, -1, 0, 6, VOW_M, ON_NONE, 0 }),                                                 0, 0,    0, 0,      .04, .2, 2, 30, 60,   0, 1400, .7, false },
-    [VOICE_CONFUSED]  = { "confused",  2, S({ 260, -1, 2, 5, VOW_M, ON_NONE, 60 }, { 300, -2, 1, 7, VOW_M, ON_NONE, 0 }),          0, 0,    0, 0,      .04, .2, 2, 30, 60,   0, 1500, .7, false },
-    [VOICE_DIZZY]     = { "dizzy",     1, S({ 900, 4, 0, -6, VOW_O, ON_W, 0 }),                                                    7, 2.5,  0, 0,      0,   .3, 1.5, 40, 150, 0, 2200, .8, false },
+    [VOICE_ANGRY]     = { "angry",     1, S({ 600, -3, -2, -4, VOW_U, ON_NONE, 0 }),                                             0, 0,    38, 1,     .08, .5, 1.5, 15, 80,  0, 1500, .9, false },
+    [VOICE_ANNOYED]   = { "annoyed",   2, S({ 180, -1, 0, -1, VOW_U, ON_NONE, 30 }, { 200, -1, -2, -4, VOW_O, ON_NONE, 0 }),      0, 0,    30, 1,     .06, .4, 1.5, 20, 60,  0, 1700, .8, false },
+    [VOICE_YAWN]      = { "yawn",      1, S({ 1100, 0, 5, -4, VOW_A, ON_H, 0 }),                                                  4, .6,   0, 0,      .10, .2, 2, 120, 250, 0, 1600, .7, false },
+    [VOICE_PURR]      = { "purr",      1, S({ 1000, -4, -3, -4, VOW_M, ON_NONE, 0 }),                                           0, 0,    26, 0,     .12, .4, 2, 150, 250, 0, 900,  .7, true },
+    [VOICE_HM]        = { "hm",        1, S({ 380, 0, 1, 6, VOW_M, ON_NONE, 0 }),                                                 0, 0,    0, 0,      .04, .2, 2, 30, 60,   0, 1400, .7, false },
+    [VOICE_CONFUSED]  = { "confused",  2, S({ 260, 0, 2, 5, VOW_M, ON_NONE, 60 }, { 300, -1, 1, 7, VOW_M, ON_NONE, 0 }),          0, 0,    0, 0,      .04, .2, 2, 30, 60,   0, 1500, .7, false },
+    [VOICE_DIZZY]     = { "dizzy",     1, S({ 900, 5, 1, -4, VOW_O, ON_W, 0 }),                                                    7, 2.5,  0, 0,      0,   .3, 1.5, 40, 150, 0, 2200, .8, false },
     [VOICE_PROTEST]   = { "protest",   3, S({ 140, 6, 10, 8, VOW_E, ON_NONE, 30 }, { 140, 5, 9, 7, VOW_E, ON_NONE, 30 }, { 180, 8, 11, 12, VOW_I, ON_NONE, 0 }), 0, 0, 0, 0, 0, .3, 2, 5, 30, 0, 3000, .9, false },
-    [VOICE_KO]        = { "ko",        1, S({ 900, 6, -2, -16, VOW_O, ON_NONE, 0 }),                                               3, .4,   0, 0,      .03, .25, 2, 10, 300, 0, 1800, .8, false },
+    [VOICE_KO]        = { "ko",        1, S({ 900, 7, 0, -5, VOW_O, ON_NONE, 0 }),                                               3, .4,   0, 0,      .03, .25, 2, 10, 300, 0, 1800, .8, false },
     [VOICE_OH]        = { "oh",        1, S({ 300, 1, 5, 3, VOW_O, ON_NONE, 0 }),                                                  0, 0,    0, 0,      0,   .25, 2, 15, 80,  0, 2000, .7, false },
     [VOICE_BLIP]      = { "blip",      1, S({ 90, 10, 12, 13, VOW_NONE, ON_NONE, 0 }),                                             0, 0,    0, 0,      0,   .2, 2, 3, 25,    0, 3800, .6, false },
-    [VOICE_WAKE]      = { "wake",      1, S({ 700, -5, -1, 4, VOW_M, ON_NONE, 0 }),                                                4, .4,   0, 0,      .05, .25, 2, 150, 120, 0, 1600, .6, false },
+    [VOICE_WAKE]      = { "wake",      1, S({ 700, -3, 0, 4, VOW_M, ON_NONE, 0 }),                                                4, .4,   0, 0,      .05, .25, 2, 150, 120, 0, 1600, .6, false },
     /* word-like: the contour of the word, its vowels and a consonant hint, no actual consonants */
     [VOICE_HELLO]     = { "hello",     2, S({ 170, 0, 1, 2, VOW_E, ON_H, 20 }, { 330, 7, 6, 2, VOW_O, ON_L, 0 }),                  5, .3,   0, 0,      .02, .3, 2, 15, 90,   0, 2600, .8, false },
     [VOICE_HI]        = { "hi",        1, S({ 380, 2, 8, 6, VOW_A, ON_H, 0 }),                                                     5, .3,   0, 0,      .02, .3, 2, 10, 80,   0, 2800, .8, false },
-    [VOICE_BYE]       = { "bye",       2, S({ 240, 6, 7, 4, VOW_A, ON_B, 40 }, { 300, 3, 1, -3, VOW_A, ON_B, 0 }),                 5, .3,   0, 0,      .02, .3, 2, 8, 100,   0, 2600, .8, false },
+    [VOICE_BYE]       = { "bye",       2, S({ 240, 6, 7, 4, VOW_A, ON_B, 40 }, { 300, 3, 1, -2, VOW_A, ON_B, 0 }),                 5, .3,   0, 0,      .02, .3, 2, 8, 100,   0, 2600, .8, false },
     [VOICE_YAY]       = { "yay",       1, S({ 520, 2, 9, 11, VOW_E, ON_W, 0 }),                                                    6, .4,   0, 0,      0,   .35, 2, 20, 120, 0, 3000, .9, false },
-    [VOICE_UHOH]      = { "uh-oh",     2, S({ 200, 5, 5, 4, VOW_U, ON_NONE, 70 }, { 300, 0, -1, -3, VOW_O, ON_B, 0 }),             0, 0,    0, 0,      .02, .3, 2, 10, 80,   0, 2200, .8, false },
+    [VOICE_UHOH]      = { "uh-oh",     2, S({ 200, 6, 6, 5, VOW_U, ON_NONE, 70 }, { 300, 1, 0, -2, VOW_O, ON_B, 0 }),             0, 0,    0, 0,      .02, .3, 2, 10, 80,   0, 2200, .8, false },
     [VOICE_OKAY]      = { "okay",      2, S({ 160, 2, 2, 3, VOW_O, ON_NONE, 30 }, { 300, 5, 8, 7, VOW_E, ON_K, 0 }),               5, .3,   0, 0,      .02, .3, 2, 10, 80,   0, 2600, .8, false },
-    [VOICE_NO]        = { "no-no",     2, S({ 200, 2, 3, -2, VOW_O, ON_NONE, 60 }, { 260, 1, 2, -4, VOW_O, ON_NONE, 0 }),          4, .3,   0, 0,      .02, .3, 2, 10, 70,   0, 2000, .8, false },
+    [VOICE_NO]        = { "no-no",     2, S({ 200, 3, 4, -1, VOW_O, ON_NONE, 60 }, { 260, 2, 3, -3, VOW_O, ON_NONE, 0 }),          4, .3,   0, 0,      .02, .3, 2, 10, 70,   0, 2000, .8, false },
     [VOICE_WOW]       = { "wow",       1, S({ 600, -2, 6, -1, VOW_A, ON_W, 0 }),                                                   5, .5,   0, 0,      .02, .3, 2, 30, 150,  0, 2400, .85, false },
     [VOICE_YES_HM]    = { "mm-hm",     2, S({ 160, -2, -1, 0, VOW_M, ON_NONE, 40 }, { 260, 3, 5, 6, VOW_M, ON_H, 0 }),             0, 0,    0, 0,      .04, .2, 2, 20, 70,   0, 1500, .7, false },
     [VOICE_NO_MM]     = { "mm-mm",     2, S({ 180, 2, 2, 1, VOW_M, ON_NONE, 40 }, { 260, -1, -2, -4, VOW_M, ON_NONE, 0 }),         0, 0,    0, 0,      .04, .2, 2, 20, 70,   0, 1500, .7, false },
@@ -54,7 +55,7 @@ const voice_gesture_t k_voice_gestures[VOICE_COUNT] = {
     [VOICE_LALA]      = { "la-la-la",  3, S({ 220, 2, 3, 2, VOW_A, ON_L, 30 }, { 220, 6, 7, 6, VOW_A, ON_L, 30 }, { 320, 4, 5, 2, VOW_A, ON_L, 0 }), 5, .4, 0, 0, .02, .3, 2, 10, 90, 0, 2600, .75, false },
     [VOICE_TADA]      = { "ta-da",     2, S({ 150, 4, 4, 5, VOW_A, ON_K, 40 }, { 480, 11, 12, 11, VOW_A, ON_B, 0 }),               6, .5,   0, 0,      0,   .35, 2, 5, 200,   0, 3000, .9, false },
     [VOICE_PSST]      = { "psst",      1, S({ 220, 8, 8, 9, VOW_NONE, ON_H, 0 }),                                                  0, 0,    0, 0,      .5,  .2, 2, 5, 60,    0, 3800, .5, false },
-    [VOICE_AWW]       = { "aww",       1, S({ 700, 3, 1, -4, VOW_A, ON_NONE, 0 }),                                                 4, .5,   0, 0,      .03, .3, 2, 60, 200,  0, 2000, .75, false },
+    [VOICE_AWW]       = { "aww",       1, S({ 700, 4, 2, -3, VOW_A, ON_NONE, 0 }),                                                 4, .5,   0, 0,      .03, .3, 2, 60, 200,  0, 2000, .75, false },
 };
 #undef S
 
@@ -180,6 +181,8 @@ void voice_babble(voice_t *v, float level, float energy)
         sg->st0 = st;
         sg->st1 = st + spread * 0.5f * frand(v);
         st = st + spread * frand(v);
+        if (st < -4.f) st = -4.f + (-4.f - st);          /* reflect: the speaker carries nothing lower */
+        if (sg->st1 < -4.f) sg->st1 = -4.f;
         sg->st2 = st;
         sg->vowel = vowels[rnd(v) % 8u];
         sg->onset = onsets[rnd(v) % 8u];
