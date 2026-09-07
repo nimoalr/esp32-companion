@@ -486,8 +486,8 @@ static inline void IRAM_ATTR bar_walk_begin(const raster_shape_t *s, int x, int 
     w->lx = (int32_t)(((int64_t)rc * X + (int64_t)rs * Y) >> 16);
     w->ly = (int32_t)(((int64_t)rc * Y - (int64_t)rs * X) >> 16);
     if(s->fx!=RASTER_FX_BARS) {
-        w->u=(int32_t)((int64_t)w->lx*s->fx_sx>>16)+Q16(32);
-        w->v=(int32_t)((int64_t)w->ly*s->fx_sy>>16)+Q16(32);
+        w->u=(int32_t)((int64_t)w->lx*s->fx_sx>>16)+Q16(32)+s->fx_dx;
+        w->v=(int32_t)((int64_t)w->ly*s->fx_sy>>16)+Q16(32)+s->fx_dy;
         w->du=(int32_t)((int64_t)rc*s->fx_sx>>16);
         w->dv=-(int32_t)((int64_t)rs*s->fx_sy>>16);
         return;

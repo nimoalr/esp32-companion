@@ -102,6 +102,9 @@ typedef struct {
     int dance_visual;           /* the passing visual on top of the dance: 0 plain, 1 spectrum, 2 mirror ball, 3 spotlights */
     int dance_visual_last;
     float disco_spin;
+    uint32_t disco_seed;
+    uint32_t rush_seen, rush_ms;
+    int rush_kind;
     uint32_t dance_visual_ms;   /* when the current one began */
     uint32_t dance_visual_len;  /* how long it stays */
     float dance_visual_mix;     /* 0..1 fade of the visual */

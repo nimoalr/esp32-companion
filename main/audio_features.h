@@ -27,6 +27,8 @@ typedef struct {
     float balance;          /* -1 = left mic louder .. +1 = right mic louder */
     uint32_t beat_count;    /* increments on each bass onset */
     uint32_t last_beat_ms;
+    uint32_t rush_count, rush_ms; /* confirmed faster subdivision; does not admit music */
+    float rush_bpm;         /* short-loop pulse rate, not necessarily the musical tempo */
     float bpm;              /* 0 until enough beats have been seen */
     bool speech;            /* someone is talking (syllable-rate modulation of the mid band) */
     float speech_depth;     /* the modulation depth behind it, for tuning */

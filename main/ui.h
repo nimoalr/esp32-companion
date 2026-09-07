@@ -45,6 +45,7 @@ typedef enum {
     UI_ACT_VOICE,           /* apply voice register / volume now */
     UI_ACT_SAY_WORD,        /* speak a sample word (ui_say_arg) */
     UI_ACT_SAY_MOOD,        /* speak a sample mood gesture (ui_say_arg) */
+    UI_ACT_MUSIC_TRACE,     /* toggle USB feature collection; returns to ordinary eyes */
 } ui_action_t;
 
 typedef struct {
@@ -85,6 +86,7 @@ typedef struct {
 
     /* menu */
     int menu_sel;
+    bool music_recording;
     /* calibrate */
     int cal_step;           /* 0..2 pose index, 3 = result */
     bool cal_capturing;

@@ -144,7 +144,8 @@ typedef struct {
     float bar_h[2][8];                 /* bars: 0..1 of the eye's height */
     float spot_mix;
     float laser_mix;                  /* background show, separate from the eye fill */
-    dance_fill_t dance_fill;
+    dance_fill_t dance_fill[2];
+    float disco_zoom[2], disco_x[2], disco_y[2];
     float disco_spin;                  /* disco: complete rotations */
     uint32_t disco_seed;
     int spots_n;                       /* spots: normalised floor targets and beam spread */
@@ -175,7 +176,7 @@ void eyes_set_hotspot(eyes_t *e, bool on);
 /* Fill effects for the dance: a RASTER_FX_* mode faded in by mix 0..1 (0 = plain fill). */
 void eyes_set_fx(eyes_t *e, int fx, float mix);
 void eyes_set_bar_heights(eyes_t *e, int eye, const float h[8]);            /* bars: 0..1 of the eye's height */
-void eyes_set_disco(eyes_t *e, float spin, uint32_t seed);                  /* spin in complete rotations; seed retained for API compatibility */
+void eyes_set_disco(eyes_t *e, float spin, uint32_t seed);                  /* spin in complete rotations; stable seed per dance session */
 void eyes_set_spots(eyes_t *e, int n, const float *x, const float *y, float r);   /* normalised floor targets; r controls beam spread */
 
 /* Face-level placement, applied directly (callers ease). */

@@ -1,5 +1,9 @@
 # Dance shows and rhythm handling
 
+The [Music Lab and organic dance pass](MUSIC_LAB.md) adds compact full-track USB
+capture with a local coordination page, short-loop flourishes and independent
+disco-ball cameras. [Watch the new comparison](dance-organic.mp4).
+
 [Watch the 12-second preview](dance-show.mp4) (under 1 MB).
 
 ![Spectrum, mirror balls, spotlights and background lasers](dance-show.png)

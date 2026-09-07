@@ -1,6 +1,10 @@
 /* Host replay compiles this exact analysis path; only device I/O is excluded. */
 #include "micdir.h"
 #include "audio_features.h"
+#include "rhythm_rush.h"
+#ifndef AUDIO_ANALYSIS_HOST
+#include "music_trace.h"
+#endif
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
@@ -97,6 +101,7 @@ static int s_sp_on, s_sp_off;
 static bool s_speech;
 static uint16_t s_dir_seen_n;
 static uint32_t s_transient_ms;
+static rhythm_rush_t s_rush;
 static float s_gap_ms;                /* current tempo estimate as a beat interval, 0 = none */
 static uint32_t s_last_beat_ms;
 static uint32_t s_beat_gaps[8];
@@ -233,8 +238,10 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     /* his own voice from the speaker is neither a beat nor a talker nor a direction: the levels and
      * the spectrum keep flowing (the dance visuals must not freeze), the detectors hold */
     const bool own_voice = s_muted;
-    const bool beat = !own_voice && kick_e > 1.25f * s_kick_mean && kick_e > 1.10f * s_kick_prev && s_presence > 0.25f &&
-                      (now_ms - s_last_beat_ms) >= refractory;
+    const float trace_mean=s_kick_mean, trace_prev=s_kick_prev;
+    const bool candidate = kick_e > 1.25f*s_kick_mean && kick_e > 1.10f*s_kick_prev && s_presence > .25f;
+    rhythm_rush_update(&s_rush,now_ms,candidate,s_gap_ms,s_bass_ratio,own_voice);
+    const bool beat = !own_voice && candidate && (now_ms-s_last_beat_ms)>=refractory;
     s_kick_prev = kick_e;
     s_kick_mean += (kick_e - s_kick_mean) * (1.f / 30.f);      /* ~0.5 s: spans a beat, not a bar */
     s_bass_prev = bass;
@@ -409,6 +416,7 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     s_feat.balance = s_balance;
     if (beat) s_feat.beat_count++;
     s_feat.last_beat_ms = s_last_beat_ms;
+    s_feat.rush_count=s_rush.count;s_feat.rush_ms=s_rush.event_ms;s_feat.rush_bpm=s_rush.bpm;
     s_feat.bpm = bpm;
     s_feat.regularity = regularity;
     s_feat.tempo_conf = tempo_conf;
@@ -425,6 +433,12 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     s_feat.dir_loud = s_micdir.loud;
     s_feat.dir_pre = s_micdir.pre;
     portEXIT_CRITICAL(&s_lock);
+#ifndef AUDIO_ANALYSIS_HOST
+    music_trace_offer(&s_feat,now_ms,kick_e,trace_mean,trace_prev,s_presence,
+        candidate | (beat<<1) | (s_speech<<2) | (own_voice<<3) | ((peak>=32760)<<4) | ((s_rush.event_ms==now_ms)<<5));
+#else
+    (void)trace_mean;(void)trace_prev;
+#endif
 }
 
 static void analysis_reset(void)
@@ -450,6 +464,7 @@ static void analysis_reset(void)
     s_sp_on = s_sp_off = 0;
     s_speech = false;
     s_gap_ms = 0.f;
+    memset(&s_rush,0,sizeof s_rush);
     s_last_beat_ms = 0;
     s_gap_n = s_gap_idx = 0;
     s_max_bass = s_max_mid = s_max_high = s_max_loud = 1e-3f;
@@ -574,7 +589,7 @@ esp_err_t audio_start(void)
     analysis_reset();
 
     s_run = true;
-    if (xTaskCreatePinnedToCore(audio_task, "audio", 6144, NULL, 6, &s_task, 0) != pdPASS) {
+    if (xTaskCreatePinnedToCore(audio_task, "audio", 6144, NULL, 9, &s_task, 0) != pdPASS) {
         s_run = false;
         audio_stop();
         return ESP_ERR_NO_MEM;

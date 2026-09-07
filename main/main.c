@@ -33,6 +33,7 @@
 #include "ui.h"
 #include "gfx.h"
 #include "audio.h"
+#include "music_trace.h"
 #include "speech.h"
 #include "persona.h"
 #include "dance_lasers.h"
@@ -295,6 +296,9 @@ static void fb_init(void)
 /* Raster every dirty rect into the next frame buffer; fills `job` (pieces and buffer index). */
 static void render_frame(const rect_t *dirty, int ndirty, const render_ctx_t *c, uint32_t now_ms, push_job_t *job, uint32_t *raster_us)
 {
+    /* Scatter-writing antialiased rays/textures into PSRAM thrashes its cache.
+     * Both cores paint one internal band, then copy it sequentially. */
+    static uint16_t scratch[BOARD_LCD_H_RES * DISPLAY_BAND_ROWS] __attribute__((aligned(64)));
     /* Where does this frame go? Internal if it fits (no copy on the way out), else the next PSRAM buffer. */
     size_t need = 0;
     for (int i = 0; i < ndirty; i++) {
@@ -326,7 +330,8 @@ static void render_frame(const rect_t *dirty, int ndirty, const render_ctx_t *c,
         uint16_t *block = fb->base + off / 2;
         for (int y = r->y0; y < r->y1; y += DISPLAY_BAND_ROWS) {
             const int rows = (r->y1 - y) < DISPLAY_BAND_ROWS ? (r->y1 - y) : DISPLAY_BAND_ROWS;
-            paint_piece(block + (size_t)(y - r->y0) * w, r->x0, y, w, rows, c, now_ms);
+            paint_piece(scratch, r->x0, y, w, rows, c, now_ms);
+            memcpy(block + (size_t)(y-r->y0)*w,scratch,(size_t)w*rows*2);
         }
         pieces[n++] = (frame_piece_t){ *r, block };
         off += (bytes + 63) & ~(size_t)63;
@@ -412,6 +417,7 @@ static void enter_ui(render_ctx_t *c, bool first_boot, uint32_t now_ms)
 {
     c->mode = MODE_UI;
     ui_init(&c->ui, &g_settings, first_boot, now_ms);
+    c->ui.music_recording=music_trace_active();
     ESP_LOGI(TAG, "UI: %s%s", ui_screen_name(c->ui.screen), first_boot ? " (first boot)" : "");
 }
 
@@ -433,7 +439,8 @@ static void leave_ui(render_ctx_t *c, uint32_t now_ms)
 static void sync_audio(render_ctx_t *c, bool want)
 {
     const bool wizard = c->mode == MODE_UI && c->ui.screen == UI_SCREEN_MICCAL;
-    want = (want && c->mode == MODE_EYES) || wizard || speech_busy();
+    if(wizard && music_trace_active())music_trace_enable(false);
+    want = (want && c->mode == MODE_EYES) || wizard || music_trace_active() || speech_busy();
     /* the wizard listens at a lower gain so claps do not clip; restart the mics when it changes */
     const int gain = wizard ? MICCAL_GAIN_DB : CONFIG_EYES_AUDIO_GAIN_DB;
     if (audio_running() && audio_gain_db() != gain) audio_stop();
@@ -453,6 +460,12 @@ static void run_ui_actions(render_ctx_t *c, uint32_t now_ms)
     ui_action_t a;
     while ((a = ui_take_action(&c->ui)) != UI_ACT_NONE) {
         switch (a) {
+        case UI_ACT_MUSIC_TRACE:
+            if(music_trace_enable(!music_trace_active())==ESP_OK) {
+                leave_ui(c,now_ms);
+            }
+            else ESP_LOGW(TAG,"music capture unavailable");
+            break;
         case UI_ACT_DANCE:
             leave_ui(c, now_ms);
             c->user_anim = ANIM_DANCE;
@@ -720,6 +733,8 @@ static void render_task(void *arg)
             acc_set_knocked_out(&c.acc, bo.knocked_out || c.sm.id == ANIM_KNOCKED_OUT, now_ms);
             acc_set_zz(&c.acc, bo.zz || c.sm.id == ANIM_SLEEPING, now_ms);
         }
+        music_trace_poll();
+        music_trace_context(c.mode==MODE_EYES && c.sm.id==ANIM_DANCE,c.mode==MODE_EYES && c.beh.state==BEH_LISTENING);
         sync_audio(&c, (c.sm.id == ANIM_DANCE && bo.override_anim < 0) || bo.want_mic);
         if (audio_running()) {
             anim_set_audio(&c.sm, &af);
@@ -728,9 +743,10 @@ static void render_task(void *arg)
         {
             pmic_battery_t pb;
             power_battery(&pb);
+            if(pb.present && !pb.vbus && music_trace_active())music_trace_enable(false);
             uint16_t fx, fy;
             persona_in_t pi = {
-                .in_ui = c.mode == MODE_UI,
+                .in_ui = c.mode == MODE_UI || music_trace_active(),
                 .power = state == POWER_ACTIVE ? 0 : state == POWER_DROWSY ? 1 : 2,
                 .beh = c.beh.state,
                 .anim = c.sm.id,
@@ -771,6 +787,7 @@ static void render_task(void *arg)
         if (af.active && af.last_beat_ms && (int32_t)(af.last_beat_ms - activity_ms) > 0) {
             activity_ms = af.last_beat_ms;      /* music playing counts as company */
         }
+        if(music_trace_active())activity_ms=now_ms;
         const power_state_t next = power_update(now_ms, activity_ms);
         if (c.mode == MODE_UI) {
             if (next != POWER_ACTIVE || now_ms - c.ui.last_input_ms >= UI_TIMEOUT_MS) {
@@ -835,8 +852,8 @@ static void render_task(void *arg)
         } else {
             anim_update(&c.sm, &c.eyes, now_ms);
             eyes_update(&c.eyes, now_ms, c.shapes);
-            if(c.sm.effect_serial!=c.effect_seen){c.effect_seen=c.sm.effect_serial;speech_effect(c.sm.effect,c.sm.effect_level);}
-            if(c.beh.crack_stage>c.painted_cracks && c.beh.crack_stage>=2)speech_effect(SFX_GLASS,.5f+.12f*c.beh.crack_stage);
+            if(c.sm.effect_serial!=c.effect_seen){c.effect_seen=c.sm.effect_serial;if(!music_trace_active())speech_effect(c.sm.effect,c.sm.effect_level);}
+            if(!music_trace_active() && c.beh.crack_stage>c.painted_cracks && c.beh.crack_stage>=2)speech_effect(SFX_GLASS,.5f+.12f*c.beh.crack_stage);
             const bool laser_changed=dance_background_update(&c.lasers,c.eyes.laser_mix,c.eyes.spot_mix,&c.sm.audio,now_ms,c.eyes.face_deg);
 
             /* Dirty rects: union of each eye's previous and current bounding box. */
@@ -912,10 +929,10 @@ static void render_task(void *arg)
                 }
                 usb_prev = b.vbus;
             }
-            char audio_s[256] = "";
+            char audio_s[288] = "";
             if (af.active) {
-                snprintf(audio_s, sizeof audio_s, " | audio rms %.0f kick %.2f ratio %.2f, beats %" PRIu32 " %d bpm conf %.2f, speech %d/%.2f, L %.0f R %.0f dir %+.2f clap %u lag %+.2f bal %.2f corr %.2f pk %d (loud %u pre %d%%)",
-                         af.raw_loud, af.kick, af.bass_ratio, af.beat_count, (int)af.bpm, af.tempo_conf, af.speech, af.speech_depth, af.rms_l, af.rms_r, af.dir, af.dir_n, af.dir_lag, af.dir_conf, af.dir_corr, af.dir_peak, af.dir_loud, af.dir_pre);
+                snprintf(audio_s, sizeof audio_s, " | audio cpu %u us rms %.0f kick %.2f ratio %.2f, beats %" PRIu32 " %d bpm conf %.2f, speech %d/%.2f, L %.0f R %.0f dir %+.2f clap %u lag %+.2f bal %.2f corr %.2f pk %d (loud %u pre %d%%)",
+                         (unsigned)af.cpu_us, af.raw_loud, af.kick, af.bass_ratio, af.beat_count, (int)af.bpm, af.tempo_conf, af.speech, af.speech_depth, af.rms_l, af.rms_r, af.dir, af.dir_n, af.dir_lag, af.dir_conf, af.dir_corr, af.dir_peak, af.dir_loud, af.dir_pre);
             }
             ESP_LOGI(TAG, "%s %s [%s, energy %.2f, valence %+.2f]: %" PRIu32 " fps | raster %" PRIu32 " us avg, %" PRIu32 " us max | push %" PRIu32 " us | %" PRIu32 " B/frame, %" PRIu32 " rect(s) | pace %s%s (%" PRIu32 " TE/s) | bri %d%% | batt %u mV %d%%%s%s%s | stack %u B free",
                      power_state_name(state), c.mode == MODE_UI ? ui_screen_name(c.ui.screen) : anim_name(c.sm.id),
@@ -947,6 +964,7 @@ void app_main(void)
              esp_get_idf_version(), (int)esp_reset_reason(), (int)esp_sleep_get_wakeup_cause());
 
     ESP_ERROR_CHECK(settings_init());
+    music_trace_init();
     audio_set_dir_cal(&g_settings.mic);
     ESP_ERROR_CHECK(speech_init());
     speech_set_register((voice_register_t)g_settings.voice_register);

@@ -50,3 +50,8 @@ Timings are host numbers; use them for ratios, not for absolute budgets.
 `creature_round.sh`: three short, level-matched Junior auditions alternating words and interjections: the chosen sample treatment, a higher voice with formants preserved, and a metallic variant. Requires FFmpeg with rubberband and Python stdlib in addition to the existing macOS tools. Writes 16 kHz mono WAVs and a timing/level manifest under `docs/voice/`; see [the round's listening guide and clip contract](../../docs/voice/CREATURE_ROUND1.md). Does not regenerate the firmware bank.
 
 `familiar_babble.sh`: babbles and reactions through the selected Familiar treatment. Produces three babble families with word references plus a reactions/purr audition, using Junior and the existing `robot` processor. See [Familiar babbles](../../docs/voice/FAMILIAR_BABBLES.md) for clip order, the sample-bank approach, and the purr-loop follow-up. No firmware edits.
+
+Music calibration: [local USB Music Lab](../music-lab/README.md). `music_report`
+exports its compact sessions to CSV and JSON. `trace_test` writes a firmware-format
+fixture for the browser codec test; `rush_test` checks short-loop event detection.
+`dance_organic_preview` renders the independent disco cameras and two rush flourishes.

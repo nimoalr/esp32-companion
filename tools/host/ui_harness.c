@@ -1,5 +1,6 @@
 /* Render every UI screen to PPM with synthetic sensor data. */
 #include <stdio.h>
+#include <assert.h>
 #include <string.h>
 #include <stdlib.h>
 #include "ui.h"
@@ -69,12 +70,13 @@ int main(void) {
     /* menu */
     ui_init(&u, &g_settings, false, t); ui_input(&u, UI_IN_DOWN, t); ui_input(&u, UI_IN_DOWN, t); render(&u); write_ppm("out/ui_menu.ppm");
     /* level: right edge lowered -> "up" tilts left -> sensor X (= screen right) reads -0.3 g */
-    ui_input(&u, UI_IN_DOWN, t); ui_input(&u, UI_IN_TAP, t);
+    while(u.menu_sel>1)ui_input(&u, UI_IN_DOWN, t); ui_input(&u, UI_IN_TAP, t);
+    assert(u.screen==UI_SCREEN_LEVEL);
     s.accel[0] = -1200; s.accel[1] = 600; s.accel[2] = 3900; step(&u, &t, &s, 30); render(&u); write_ppm("out/ui_level.ppm");
     printf("level text '%s' ball %d,%d\n", u.level_text, u.ball_x, u.ball_y);
     /* menu items are reached from a fresh menu: UP moves the highlight down the list */
     #define IN(k) do { ui_input(&u, k, t); step(&u, &t, &s, 8); } while (0)
-    #define OPEN_ITEM(idx) do { ui_init(&u, &g_settings, false, t); step(&u, &t, &s, 8); for (int i_ = 0; i_ < 6 - (idx); i_++) IN(UI_IN_DOWN); IN(UI_IN_TAP); } while (0)
+    #define OPEN_ITEM(idx) do { ui_init(&u, &g_settings, false, t); step(&u, &t, &s, 8); while(u.menu_sel>(idx)) IN(UI_IN_DOWN); IN(UI_IN_TAP); } while (0)
     /* brightness: item 2, three taps -> 75 % */
     OPEN_ITEM(2); IN(UI_IN_TAP); IN(UI_IN_TAP); IN(UI_IN_TAP);
     render(&u); write_ppm("out/ui_brightness.ppm"); printf("brightness now %u\n", g_settings.brightness_active);
@@ -90,5 +92,10 @@ int main(void) {
     s.accel[0] = 0; s.accel[1] = 0; s.accel[2] = 4096;
     for (int p = 0; p < 3; p++) { ui_input(&u, UI_IN_TAP, t); step(&u, &t, &s, 45); }
     render(&u); write_ppm("out/ui_cal_fail.ppm"); printf("fail msg '%s'\n", u.cal_msg);
+    ui_init(&u,&g_settings,false,t);while(u.menu_sel>7)IN(UI_IN_DOWN);
+    render(&u);write_ppm("out/ui_music_capture.ppm");
+    IN(UI_IN_TAP);assert(ui_take_action(&u)==UI_ACT_MUSIC_TRACE);
+    u.music_recording=true;IN(UI_IN_TAP);assert(ui_take_action(&u)==UI_ACT_MUSIC_TRACE);
+    puts("PASS: music capture start/stop action reachable in scrolling setup menu");
     return 0;
 }

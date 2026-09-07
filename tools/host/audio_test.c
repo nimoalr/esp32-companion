@@ -41,7 +41,8 @@ static void trial(const char *name,float bpm,int mode,bool muted)
   if(s_feat.beat_count>=8&&s_feat.bpm>=85&&s_feat.bpm<=185&&s_feat.tempo_conf>=.75&&s_feat.bass_ratio>=.08){eligible++;run++;if(run>longest)longest=run;}else run=0;
  }
  printf("%s: beats=%u BPM=%.1f confidence=%.2f music frames=%u/%u CPU=%.2f us/frame\n",name,s_feat.beat_count,s_feat.bpm,s_feat.tempo_conf,eligible,steps,(double)cpu*1e6/CLOCKS_PER_SEC/steps);
- printf("longest candidate %u ms, danced %u, listened %u\n",longest*16,danced,listened);
+ printf("longest candidate %u ms, danced %u, listened %u, rush events %u\n",longest*16,danced,listened,s_feat.rush_count);
+ assert(s_feat.rush_count==0);
  if(muted){assert(s_feat.beat_count==0&&eligible==0);}
  else if(mode==0){assert(eligible>steps/2);assert(danced>steps/2);assert(fabsf(s_feat.bpm-bpm)<bpm*.08f);assert(s_feat.beat_count>40*bpm/60-8);}
  else assert(danced==0);

@@ -578,6 +578,8 @@ static void anim_enter(anim_sm_t *sm, eyes_t *eyes, anim_id_t id, uint32_t now_m
     sm->dance_beat_ms = 0;
     eyes->laser_mix = eyes->spot_mix=0.f;
     sm->dance_move=0;sm->dance_move_block=0;
+    sm->disco_seed=sm->rng^0xD15C0123u;sm->disco_spin=0;
+    sm->rush_seen=sm->audio.rush_count;sm->rush_ms=0;sm->rush_kind=0;
     sm->dance_spots_on=false;sm->dance_spot_ms=now_ms;sm->dance_spot_rng=sm->rng^0x53504F54;
     sm->dance_spot_len=6000+sm->dance_spot_rng%5000;sm->dance_spot_mix=0;
     sm->dance_beats_seen = sm->audio.beat_count;
@@ -824,7 +826,7 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
     /* The mirror ball turns smoothly under a fixed light; loudness quickens its spin. */
     sm->disco_spin += (0.000054f + 0.00024f * loud) * dt;
     if (sm->disco_spin > 1000.f) sm->disco_spin -= 1000.f;
-    eyes_set_disco(eyes, sm->disco_spin, (uint32_t)(now_ms / 120) + (beat_now ? 7u : 0u));
+    eyes_set_disco(eyes, sm->disco_spin, sm->disco_seed);
     /* Legacy eye-fill preview; live spotlights use the independent background. */
     if(fx_shown==3) {
         const float t = (float)now_ms * 0.001f;
@@ -872,6 +874,34 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
     /* the colour flashes a little brighter on the hit and shimmers with the bass */
     eyes->tint_mod_lum = (int32_t)((0.22f * kick) * 65536.f);
     eyes->tint_mod_hue = (int32_t)((8.f * bass * side) * 65536.f);
+    /* A confirmed short loop gets one bounded visual burst, not fake beat events.
+     * Events from before entering dance or after a stalled capture are ignored. */
+    if(a->rush_count!=sm->rush_seen) {
+        sm->rush_seen=a->rush_count;
+        if(a->active && a->rush_ms && now_ms-a->rush_ms<250 && a->raw_loud>45) {
+            sm->rush_ms=now_ms;sm->rush_kind=1+(rng_next(sm)%2);
+        }
+    }
+    if(sm->rush_ms) {
+        float t=(now_ms-sm->rush_ms)*.001f;
+        if(t>=2.f || a->raw_loud<45)sm->rush_ms=0;
+        else {
+            float fade=fminf(1.f,t*8.f)*fminf(1.f,(2.f-t)*3.f);
+            float pulse=fabsf(sinf(t*13.f));
+            for(int i=0;i<2;i++) {
+                eye_pose_t *m=&eyes->mod[i];float side=i?1.f:-1.f;
+                if(sm->rush_kind==1) { /* burst outward, elastic recoil */
+                    m->dx+=(int32_t)(side*20.f*pulse*fade*Q16_ONE);
+                    m->sx+=(int32_t)(.18f*pulse*fade*Q16_ONE);
+                    m->sy-=(int32_t)(.18f*pulse*fade*Q16_ONE);
+                } else { /* bounded pinball hops: retain readable eye silhouettes */
+                    m->dx+=(int32_t)(side*22.f*sinf(t*11.f)*fade*Q16_ONE);
+                    m->dy-=(int32_t)(34.f*fabsf(sinf(t*13.f+i*.9f))*fade*Q16_ONE);
+                    m->angle+=(int32_t)(side*16.f*sinf(t*10.f)*fade*Q16_ONE);
+                }
+            }
+        }
+    }
     /* blink a little more in a lively room */
     eyes_set_idle_rates(eyes, (int32_t)((1.0f - 0.4f * loud) * 65536.f), Q16_ONE, Q16(0.5));
 }

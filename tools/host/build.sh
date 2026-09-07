@@ -7,16 +7,17 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 R="$HERE/../../main"
 name=$1
 shift || { echo "usage: build.sh <harness> [cflags]"; exit 1; }
-SRCS="$R/raster.c $R/eyes.c $R/eye_symbols.c $R/dance_fill.c $R/dance_lasers.c $R/anim.c $R/play.c $R/sfx.c $R/gfx.c $R/font_spleen_8x16.c $R/font_spleen_12x24.c $R/font_spleen_16x32.c $R/accessories.c $R/behavior.c $R/imu_cal.c"
+SRCS="$R/raster.c $R/eyes.c $R/eye_symbols.c $R/dance_fill.c $R/dance_lasers.c $R/anim.c $R/play.c $R/sfx.c $R/gfx.c $R/font_spleen_8x16.c $R/font_spleen_12x24.c $R/font_spleen_16x32.c $R/accessories.c $R/behavior.c $R/imu_cal.c $R/rhythm_rush.c"
 case "$name" in
     interaction_test) SRCS="$SRCS $R/persona.c" ;;
     ui_harness) SRCS="$SRCS $R/ui.c" ;;
     imu_cal_test) SRCS="$R/imu_cal.c" ;;
     micdir_test) SRCS="$R/micdir.c" ;;
     voice_render) SRCS="$R/voice.c" ;;
-    audio_test) SRCS="$R/micdir.c $R/behavior.c $R/imu_cal.c" ;;
-    audio_replay) SRCS="$R/micdir.c $R/behavior.c $R/imu_cal.c" ;;
-    robot) SRCS="" ;;
+    audio_test|rush_test) SRCS="$R/micdir.c $R/behavior.c $R/imu_cal.c $R/rhythm_rush.c" ;;
+    audio_replay) SRCS="$R/micdir.c $R/behavior.c $R/imu_cal.c $R/rhythm_rush.c" ;;
+    trace_test) SRCS="$R/music_trace.c" ;;
+    robot|music_report) SRCS="" ;;
 esac
 src="$HERE/$name.c"
 [ -f "$src" ] || src="$HERE/drafts/$name.c"

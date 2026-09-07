@@ -58,7 +58,7 @@ on the current movement.
 
 ## Cost and validation
 
-The combined lighting snapshot is **14,864 bytes on the host**, including six
+The combined lighting snapshot is **14,912 bytes on the host**, including six
 spotlight shapes, palettes and 24 compact laser rays. Spotlights reuse the
 existing polygon/circle rasteriser; rays use sparse integer line painting.
 No new task, frame-time allocation or audio analysis pass is added.

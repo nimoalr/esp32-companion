@@ -24,6 +24,8 @@ idf_component_register(
         "imu_cal.c"
         "ui.c"
         "audio.c"
+        "rhythm_rush.c"
+        "music_trace.c"
         "micdir.c"
         "voice.c"
         "speech.c"
@@ -34,6 +36,9 @@ idf_component_register(
         "behavior.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES
+        vfs
+        esp_driver_usb_serial_jtag
+        esp_app_format
         esp_lcd
         esp_driver_spi
         esp_driver_gpio

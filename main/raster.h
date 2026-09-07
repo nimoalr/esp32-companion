@@ -75,6 +75,7 @@ typedef struct {
      */
     int fx;                     /* RASTER_FX_NONE / BARS / DISCO / SPOTS */
     const uint8_t *fx_tex;      /* cached 64 x 64 procedural lightness */
+    int32_t fx_dx, fx_dy;       /* Q16 camera offset from texture centre */
     int32_t fx_sx, fx_sy;       /* Q16 texture coordinates per local pixel */
     int fx_mix;                 /* 0..256: how much of the effect shows against the plain fill */
     int32_t bar_top[8];         /* BARS: Q16 local y of each bar's top (local y grows downward; the bottom is +hh) */

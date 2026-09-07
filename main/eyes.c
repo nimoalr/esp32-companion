@@ -760,9 +760,15 @@ static void params_to_shape(eyes_t *e, int which, const EyeParams *p, raster_sha
     s->hot = e->hot && !e->fx;
     s->fx = e->fx;
     if (e->fx) {
-        s->fx_tex=e->dance_fill.tex;
+        s->fx_tex=e->dance_fill[e->fx==RASTER_FX_DISCO?which:0].tex;
+        s->fx_dx=s->fx_dy=0;
         s->fx_sx=(int32_t)((32LL<<32)/(s->hw>0?s->hw:1));
         s->fx_sy=e->fx==RASTER_FX_DISCO?s->fx_sx:(int32_t)((32LL<<32)/(s->hh>0?s->hh:1));
+        if(e->fx==RASTER_FX_DISCO) {
+            s->fx_sx=(int32_t)(s->fx_sx/fmaxf(1.f,e->disco_zoom[which]));s->fx_sy=s->fx_sx;
+            s->fx_dx=(int32_t)(e->disco_x[which]*Q16_ONE);
+            s->fx_dy=(int32_t)(e->disco_y[which]*Q16_ONE);
+        }
         s->fx_mix = (int)(e->fx_mix * 256.f);
         s->bar_lit = 31;
         s->bar_dim = DANCE_FILL_DIM;
@@ -831,8 +837,18 @@ void eyes_update(eyes_t *e, uint32_t now_ms, raster_shape_t out[2])
         }
     }
     update_color(e, now_ms);
-    if(e->fx==RASTER_FX_DISCO) dance_fill_disco(&e->dance_fill,e->disco_spin);
-    else if(e->fx==RASTER_FX_SPOTS) dance_fill_spots(&e->dance_fill,e->spots_n,e->spot_x,e->spot_y,e->spot_r);
+    if(e->fx==RASTER_FX_DISCO) for(int i=0;i<2;i++) {
+        /* Stable per-show differences; slow camera motion, never frame-random jitter.
+         * Projection and shading still happen only in two 64x64 caches. */
+        uint32_t h=(e->disco_seed^(i?0x9e3779b9u:0x85ebca6bu))*1664525u+1013904223u;
+        float phase=(h&255)*(.02454369f), t=e->disco_spin;
+        float speed=.85f+((h>>8)&255)*(.3f/255.f);
+        e->disco_zoom[i]=1.12f+((h>>16)&255)*(.17f/255.f)+.12f*sinf(t*.71f+phase);
+        e->disco_x[i]=3.f*sinf(t*.53f+phase);
+        e->disco_y[i]=3.5f*cosf(t*.67f+phase);
+        dance_fill_disco(&e->dance_fill[i],t*speed+phase*.15915494f);
+    }
+    else if(e->fx==RASTER_FX_SPOTS) dance_fill_spots(&e->dance_fill[0],e->spots_n,e->spot_x,e->spot_y,e->spot_r);
     for (int i = 0; i < 2; i++) {
         params_to_shape(e, i, &p[i], &out[i]);
     }
