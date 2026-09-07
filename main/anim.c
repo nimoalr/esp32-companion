@@ -448,6 +448,17 @@ static const anim_kf_t kf_jackpot_escape[] = {
 #define DEF(nm, arr, loop, bi, bs, ds, tint, ...) \
     { nm, arr, (int)(sizeof(arr) / sizeof(arr[0])), loop, Q16(bi), Q16(bs), Q16(ds), tint, { __VA_ARGS__ } }
 
+/* Shaking games and the escalating forward slam. Pucks remain small circles. */
+static const anim_kf_t kf_pucks[]={{0,220,PX(.46,.36,0,0,0,0,0,0,0,0,4,4,4,4),PX(.46,.36,0,0,0,0,0,0,0,0,4,4,4,4),0}};
+static const anim_kf_t kf_sick[]={{0,350,P(1,.72,.14,.08,0,0,0,7),P(1,.68,.16,.08,0,0,0,8),0}};
+static const anim_kf_t kf_cross[]={{0,350,P(.7,1.05,0,0,0,0,40,0),P(.7,1.05,0,0,0,0,-40,0),0}};
+static const anim_kf_t kf_headbutt[]={
+    {0,180,P(.92,.8,.22,0,0,0,0,4),P(.92,.8,.22,0,0,0,0,4),0},
+    {230,160,P(.75,.75,.28,0,-.2,0,8,6),P(.75,.75,.28,0,.2,0,-8,6),0},
+    {440,90,P(1.5,1.65,.14,0,-.18,0,-12,0),P(1.5,1.65,.14,0,.18,0,12,0),SNAP},
+    {580,130,P(1.4,.72,.3,0,-.2,0,10,16),P(1.4,.72,.3,0,.2,0,-10,16),0},
+    {900,500,P(1,1,.24,0,-.2,0,0,0),P(1,1,.24,0,.2,0,0,0),0},
+};
 static const anim_def_t k_anims[ANIM_COUNT] = {
     [ANIM_NEUTRAL]     = DEF("NEUTRAL",     kf_neutral,     0,    1.0, 1.0, 1.0, TNONE, NOMOD),
     [ANIM_HAPPY]       = DEF("HAPPY",       kf_happy,       0,    1.0, 1.0, 0.9, T(4, 0, 0, 1.05, 1.08), NOMOD),
@@ -514,6 +525,12 @@ static const anim_def_t k_anims[ANIM_COUNT] = {
     [ANIM_WRONG_ENTRANCE] = DEF("WRONG_ENTRANCE", kf_wrong_entrance, 8000, 0.0, 1.0, 0.0, TNONE, NOMOD),
     [ANIM_JACKPOT_ESCAPE] = DEF("JACKPOT_ESCAPE", kf_jackpot_escape, 8000, 0.0, 1.0, 0.0, TNONE, NOMOD),
 
+    [ANIM_PUCKS] = DEF("PUCKS", kf_pucks, 0, 0,1,0,TNONE,NOMOD),
+    [ANIM_SEASICK] = DEF("SEASICK", kf_sick, 0, 1.4,1.2,0,T(0,0x7EBE53,.38,1,.95),NOMOD),
+    [ANIM_CROSS_EYED] = DEF("CROSS_EYED", kf_cross, 0, 1.5,1,0,TNONE,NOMOD),
+    [ANIM_JELLY] = DEF("JELLY", kf_sick, 0, 0,1,0,TNONE,NOMOD),
+    [ANIM_HEADBUTT] = DEF("HEADBUTT", kf_headbutt, 0, 0,1,0,T(0,0xFF3010,.65,1,1),NOMOD),
+
 };
 
 uint32_t anim_action_ms(anim_id_t id)
@@ -539,9 +556,12 @@ static void anim_enter(anim_sm_t *sm, eyes_t *eyes, anim_id_t id, uint32_t now_m
 {
     const anim_def_t *d = &k_anims[id];
     sm->id = id;
+    eyes->rigid=id==ANIM_PUCKS;
     sm->t_enter_ms = now_ms;
     sm->t_change_ms = now_ms;
     sm->rim_retreat_ms = 0;
+    sm->effect_ms = now_ms;sm->play_events=0;
+    if(id==ANIM_PUCKS)pucks_init(&sm->pucks,now_ms,rng_next(sm));
     for (int e = 0; e < 2; e++) sm->previous_symbol[e] = eyes->symbol[e];
     sm->previous_split = eyes->symbol_split;
     for (int e = 0; e < 2; e++) sm->previous_reel[e] = eyes->reel_pos[e];
@@ -556,7 +576,10 @@ static void anim_enter(anim_sm_t *sm, eyes_t *eyes, anim_id_t id, uint32_t now_m
     sm->dance_frame_ms = now_ms;
     sm->dance_hit_level = 0.f;
     sm->dance_beat_ms = 0;
-    eyes->laser_mix = 0.f;
+    eyes->laser_mix = eyes->spot_mix=0.f;
+    sm->dance_move=0;sm->dance_move_block=0;
+    sm->dance_spots_on=false;sm->dance_spot_ms=now_ms;sm->dance_spot_rng=sm->rng^0x53504F54;
+    sm->dance_spot_len=6000+sm->dance_spot_rng%5000;sm->dance_spot_mix=0;
     sm->dance_beats_seen = sm->audio.beat_count;
     sm->dance_bass = sm->dance_loud = sm->dance_bal = 0.f;
     sm->dance_side = 1;
@@ -693,6 +716,7 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
         sm->dance_beat_ms = a->last_beat_ms && (int32_t)(now_ms-a->last_beat_ms)>=0 ? a->last_beat_ms : now_ms;
         sm->dance_hit_level = a->kick;
         sm->dance_side = -sm->dance_side;
+        if(a->beat_count/16!=sm->dance_move_block){sm->dance_move_block=a->beat_count/16;sm->dance_move=(sm->dance_move+1+(int)(rng_next(sm)%5))%6;}
     }
     if (a->loud > 0.08f) sm->dance_last_sound_ms = now_ms;
     const uint32_t quiet_ms = now_ms - sm->dance_last_sound_ms;
@@ -741,6 +765,14 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
         m->dx = (int32_t)((7.f * kick * side + 9.f * sm->dance_bal * music + 12.f * fl_shimmy) * 65536.f);
         m->slant = (int32_t)((0.22f * kick * side + 0.18f * fl_shimmy) * 65536.f);
         m->angle = (int32_t)((9.f * kick * side + 8.f * fl_shimmy) * 65536.f);
+        switch(sm->dance_move) {
+        case 1: m->dx+=(int32_t)(15*side*kick*Q16_ONE);m->dy/=2;break; /* shuffle */
+        case 2: m->dy=(int32_t)((e==(sm->dance_side>0)?-22:-5)*kick*Q16_ONE);break; /* alternating hop */
+        case 3: m->dx=(int32_t)((((a->beat_count/2)&1)?-14:14)*kick*Q16_ONE);m->angle/=2;break; /* two step */
+        case 4: m->angle+=(int32_t)((e?-1:1)*12*kick*Q16_ONE);break; /* twist */
+        case 5: m->sy-=(int32_t)(.28f*kick*Q16_ONE);m->sx+=(int32_t)(.15f*kick*Q16_ONE);m->dy=-m->dy/2;break; /* stomp */
+        default: break;
+        }
         m->curve = (int32_t)((0.55f * loud) * 65536.f);
         m->lid_bottom = (int32_t)((0.05f * loud) * 65536.f);
         /* quiet for a long time: lids sag */
@@ -765,8 +797,8 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
             sm->dance_visual_len = 15000 + rng_next(sm) % 20000;
         } else {
             /* one of the show pieces, never the one that just went */
-            int pick = 1 + (int)(rng_next(sm) % 3u);
-            if (pick == sm->dance_visual_last) pick = 1 + pick % 3;
+            int pick = 1 + (int)(rng_next(sm) % 2u);
+            if (pick == sm->dance_visual_last) pick = 1 + pick % 2;
             sm->dance_visual = pick;
             sm->dance_visual_len = 10000 + rng_next(sm) % 10000;
         }
@@ -793,8 +825,8 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
     sm->disco_spin += (0.000054f + 0.00024f * loud) * dt;
     if (sm->disco_spin > 1000.f) sm->disco_spin -= 1000.f;
     eyes_set_disco(eyes, sm->disco_spin, (uint32_t)(now_ms / 120) + (beat_now ? 7u : 0u));
-    /* Two fixtures sweep their cones across the floor; a kick widens the beams. */
-    {
+    /* Legacy eye-fill preview; live spotlights use the independent background. */
+    if(fx_shown==3) {
         const float t = (float)now_ms * 0.001f;
         float sx[2], sy[2];
         const float kickf = kick;
@@ -820,6 +852,15 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
     sm->dance_laser_mix += (laser_want - sm->dance_laser_mix) * dt / (400.f + dt);
     if (sm->dance_laser_mix < .01f) sm->dance_laser_mix = 0.f;
     eyes->laser_mix = sm->dance_laser_mix * music;
+    uint32_t spot_for=now_ms-sm->dance_spot_ms;
+    if(spot_for>=sm->dance_spot_len && (beat_now||spot_for>=sm->dance_spot_len+1500)) {
+        sm->dance_spots_on=!sm->dance_spots_on;sm->dance_spot_ms=now_ms;
+        sm->dance_spot_rng=sm->dance_spot_rng*1664525u+1013904223u;
+        sm->dance_spot_len=sm->dance_spots_on?18000+sm->dance_spot_rng%18000:6000+sm->dance_spot_rng%9000;
+    }
+    sm->dance_spot_mix+=((sm->dance_spots_on?1.f:0.f)-sm->dance_spot_mix)*dt/(600+dt);
+    if(sm->dance_spot_mix<.01f)sm->dance_spot_mix=0;
+    eyes->spot_mix=sm->dance_spot_mix*music;
     /* Let the whole ball and the beams read through the resting dance face. */
     if(fx_shown==2 || fx_shown==3) for(int e=0;e<2;e++) {
         eyes->mod[e].curve=(int32_t)(eyes->mod[e].curve*(1.f-visual));
@@ -868,7 +909,7 @@ static void apply_rim_motion(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms, uint3
         eyes_set_target(eyes,0,&left,180,now_ms);
         eyes_set_target(eyes,1,&right,180,now_ms);
     }
-    if (sm->id >= ANIM_CAUTIOUS_PEEK && el >= 7300)
+    if (sm->id >= ANIM_CAUTIOUS_PEEK && sm->id <= ANIM_JACKPOT_ESCAPE && el >= 7300)
         eyes_set_idle_rates(eyes,Q16_ONE,Q16_ONE,Q16(0.2));
 }
 
@@ -924,7 +965,7 @@ static void apply_performance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
         const uint32_t end = sm->id == ANIM_PEEKABOO ? 3700 : sm->id == ANIM_LOADING ? 4500 : 2800;
         eyes_set_idle_rates(eyes, el < end ? 0 : Q16_ONE, Q16_ONE, el < end ? 0 : Q16(0.2));
     }
-    if (sm->id >= ANIM_CAUTIOUS_PEEK) apply_rim_motion(sm,eyes,now_ms,el);
+    if (sm->id >= ANIM_CAUTIOUS_PEEK && sm->id <= ANIM_JACKPOT_ESCAPE) apply_rim_motion(sm,eyes,now_ms,el);
 
     /* Cross an actual selection change by closing the old silhouette, swapping
      * only while thin, then reopening the new one. Ordinary poses still morph. */
@@ -945,6 +986,38 @@ static void apply_performance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
     }
 }
 
+static void effect(anim_sm_t *sm,sfx_id_t id,float level,uint32_t now)
+{
+    sm->effect=id;sm->effect_level=level;sm->effect_serial++;sm->effect_ms=now;
+}
+static void apply_play(anim_sm_t *sm,eyes_t *eyes,uint32_t now)
+{
+    uint32_t t=now-sm->t_change_ms;
+    if(sm->id==ANIM_PUCKS) {
+        float hit=0;
+        if(t<240)sm->pucks.ms=now;else hit=pucks_update(&sm->pucks,now,sm->motion_x,sm->motion_y);
+        if(hit>0)effect(sm,SFX_PUCK,.35f+.65f*hit,now);
+        for(int e=0;e<2;e++) {
+            eyes->mod[e].dx=(int32_t)((sm->pucks.x[e]-(e?328:138))*Q16_ONE);
+            eyes->mod[e].dy=(int32_t)((sm->pucks.y[e]-233)*Q16_ONE);
+        }
+    } else if(sm->id==ANIM_SEASICK || sm->id==ANIM_CROSS_EYED || sm->id==ANIM_JELLY) {
+        float wave=sinf(t*.005f), flutter=sinf(t*.017f);
+        for(int e=0;e<2;e++) {
+            eyes->mod[e].dy=(int32_t)(wave*7*Q16_ONE);
+            eyes->mod[e].angle=(int32_t)(wave*(e?-5:5)*Q16_ONE);
+            if(sm->id==ANIM_SEASICK)eyes->mod[e].lid_top=(int32_t)((.10f+.08f*wave)*Q16_ONE);
+            if(sm->id==ANIM_CROSS_EYED)eyes->mod[e].dy+=(int32_t)((e?-1:1)*flutter*7*Q16_ONE);
+            if(sm->id==ANIM_JELLY){eyes->mod[e].sx=(int32_t)(flutter*.22f*Q16_ONE);eyes->mod[e].sy=-eyes->mod[e].sx;}
+        }
+    } else if(sm->id==ANIM_HEADBUTT && t>=500 && sm->effect_ms==sm->t_change_ms) effect(sm,SFX_IMPACT,1,now);
+    if(sm->id==ANIM_HIGH_ROLLER && t<3400) {
+        uint32_t gap=t<1800?65:65+(t-1800)/6;
+        if(t>=2400 && !(sm->play_events&1)){effect(sm,SFX_STOP,.45f,now);sm->play_events|=1;}
+        else if(now-sm->effect_ms>=gap)effect(sm,SFX_REEL,.5f,now);
+    } else if(sm->id==ANIM_HIGH_ROLLER && t>=3400 && !(sm->play_events&2)){effect(sm,SFX_STOP,.75f,now);sm->play_events|=2;}
+}
+
 void anim_update(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
 {
     const anim_def_t *d = &k_anims[sm->id];
@@ -954,7 +1027,7 @@ void anim_update(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
         sm->t_enter_ms += d->loop_ms;
         sm->next_kf = 0;
         sm->rim_retreat_ms = 0;
-        if (sm->id >= ANIM_CAUTIOUS_PEEK) eyes_set_idle_rates(eyes,0,Q16_ONE,0);
+        if (sm->id >= ANIM_CAUTIOUS_PEEK && sm->id <= ANIM_JACKPOT_ESCAPE) eyes_set_idle_rates(eyes,0,Q16_ONE,0);
         el -= d->loop_ms;
     }
     while (sm->next_kf < d->nkf && d->kf[sm->next_kf].t_ms <= el) {
@@ -979,4 +1052,5 @@ void anim_update(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
         apply_modulators(sm, eyes, d, now_ms);
     }
     apply_performance(sm, eyes, now_ms);
+    apply_play(sm, eyes, now_ms);
 }

@@ -16,14 +16,16 @@ static const char *TAG = "speech";
 #define PA_LEAD_MS 8            /* silence before the sound with the amplifier already on */
 #define PA_TAIL_MS 120          /* silence after, then the amplifier goes off */
 
-typedef enum { REQ_GESTURE, REQ_BABBLE, REQ_WORD } req_kind_t;
+typedef enum { REQ_GESTURE, REQ_BABBLE, REQ_WORD, REQ_EFFECT } req_kind_t;
 typedef struct {
     req_kind_t kind;
     int id;
     float level, energy;
 } req_t;
 
-static QueueHandle_t s_q;
+static QueueHandle_t s_q, s_effect_q;
+static sfx_t s_effects;
+typedef struct {sfx_id_t id;float level;} effect_req_t;
 static volatile bool s_busy;
 static atomic_bool s_purring;
 static voice_t s_voice;
@@ -38,6 +40,19 @@ static bool wait_audio(void)
         vTaskDelay(pdMS_TO_TICKS(10));
     }
     return false;
+}
+
+static void mix_effects(int16_t *pcm,int n)
+{
+    effect_req_t e;
+    while(xQueueReceive(s_effect_q,&e,0)==pdTRUE)sfx_start(&s_effects,e.id,e.level);
+    if(sfx_active(&s_effects))sfx_mix(&s_effects,pcm,n);
+}
+void speech_effect(sfx_id_t id,float level)
+{
+    if(!s_effect_q || !s_q)return;
+    effect_req_t e={id,level};xQueueOverwrite(s_effect_q,&e);
+    const req_t wake={.kind=REQ_EFFECT};xQueueSend(s_q,&wake,0);
 }
 
 static void play_silence(int ms)
@@ -67,8 +82,15 @@ static void say(const req_t *r)
             if (n & 1) s_block[n - 1] = 0;
             if (gain < 1.f) for (int i = 0; i < n; i++) s_block[i] = (int16_t)(s_block[i] * gain);
             if (n < BLOCK) memset(s_block + n, 0, sizeof(int16_t) * (size_t)(BLOCK - n));
+            mix_effects(s_block,BLOCK);
             if (audio_write(s_block, BLOCK) != ESP_OK) break;
         }
+    } else if(r->kind==REQ_EFFECT) {
+        int guard=100; /* at most one second before checking pending voice requests */
+        do {
+            memset(s_block,0,sizeof s_block);mix_effects(s_block,BLOCK);
+            if(audio_write(s_block,BLOCK)!=ESP_OK)break;
+        } while(guard-- && (sfx_active(&s_effects)||uxQueueMessagesWaiting(s_effect_q)));
     } else {
         voice_set_register(&s_voice, s_reg);
         if (r->kind == REQ_GESTURE) voice_start(&s_voice, (voice_id_t)r->id, r->level);
@@ -76,15 +98,16 @@ static void say(const req_t *r)
         int guard = 500;    /* 5 s: a looping gesture (purr) needs voice_stop; here it is cut */
         while (voice_active(&s_voice) && guard--) {
             voice_render(&s_voice, s_block, BLOCK);
+            mix_effects(s_block,BLOCK);
             if (audio_write(s_block, BLOCK) != ESP_OK) break;
             if (guard == 30) voice_stop(&s_voice);
         }
     }
     atomic_store_explicit(&s_purring, false, memory_order_relaxed);
-    play_silence(PA_TAIL_MS);
+    play_silence(r->kind==REQ_EFFECT?10:PA_TAIL_MS);
     audio_pa(false);
     audio_set_muted(false);
-    ESP_LOGI(TAG, "said %s (%lld ms)", r->kind == REQ_WORD ? k_clips[r->id].name : r->kind == REQ_GESTURE ? k_voice_gestures[r->id].name : "babble",
+    ESP_LOGI(TAG, "said %s (%lld ms)", r->kind == REQ_WORD ? k_clips[r->id].name : r->kind == REQ_GESTURE ? k_voice_gestures[r->id].name : r->kind==REQ_EFFECT?"effect":"babble",
              (esp_timer_get_time() - t0) / 1000);
 }
 
@@ -93,6 +116,7 @@ static void speech_task(void *arg)
     req_t r;
     for (;;) {
         if (xQueueReceive(s_q, &r, portMAX_DELAY) != pdTRUE) continue;
+        if(r.kind==REQ_EFFECT && !uxQueueMessagesWaiting(s_effect_q) && !sfx_active(&s_effects))continue;
         s_busy = true;
         say(&r);
         s_busy = false;
@@ -102,8 +126,9 @@ static void speech_task(void *arg)
 esp_err_t speech_init(void)
 {
     voice_init(&s_voice, (uint32_t)esp_timer_get_time());
+    s_effect_q=xQueueCreate(1,sizeof(effect_req_t));
     s_q = xQueueCreate(2, sizeof(req_t));
-    if (!s_q) return ESP_ERR_NO_MEM;
+    if (!s_q || !s_effect_q) return ESP_ERR_NO_MEM;
     if (xTaskCreatePinnedToCore(speech_task, "speech", 6144, NULL, 5, NULL, 0) != pdPASS) return ESP_ERR_NO_MEM;
     return ESP_OK;
 }
@@ -137,7 +162,7 @@ bool speech_word(int clip, float level, bool interrupt)
 
 bool speech_busy(void)
 {
-    return s_busy || (s_q && uxQueueMessagesWaiting(s_q) > 0);
+    return s_busy || (s_q && uxQueueMessagesWaiting(s_q) > 0) || (s_effect_q && uxQueueMessagesWaiting(s_effect_q));
 }
 
 bool speech_purring(void)

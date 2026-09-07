@@ -52,7 +52,7 @@ typedef struct {
     uint32_t last_say_ms;       /* any utterance */
     uint32_t next_idle_ms;      /* when the next spontaneous one may come */
     uint32_t finger_since_ms;
-    bool purred;
+    bool purred, pet_pending;
     uint32_t taps_ms[4];        /* recent tap times, for pokes */
     int taps_n;
     uint32_t dizzy_ms[4];       /* recent shakings, for the escalation */

@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include "esp_err.h"
 #include "voice.h"
+#include "sfx.h"
 #include "clips_gen.h"
 
 esp_err_t speech_init(void);
@@ -20,6 +21,7 @@ bool speech_babble(float level, float energy);
 /* a word clip */
 bool speech_word(int clip, float level, bool interrupt);
 bool speech_busy(void);
+void speech_effect(sfx_id_t id,float level);
 bool speech_purring(void);      /* currently rendering a purr; excludes queued/dropped requests */
 /* settings */
 void speech_set_register(voice_register_t reg);

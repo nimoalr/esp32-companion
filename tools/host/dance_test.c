@@ -28,11 +28,12 @@ static void compositor(int fx)
     unsigned changed_pixels=0;
     for(int f=0;f<90;f++) {
         music.beat_count=f/3;music.last_beat_ms=(f/3)*120+1000;
-        assert(dance_lasers_update(&lasers,1,&music,(uint32_t)f*40+1000,(float)f*4));
+        assert(dance_background_update(&lasers,1,1,&music,(uint32_t)f*40+1000,(float)f*4));
         for(int k=0;k<DANCE_LASER_MAX;k++)if(lasers.beam[k].light) {
             const dance_ray_t *ray=&lasers.beam[k];
-            assert(ray->origin_x==35+(k/3)*396/(DANCE_LASER_EMITTERS-1));
-            const int major=ray->steep?233:ray->origin_x,minor=ray->steep?ray->origin_x:233;
+            assert(hypotf(ray->origin_x-233,ray->origin_y-233)<=230);
+            if(!lasers.arrangement)assert(ray->origin_y==233);
+            const int major=ray->steep?ray->origin_y:ray->origin_x,minor=ray->steep?ray->origin_x:ray->origin_y;
             assert(ray->major0<=major && ray->major1>=major);
             assert(abs(ray->minor0+(major-ray->major0)*ray->step-minor*Q16_ONE)<512);
         }
@@ -93,6 +94,8 @@ static void independent_timer(void)
         anim_update(&a,&eyes,t);anim_update(&b,&other,t);
         assert(a.dance_lasers_on==b.dance_lasers_on && a.dance_laser_len==b.dance_laser_len);
         assert(fabsf(eyes.laser_mix-other.laser_mix)<.00001f);
+        assert(a.dance_spots_on==b.dance_spots_on && a.dance_spot_len==b.dance_spot_len);
+        assert(fabsf(eyes.spot_mix-other.spot_mix)<.00001f);
         if(a.dance_lasers_on) {
             assert(a.dance_laser_len>=30000&&a.dance_laser_len<60000);
             if(!seen){seen=true;started=t;}
@@ -108,7 +111,7 @@ static void reactivity_and_tiles(void)
     audio_features_t af={.loud=.1f,.bass=.1f,.kick=0,.beat_count=20,.last_beat_ms=1000};
     dance_lasers_update(&quiet,1,&af,1000,0);
     af.loud=af.bass=af.kick=1;
-    dance_lasers_update(&loud,1,&af,1000,0);
+    dance_background_update(&loud,1,1,&af,1000,0);
     unsigned q=0,l=0;
     for(int i=0;i<DANCE_LASER_MAX;i++){q+=quiet.beam[i].light;l+=loud.beam[i].light;}
     assert(l>q*2);
@@ -132,14 +135,37 @@ static void reactivity_and_tiles(void)
     }
     assert(changes>0); /* Individual rays extinguish while the show continues. */
 }
+static void lighting_variation(void)
+{
+    unsigned layouts=0,vertical=0;static dance_lasers_t l;
+    for(unsigned n=0;n<200;n++){
+        memset(&l,0,sizeof l);audio_features_t a={.loud=.8f,.bass=.6f,.kick=.7f,.beat_count=n*16};
+        dance_background_update(&l,1,1,&a,1000+n*1717,0);
+        layouts|=1u<<(l.arrangement*2+l.spot_arrangement);vertical+=l.style<5;
+    }
+    assert(layouts==15&&vertical>120);
+    memset(&l,0,sizeof l);music.beat_count=10;
+    dance_background_update(&l,0,1,&music,1000,0);assert(l.spots_on&&!l.laser_on);
+    for(int i=0;i<DANCE_LASER_MAX;i++)assert(!l.beam[i].light);
+    paint(before,&l);paint(plain,NULL);assert(memcmp(before,plain,sizeof before));
+    assert(dance_background_update(&l,0,0,&music,1001,0));paint(after,&l);assert(!memcmp(after,plain,sizeof plain));
+    eye_pose_t moves[6][2];
+    for(int move=0;move<6;move++){
+        anim_sm_t sm;eyes_init(&eyes,1000);anim_init(&sm,&eyes,1000);anim_set(&sm,&eyes,ANIM_DANCE,1000);
+        sm.dance_move=move;audio_features_t a={.active=true,.loud=.8,.bass=.6,.kick=1,.beat_count=1,.last_beat_ms=1016,.bpm=150};
+        anim_set_audio(&sm,&a);anim_update(&sm,&eyes,1016);memcpy(moves[move],eyes.mod,sizeof moves[move]);
+        for(int previous=0;previous<move;previous++)assert(memcmp(moves[move],moves[previous],sizeof moves[move]));
+    }
+    printf("PASS all four row/ring lighting combinations, %u/200 vertical looks, spotlight solo/exit, six distinct beat moves\n",vertical);
+}
 int main(void)
 {
     dance_fill_t a,b;dance_fill_disco(&a,0);dance_fill_disco(&b,1);assert(!memcmp(&a,&b,sizeof a));
     dance_fill_disco(&b,.13f);assert(memcmp(&a,&b,sizeof a));
     for(int i=0;i<4096;i++)assert(a.tex[i]<=31&&b.tex[i]<=31);
     for(int fx=0;fx<=3;fx++)compositor(fx);
-    independent_timer();reactivity_and_tiles();
+    independent_timer();reactivity_and_tiles();lighting_variation();
     float fast=timing(16),slow=timing(32);assert(fabsf(fast-slow)<.01f);
-    printf("PASS: all-fill laser occlusion, horizontal emitter row, rotated damage + switch-off, tiles, audio response, independent 30-60 s timer, 30 Hz cap, texture turn, coast timing (spin %.4f / %.4f)\n",fast,slow);
+    printf("PASS: all-fill laser occlusion, row/rim fixture layouts, rotated damage + switch-off, tiles, audio response, independent 30-60 s timer, 30 Hz cap, texture turn, coast timing (spin %.4f / %.4f)\n",fast,slow);
     printf("RAM: texture=%zu, laser snapshot=%zu, eye state=%zu bytes (host pointer sizes)\n",sizeof(dance_fill_t),sizeof(dance_lasers_t),sizeof(eyes_t));
 }

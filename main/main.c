@@ -8,6 +8,7 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -161,6 +162,9 @@ typedef struct {
     ui_t ui;
     behavior_t beh;
     persona_t persona;
+    petting_t pet;
+    unsigned effect_seen;
+    uint8_t painted_cracks;
     int poke_eye;
     uint32_t stroke_count;
     bool stroke_forehead;
@@ -216,6 +220,7 @@ static void paint_piece(uint16_t *band, int x0, int y, int w, int rows, const re
         ui_paint(&c->ui, &gb);
     } else {
         raster_split(band, x0, y, w, rows, c->shapes, &c->lasers);
+        if (c->beh.crack_stage>=2){const gfx_band_t glass={band,x0,y,w,rows};cracks_paint(&glass,c->beh.crack_stage);}
         if (acc_any(&c->acc)) {
             const gfx_band_t gb = { .dst = band, .x0 = x0, .y0 = y, .w = w, .rows = rows };
             acc_paint(&c->acc, &gb, now_ms);
@@ -641,8 +646,7 @@ static void render_task(void *arg)
                 case TOUCH_SWIPE_RIGHT:
                 case TOUCH_SWIPE_UP:
                 case TOUCH_SWIPE_DOWN:
-                    c.stroke_count++;      /* a stroke; across the forehead it is petting */
-                    c.stroke_forehead = ev.y < 150 && (ev.type == TOUCH_SWIPE_LEFT || ev.type == TOUCH_SWIPE_RIGHT);
+                    if(ev.y>=185){c.stroke_count++;c.stroke_forehead=false;}
                     break;
                 default: break;   /* a long press is attention (handled below), not a gesture */
                 }
@@ -678,6 +682,10 @@ static void render_task(void *arg)
                 bi.batt_pct = ub.percent;
                 bi.dancing = c.user_anim == ANIM_DANCE;
                 bi.poke_eye = c.poke_eye;
+                uint16_t px=0,py=0;bool down=touch_pressed(&px,&py);
+                const float angle=c.beh.face_angle*.0174532925f,cs=cosf(angle),sn=sinf(angle);
+                float tx=233+cs*(px-233)+sn*(py-233),ty=233-sn*(px-233)+cs*(py-233);
+                if(petting_update(&c.pet,down,tx,ty,now_ms)){c.stroke_count++;c.stroke_forehead=true;}
                 bi.stroke_count = c.stroke_count;
                 bi.stroke_forehead = c.stroke_forehead;
             }
@@ -701,7 +709,8 @@ static void render_task(void *arg)
             /* mood: a tired character is dimmer and paler, an energetic one glows */
             const float energy = behavior_energy(&c.beh);
             eyes_set_mood(&c.eyes, (int32_t)((0.85f + 0.15f * energy) * 65536.f), (int32_t)((0.90f + 0.10f * energy) * 65536.f));
-            eyes_set_face_angle(&c.eyes, bo.face_angle_deg);
+            c.sm.motion_x=c.beh.gx;c.sm.motion_y=c.beh.gy;
+            eyes_set_face_angle(&c.eyes, c.sm.id==ANIM_PUCKS?0:bo.face_angle_deg);
             acc_set_angle(&c.acc, bo.face_angle_deg);
             {
                 pmic_battery_t b;
@@ -728,7 +737,7 @@ static void render_task(void *arg)
                 .energy = behavior_energy(&c.beh),
                 .finger = c.mode == MODE_EYES && c.sm.id != ANIM_DANCE && touch_pressed(&fx, &fy)
                           && fx > 50 && fx < BOARD_LCD_H_RES-50 && fy > 35 && fy < 170,
-                .handling = c.beh.moving_since_ms != 0 || c.beh.shake >= .08f || c.beh.state == BEH_CARRIED,
+                .handling = (c.beh.moving_since_ms != 0 && c.beh.state != BEH_PETTED) || c.beh.shake >= .16f || c.beh.state == BEH_CARRIED,
                 .tap_count = c.tap_count,
                 .usb = pb.vbus,
                 .batt_pct = pb.present ? pb.percent : -1,
@@ -826,7 +835,9 @@ static void render_task(void *arg)
         } else {
             anim_update(&c.sm, &c.eyes, now_ms);
             eyes_update(&c.eyes, now_ms, c.shapes);
-            const bool laser_changed=dance_lasers_update(&c.lasers,c.eyes.laser_mix,&c.sm.audio,now_ms,c.eyes.face_deg);
+            if(c.sm.effect_serial!=c.effect_seen){c.effect_seen=c.sm.effect_serial;speech_effect(c.sm.effect,c.sm.effect_level);}
+            if(c.beh.crack_stage>c.painted_cracks && c.beh.crack_stage>=2)speech_effect(SFX_GLASS,.5f+.12f*c.beh.crack_stage);
+            const bool laser_changed=dance_background_update(&c.lasers,c.eyes.laser_mix,c.eyes.spot_mix,&c.sm.audio,now_ms,c.eyes.face_deg);
 
             /* Dirty rects: union of each eye's previous and current bounding box. */
             for (int i = 0; i < 2; i++) {
@@ -849,6 +860,9 @@ static void render_task(void *arg)
             }
             /* Background changes are capped at 30 Hz; intervening eye frames
              * repaint their own rectangles over the unchanged laser snapshot. */
+            if(c.painted_cracks!=c.beh.crack_stage){
+                c.painted_cracks=c.beh.crack_stage;dirty[0]=(rect_t){0,0,466,466};ndirty=1;
+            }
             if(laser_changed){
                 rect_t r=rect_align((rect_t){c.lasers.damage[0],c.lasers.damage[1],c.lasers.damage[2],c.lasers.damage[3]});
                 for(int i=0;i<ndirty;i++)r=rect_union(&r,&dirty[i]);

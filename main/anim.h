@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include "eyes.h"
 #include "audio_features.h"
+#include "play.h"
+#include "sfx.h"
 
 typedef enum {
     ANIM_NEUTRAL = 0,
@@ -57,6 +59,11 @@ typedef enum {
     ANIM_SECRET_OBSERVER,
     ANIM_WRONG_ENTRANCE,
     ANIM_JACKPOT_ESCAPE,
+    ANIM_PUCKS,
+    ANIM_SEASICK,
+    ANIM_CROSS_EYED,
+    ANIM_JELLY,
+    ANIM_HEADBUTT,
     ANIM_COUNT
 } anim_id_t;
 
@@ -74,6 +81,13 @@ typedef struct {
     int32_t jit_from[2][EYE_POSE_FIELDS], jit_to[2][EYE_POSE_FIELDS];
     uint32_t jit_t0_ms;
     uint32_t rng;
+    pucks_t pucks;
+    float motion_x, motion_y;
+    unsigned effect_serial;
+    sfx_id_t effect;
+    float effect_level;
+    uint32_t effect_ms;
+    uint8_t play_events;
     /* dance state */
     audio_features_t audio;
     uint32_t dance_beats_seen;
@@ -91,6 +105,11 @@ typedef struct {
     uint32_t dance_visual_ms;   /* when the current one began */
     uint32_t dance_visual_len;  /* how long it stays */
     float dance_visual_mix;     /* 0..1 fade of the visual */
+    int dance_move;
+    uint32_t dance_move_block;
+    bool dance_spots_on;
+    uint32_t dance_spot_ms,dance_spot_len,dance_spot_rng;
+    float dance_spot_mix;
     bool dance_lasers_on;       /* independent background show, can overlap any eye fill */
     uint32_t dance_laser_ms, dance_laser_len, dance_laser_rng;
     float dance_laser_mix;

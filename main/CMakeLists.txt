@@ -9,6 +9,8 @@ idf_component_register(
         "dance_fill.c"
         "dance_lasers.c"
         "anim.c"
+        "play.c"
+        "sfx.c"
         "i2c_bus.c"
         "imu.c"
         "pmic.c"

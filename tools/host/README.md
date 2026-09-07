@@ -25,6 +25,8 @@ python3 tools/host/tile.py sheet.png 6 2 tools/host/out/e_*.ppm   # cols, downsc
 | `dance_test` | all-fill laser occlusion, horizontal emitter row, rotated damage bounds, tiled rendering, independent 30–60 s timer, music response, clean exit, 30 Hz cap and dance timing at two frame rates |
 | `interaction_test` | all 26 idle choices, situational handling/conversation/food, purr affection phases, accepted-line gestures, scene priority, quiet rotation and tapped lower lids |
 | `personality_preview` | real behavior/renderer preview of petting and purring, knock recovery, and conversation; `personality.sh` exports a small MP4 |
+| `play_test` | continuous caresses, randomized sickness and games, rigid puck collisions, staged headbutts, crack compositing and procedural effects |
+| `play_preview` / `play_sounds` | six-panel animation preview and 16 kHz effect audition; run `play.sh` |
 | `interaction_preview` | a half-closed lower lid through an eye poke; writes `out/poke-preview.ppm` |
 | `dance_bench` | texture setup + eye raster timings, plus laser damage raster and estimated display traffic |
 | `audio_test` | exact firmware analysis and behavior on synthetic EDM, speech-like syllables, noise, hum, muted playback and audible breakdowns |

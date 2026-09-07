@@ -36,7 +36,7 @@ static int visible_pixels(int eye)
 }
 int main(void)
 {
-    assert(ANIM_CAUTIOUS_PEEK==41 && ANIM_COUNT==51);
+    assert(ANIM_CAUTIOUS_PEEK==41 && ANIM_JACKPOT_ESCAPE==50 && ANIM_PUCKS==51);
     start(ANIM_CAUTIOUS_PEEK);
     advance(1000); assert(!visible_pixels(0) && !visible_pixels(1));
     advance(2000); assert(visible_pixels(0)>200 && !visible_pixels(1));
@@ -68,7 +68,7 @@ int main(void)
     assert(abs(shapes[0].cx-x)<Q16(1) && abs(shapes[0].cy-y)<Q16(1));
     advance(3000); assert(visible_pixels(0)>5000 && visible_pixels(1)>5000);
     /* Every action returns from offstage, and a second loop stays live. */
-    for (int id=ANIM_CAUTIOUS_PEEK; id<ANIM_COUNT; id++) {
+    for (int id=ANIM_CAUTIOUS_PEEK; id<=ANIM_JACKPOT_ESCAPE; id++) {
         start((anim_id_t)id);
         advance(7600); assert(visible_pixels(0)>5000 && visible_pixels(1)>5000);
         advance(15600); assert(visible_pixels(0)>5000 && visible_pixels(1)>5000);

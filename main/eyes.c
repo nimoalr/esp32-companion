@@ -589,6 +589,7 @@ typedef struct {
     int32_t attend_k;           /* Q16, how much the eyes are attending */
     int32_t fscale;             /* face scale, Q16 */
     int32_t fdx, fdy;           /* face offset, Q16 px */
+    bool rigid;
     uint32_t dt_ms;             /* since the previous frame, 0 = unknown */
 } frame_ctx_t;
 
@@ -645,6 +646,7 @@ static void eye_effective_params(int which, EyeState *s, const eye_pose_t *mod, 
     s->prev_cx = pcx;
     s->prev_cy = pcy;
     /* fast attack, slower release */
+    if(f->rigid){s->motion_k=0;motion_target=0;}
     s->motion_k += (motion_target - s->motion_k) * (motion_target > s->motion_k ? 3 : 1) / 4;
 
     int32_t w = q16_mul(q16_mul(s->base.w, f->fscale), c.sx);
@@ -652,7 +654,7 @@ static void eye_effective_params(int which, EyeState *s, const eye_pose_t *mod, 
 
     /* gaze-dependent size */
     const int32_t gx = c.dx + f->dart_x, gy = c.dy + f->dart_y;
-    {
+    if(!f->rigid) {
         int32_t k = q16_div(clamp_q16(abs32(gy), 0, LOOK_RANGE_PX << 16), LOOK_RANGE_PX << 16);
         const int32_t sz = gy < 0 ? Q16_ONE + q16_mul(LOOK_UP_GAIN, k) : Q16_ONE - q16_mul(LOOK_DOWN_GAIN, k);
         w = q16_mul(w, sz);
@@ -801,6 +803,8 @@ void eyes_update(eyes_t *e, uint32_t now_ms, raster_shape_t out[2])
     f.fscale = clamp_q16(e->face_scale + e->face_mod_scale, Q16(0.3), Q16(1.6));
     f.fdx = e->face_dx + e->face_mod_dx;
     f.fdy = e->face_dy + e->face_mod_dy;
+    f.rigid=e->rigid;
+    if(f.rigid){f.dart_x=f.dart_y=f.dart_squash=f.fdx=f.fdy=0;f.fscale=f.bh=f.bw=Q16_ONE;}
     f.dt_ms = e->have_prev ? now_ms - e->prev_ms : 0;
     e->prev_ms = now_ms;
     e->have_prev = true;

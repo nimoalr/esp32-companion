@@ -1,5 +1,8 @@
 # Situational expressions
 
+The newer [wobble and touch pass](WOBBLE_PLAY.md) adds the sickness gauge,
+wobble games, escalating headbutts and continuous-caress recognition to this wiring.
+
 [Watch the 12-second preview](personality.mp4): petting/purring, knock/recovery,
 and conversation, from left to right. It runs the real behavior and animation
 code at 60 Hz and exports at 30 Hz. Inputs are scripted, including a five-second
@@ -25,7 +28,7 @@ Start-Process docs/expressions/personality.mp4
 | Body knock | Double-take for 5.2 s, then embarrassed when calm or suspicious when sour. New touch or strong shaking takes priority. |
 | Non-eye tap | Springy boop; annoyance when already sour. Three close taps get suspicion. |
 | Eye tap | Preserve the ordinary face and close only the tapped eye, relaxing its lower lid. Repeated pokes can leave a suspicious look after reopening. |
-| Excessive shaking | Existing dizzy → slumped KO → staggered recovery. After recovery, relief or heartbreak according to mood. |
+| Excessive shaking | Chance of pucks, reels or jelly → randomized dizzy/seasick/cross-eyed hold → slumped KO with continued shaking → staggered recovery. After recovery, relief or heartbreak according to mood. |
 | Turned upright after being face down | Existing waking reaction, then relief. |
 
 Actual purring is reported by the speech task during gesture rendering, so

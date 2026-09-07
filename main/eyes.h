@@ -133,6 +133,7 @@ typedef struct {
     uint32_t rgb[2];                   /* colour currently in each LUT, 0xRRGGBB */
     uint16_t lut[2][256];
     /* hot spot (optional): lightness falloff tables and the 32 x 64 lightness x coverage LUTs */
+    bool rigid;                       /* detached pucks have no elastic gaze stretch */
     bool hot;
     uint8_t hot_gx[2][466], hot_gy[2][466];
     uint8_t hot_g2l[RASTER_G2L_N];
@@ -141,6 +142,7 @@ typedef struct {
     int fx;                            /* RASTER_FX_* fill effect for the dance */
     float fx_mix;                      /* 0..1 fade */
     float bar_h[2][8];                 /* bars: 0..1 of the eye's height */
+    float spot_mix;
     float laser_mix;                  /* background show, separate from the eye fill */
     dance_fill_t dance_fill;
     float disco_spin;                  /* disco: complete rotations */

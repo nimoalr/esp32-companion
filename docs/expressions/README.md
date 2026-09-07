@@ -23,7 +23,11 @@ Start-Process .\docs\expressions\recovery.mp4
 
 The next round adds [ten actions around the circular edge](RIM_ACTIONS.md):
 [watch the full grid](rim.mp4), including peeks, a rim collision, an orbit and
-a jackpot escape. The catalog below includes all 51 animations.
+a jackpot escape. The earlier catalog below covers those 51 animations; the new play grid covers the next five.
+
+The [wobble and touch pass](WOBBLE_PLAY.md) adds five more animations (56 total),
+longer randomized sickness, detached-eye physics, staged headbutts and continuous-caress
+recognition. [Watch the new grid](play.mp4) and [audition its effects](play-sounds.wav).
 
 ## Preview order
 
@@ -60,7 +64,7 @@ a jackpot escape. The catalog below includes all 51 animations.
 | KNOCKED_OUT | Collapse into unequal slumped capsules, with tiny breathing motion and orbiting stars. Replaces the orange X overlays. |
 | RECOVERING | Left eye opens before right, a clearing blink, then normal eyes and idle motion return over 3 s. |
 
-All 28 additions are connected to the character. The [situational wiring guide](PERSONALITY.md)
+The earlier 28 additions are connected to the character; the five new additions use the wobble and touch routes above. The [situational wiring guide](PERSONALITY.md)
 lists petting/purr affection, handling and recovery, conversation, food, and
 voice-linked gestures; [watch the personality preview](personality.mp4). KO/recovery
 follow shaking, and the other 26 also remain available as mood-qualified idle cameos. Each cameo plays one
@@ -95,7 +99,7 @@ tools/host/build.sh interaction_preview && tools/host/bin/interaction_preview
 ffmpeg -y -i tools/host/out/poke-preview.ppm -frames:v 1 docs/expressions/poke-lids.png
 ```
 
-## Complete catalog
+## Earlier 51-animation catalog
 
 The original 23 IDs remain unchanged; new IDs are appended. LOVE retains the
 original rounded-eye pulse; HEARTS adds an actual heart silhouette.

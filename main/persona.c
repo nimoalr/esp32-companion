@@ -187,6 +187,9 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
     if (!gentle_touch) { p->finger_since_ms = 0; p->purred = false; }
     else if (!p->finger_since_ms) p->finger_since_ms = now_ms;
 
+    if(in->beh==BEH_PETTED && pv->beh!=BEH_PETTED)p->pet_pending=true;
+    if(in->beh!=BEH_PETTED || in->handling || in->in_ui || in->dancing)p->pet_pending=false;
+
     /* power transitions: reflexes that may interrupt */
     if (in->power != pv->power) {
         if (pv->power == 0 && in->power == 1 && chance(p, 70)) say_gesture(out, VOICE_YAWN, 0.7f, false);
@@ -230,6 +233,8 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
             }
             break;
         }
+        case BEH_HEADBUTT: out->feel=-.05f;break; /* impact is synchronized to the slam */
+        case BEH_WOBBLE_GAME: break; /* collisions/reels have their own sound */
         case BEH_KNOCKED_OUT: say_gesture(out, VOICE_KO, 1.f, true); break;
         case BEH_GROGGY:      say_word(out, CLIP_UH_OH, 0.8f, false); break;
         case BEH_FACE_DOWN:   say_word(out, chance(p, 50) ? CLIP_EXCUSE_ME : CLIP_HELLO, 0.8f, false); break;
@@ -250,8 +255,7 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
             break;
         case BEH_PETTED:
             out->feel = 0.05f;
-            if (free && !in->handling && chance(p, 60)) say_gesture(out, VOICE_PURR, 0.8f, false);
-            else say_word(out, chance(p, 50) ? CLIP_OOH_LA_LA : CLIP_YUMMY, level, false);
+            if(free && !in->handling){say_gesture(out,VOICE_PURR,.8f,false);p->pet_pending=false;p->purred=true;}
             break;
         case BEH_STARTLED: {
             static const int w[] = { CLIP_EXCUSE_ME, CLIP_HOW_RUDE, CLIP_DO_NOT_TOUCH_ME, CLIP_NOPE };
@@ -368,6 +372,7 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
         schedule_idle(p, in, now_ms);
     }
 
+    if(out->kind==SAY_NONE && p->pet_pending && free){say_gesture(out,VOICE_PURR,.8f,false);p->pet_pending=false;p->purred=true;}
     if (out->kind != SAY_NONE) {
         /* a reaction that would repeat one of the last two becomes a wordless remark instead */
         if (out->kind != SAY_BABBLE && !out->interrupt && !(out->kind == SAY_GESTURE && out->id == VOICE_PURR) && is_recent(p, out)) {

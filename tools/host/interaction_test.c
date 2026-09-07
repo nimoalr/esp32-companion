@@ -21,7 +21,7 @@ static void cameos(void)
         assert(out.override_anim>=ANIM_SMUG);
         seen[out.override_anim]=true;
     }
-    for(int a=ANIM_SMUG;a<ANIM_COUNT;a++)if(a!=ANIM_KNOCKED_OUT&&a!=ANIM_RECOVERING)assert(seen[a]);
+    for(int a=ANIM_SMUG;a<=ANIM_JACKPOT_ESCAPE;a++)if(a!=ANIM_KNOCKED_OUT&&a!=ANIM_RECOVERING)assert(seen[a]);
     behavior_init(&b,1000);b.idle_action=ANIM_HIDE_RELOCATE;b.action_started_ms=1000;
     eyes_init(&eyes,1000);anim_init(&anim,&eyes,1000);anim_set(&anim,&eyes,ANIM_HIDE_RELOCATE,1000);
     for(t=1000;t<=9016;t+=16) {
@@ -138,7 +138,7 @@ static void contextual_faces(void)
     in.stroke_count=2;behavior_update(&b,&in,1900,&out);assert(b.state==BEH_PETTED&&out.override_anim==ANIM_HAPPY);
     in.stroke_count=3;behavior_update(&b,&in,2900,&out);assert(out.override_anim==ANIM_LOVE);
     in.stroke_count=4;behavior_update(&b,&in,4400,&out);assert(out.override_anim==ANIM_HEARTS);
-    b.moving_since_ms=4450;behavior_update(&b,&in,4500,&out);assert(b.state!=BEH_PETTED&&out.override_anim!=ANIM_HEARTS);
+    b.moving_since_ms=4450;b.shake=.22f;behavior_update(&b,&in,4500,&out);assert(b.state!=BEH_PETTED&&out.override_anim!=ANIM_HEARTS);
     /* A conversation's pause gets a thinking action only once; renewed speech interrupts it. */
     behavior_init(&b,1000);memset(&in,0,sizeof in);in.idle_allowed=true;
     b.energy=.2f;in.audio.active=in.audio.speech=true;
@@ -242,4 +242,22 @@ static void voice_faces(void)
     puts("PASS: accepted-line cues, authored-scene preservation, context cancellation, voiced acknowledgements and repeatable deliberate purrs");
 }
 
-int main(void){cameos();purring();handling_and_lids();contextual_faces();purr_faces();voice_faces();return 0;}
+static void continuous_caress(void)
+{
+    petting_t touch={0};behavior_t b;behavior_init(&b,1000);persona_t p;persona_init(&p,1000,17);
+    behavior_in_t bi={.idle_allowed=true,.user_interacting=true,.stroke_forehead=true};behavior_out_t bo;
+    persona_in_t pi={.anim=ANIM_NEUTRAL,.batt_pct=80,.finger=true};persona_say_t say;
+    unsigned purrs=0;
+    for(unsigned t=1000;t<9000;t+=16){
+        petting_update(&touch,true,233+55*sinf(t*.006f),65,t);bi.stroke_count=touch.count;
+        b.moving_since_ms=1000;b.shake=.045f; /* small movement from stroking, not carrying rhythm */
+        behavior_update(&b,&bi,t,&bo);
+        pi.beh=b.state;pi.anim=bo.override_anim;pi.speaking=t<5100;
+        pi.handling=b.state!=BEH_PETTED;pi.stroke_count=bi.stroke_count;
+        persona_tick(&p,&pi,t,&say);
+        if(say.kind==SAY_GESTURE&&say.id==VOICE_PURR){assert(t>=5100);purrs++;}
+    }
+    assert(touch.count>=8&&b.state==BEH_PETTED&&purrs==1);
+    puts("PASS continuous caress reaches petting/purr without lifting finger; light handling tolerated, busy mouth defers once");
+}
+int main(void){cameos();purring();handling_and_lids();contextual_faces();purr_faces();voice_faces();continuous_caress();return 0;}

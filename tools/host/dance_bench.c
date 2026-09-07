@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <time.h>
+#include <string.h>
 #include "anim.h"
 #include "dance_lasers.h"
 uint32_t esp_random(void) { return 1; }
@@ -24,10 +25,12 @@ int main(void) {
  }
  static dance_lasers_t laser;
  eyes_init(&eyes,0);eyes_set_hotspot(&eyes,true);eyes_set_idle_rates(&eyes,0,Q16_ONE,0);eyes_update(&eyes,16,sh);
+ for(int mode=0;mode<3;mode++){
+ memset(&laser,0,sizeof laser);
  clock_t setup=0,draw=0;double pixels=0;
  for(int i=0;i<300;i++){
   audio_features_t a={.loud=.8f,.bass=.7f,.kick=.7f,.beat_count=i/12,.last_beat_ms=1000+(i/12)*408};
-  clock_t t=clock();dance_lasers_update(&laser,1,&a,1000+i*34,0);setup+=clock()-t;t=clock();
+  clock_t t=clock();dance_background_update(&laser,mode!=1,mode!=0,&a,1000+i*34,0);setup+=clock()-t;t=clock();
   int x0=laser.damage[0]&~15,y0=laser.damage[1]&~15,x1=(laser.damage[2]+15)&~15,y1=(laser.damage[3]+15)&~15;
   if(x1>466)x1=466;if(y1>466)y1=466;
   for(int e=0;e<2;e++){
@@ -40,5 +43,6 @@ int main(void) {
   for(int y=y0;y<y1;y+=32)dance_lasers_paint(&laser,band,x0,y,x1-x0,y1-y<32?y1-y:32,sh);
   draw+=clock()-t;pixels+=(x1-x0)*(y1-y0);
  }
- printf("lasers upright update+damage raster=%.2f us/frame, avg %.0f pixels / %.2f ms ideal 80 MHz QSPI transfer\n",(setup+draw)*1e6/CLOCKS_PER_SEC/300,pixels/300,pixels/300*2/40000);
+ printf("background mode=%d update+damage raster=%.2f us/frame, avg %.0f pixels / %.2f ms ideal 80 MHz QSPI transfer\n",mode,(setup+draw)*1e6/CLOCKS_PER_SEC/300,pixels/300,pixels/300*2/40000);
+ }
 }

@@ -66,6 +66,8 @@ typedef enum {
     BEH_STARTLED,               /* a knock on the body */
     BEH_POKED,                  /* a tap on the eyes */
     BEH_PETTED,                 /* strokes across the forehead */
+    BEH_WOBBLE_GAME,
+    BEH_HEADBUTT,
 } behavior_state_t;
 
 
@@ -74,6 +76,12 @@ typedef struct {
     uint32_t state_since_ms;
     uint32_t last_accel_ms;
     float shake;                /* smoothed |a| deviation from 1 g, in g */
+    float sickness;
+    float axis_motion[3], prev_screen[3];
+    anim_id_t game_anim, dizzy_anim;
+    uint32_t game_len_ms, dizzy_len_ms, last_play_ms;
+    uint32_t burst_ms, crack_ms;
+    uint8_t burst_taps, headbutt_stage, crack_stage;
     float shake_time_ms;        /* accumulated shaking */
     float gx, gy, gz;           /* smoothed screen-frame gravity */
     uint32_t face_down_since_ms;
