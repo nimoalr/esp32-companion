@@ -6,20 +6,22 @@ Measured on the connected Waveshare ESP32-S3, USB-powered with the charging rim 
 
 Eight six-second cases. Values are median one-second FPS reports, excluding each case’s first and last report to reduce transition contamination. This is a short stress comparison, not a guaranteed minimum or a worst-case execution-time proof.
 
-| Scene | Before | Verified optimized build |
+| Scene | Before | Final build `b7fdf1d` |
 |---|---:|---:|
-| Spectrum only | 39 | 48 |
-| Spectrum + row lasers | 22 | 38 |
-| Spectrum + row spotlights | 22 | 36 |
-| Spectrum + both, row | 17.5 | 31.5 |
-| Spectrum + both, rim | 14 | 26.5 |
-| Disco + both, rim | 13.5 | 23 |
-| Plain shaded eyes + both, rim | 12 | 18 |
-| Spectrum + both, rim, 33-degree tilt | 12 | 19.5 |
+| Spectrum only | 39 | 48.5 |
+| Spectrum + row lasers | 22 | 42 |
+| Spectrum + row spotlights | 22 | 40 |
+| Spectrum + both, row | 17.5 | 33.5 |
+| Spectrum + both, rim | 14 | 31.5 |
+| Disco + both, rim | 13.5 | 25.5 |
+| Plain shaded eyes + both, rim | 12 | 21.5 |
+| Spectrum + both, rim, 33-degree tilt | 12 | 22 |
 
-The verified build used cached ring chords. The final source replaces those with sparse exact ring coverage to remove the remaining repeated coverage work. That final image built and flashed with hash verification, but USB stopped responding during boot; its runtime and FPS are **not yet verified**. A USB reconnect/reset is needed. A subsequent host-tested fix explicitly restores four-sample eye coverage on every normal frame; it is built but has not been flashed because the port remains unresponsive. Do not attribute the table to the final additional optimization.
+USB recovered after reconnection. On September 8, firmware `b7fdf1d` built, flashed with verified hashes, and booted with its commit ID confirmed in the device log. This includes the final sparse ring-coverage cache and restoration of normal four-sample eye coverage after dance. Boot confirmed the production 30-second active and 1800-second dim timeouts.
 
-The verified run retained about 11.7 KB of render-task stack headroom; sampled audio-analysis reports were about 0.34–0.64 ms. These are telemetry samples, not an audio WCET bound. No panic or watchdog appeared in that completed run. Large rotating shaded eyes, PSRAM copies and near-full-screen redraws still limit the busiest cases; 60 FPS is not promised.
+The final benchmark completed all eight scenes and restored the ordinary animation scheduler. It retained 11,772 bytes of render-task stack headroom; sampled audio-analysis reports ranged from 0.335–0.648 ms. No panic, watchdog or dropped-rectangle warning appeared. These are telemetry samples, not an audio WCET bound. One-second FPS reports still dipped to 16 FPS in the heaviest plain/tilted eye scenes, and the largest reported raster time was 60.8 ms. Large rotating shaded eyes, PSRAM copies and near-full-screen redraws still limit these cases; 60 FPS is not promised. Procedural pose/style variation and the live microphone make the table a workload comparison rather than a pixel-identical replay.
+
+A further normal-music observation after the benchmark showed stable 11,772-byte stack headroom, no reset or dropped-rectangle warning, and full brightness while music remained admitted. Audio telemetry in that observation ranged from 0.322–0.686 ms. This is a short runtime check, not a long-duration soak or a physical 30-minute sleep/wake validation.
 
 ## Changes
 

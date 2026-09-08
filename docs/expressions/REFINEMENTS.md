@@ -148,7 +148,7 @@ firmware. A 45-second boot check showed no panic and admitted dance remained at
 100% brightness. Dance samples ranged from 11–60 FPS; sustained heavy frames ran at 15 FPS with
 roughly 62 ms average raster time. The subsequent
 [dance performance pass](../dance/PERFORMANCE.md) improves those workloads and
-records both verified timings and the final USB-verification blocker. No accelerated timeouts will be flashed again. A complete physical
+records the final on-device timings after USB recovery. No accelerated timeouts will be flashed again. A complete physical
 30-minute sleep/wake cycle and speaker balance still need owner confirmation.
 Host tests cover the full deadline, three hours of uninterrupted admitted music,
 a 36-second audible breakdown and nap/check-in variation.
