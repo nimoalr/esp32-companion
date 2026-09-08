@@ -78,3 +78,5 @@ Regenerate the fixed rim cache from the repository root with
 `tools/host/build.sh charge_cache && tools/host/bin/charge_cache`. It uses
 22,894 bytes of flash and no persistent RAM. See
 [on-device benchmark instructions](../../docs/dance/PERFORMANCE.md).
+
+Stereo USB notebooks: `node tools/music-lab/export.mjs session.mcal output-dir` exports original 16 kHz stereo WAVs and range labels. `audio_replay input.wav 0 frames.csv` accepts mono or stereo and preserves recorded levels with `0`; see [Music Lab](../music-lab/README.md).

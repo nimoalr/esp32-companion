@@ -19,21 +19,31 @@ void music_trace_pack(uint8_t p[64],const audio_features_t *a,uint32_t ms,float 
     for(int i=0;i<16;i++)le16(p+32+2*i,power16(power[i]));
 }
 static const char hex[]="0123456789abcdef";
-size_t music_trace_line(char *out,const uint8_t *p,unsigned count)
+void music_trace_pcm_pack(uint8_t out[MUSIC_TRACE_PCM_BYTES],const int16_t pcm[512])
 {
-    if(!count||count>MUSIC_TRACE_BATCH)return 0;
-    memcpy(out,"MC2:",4);size_t n=4;uint32_t crc=~0u;
-    for(unsigned i=0;i<count*MUSIC_TRACE_BYTES;i++){
+    memcpy(out+64,"PCM1",4);
+    for(int i=0;i<512;i++)le16(out+68+2*i,(uint16_t)pcm[i]);
+}
+static size_t encoded_line(char *out,const uint8_t *p,unsigned bytes,char version)
+{
+    memcpy(out,"MC2:",4);out[2]=version;size_t n=4;uint32_t crc=~0u;
+    for(unsigned i=0;i<bytes;i++){
         out[n++]=hex[p[i]>>4];out[n++]=hex[p[i]&15];crc^=p[i];
         for(int bit=0;bit<8;bit++)crc=(crc>>1)^(0xedb88320u&-(crc&1));
     }
     crc=~crc;out[n++]=':';for(int i=7;i>=0;i--)out[n++]=hex[(crc>>(4*i))&15];out[n++]='\n';return n;
 }
+size_t music_trace_line(char *out,const uint8_t *p,unsigned count)
+{
+    return !count||count>MUSIC_TRACE_BATCH?0:encoded_line(out,p,count*MUSIC_TRACE_BYTES,'2');
+}
+size_t music_trace_pcm_line(char *out,const uint8_t *p){return encoded_line(out,p,MUSIC_TRACE_PCM_BYTES,'3');}
 #ifndef AUDIO_ANALYSIS_HOST
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include <stdatomic.h>
 #include <stdio.h>
 #include "esp_timer.h"
@@ -43,14 +53,18 @@ size_t music_trace_line(char *out,const uint8_t *p,unsigned count)
 #include "driver/usb_serial_jtag_vfs.h"
 static QueueHandle_t queue;
 static bool usb_ready,benchmark_pending;
-static atomic_uint control,lost,context,sequence,status_requested;
+static atomic_bool capture_pcm;
+static StaticQueue_t queue_control;
+static uint8_t *queue_storage;
+static atomic_uint control,lost,context,sequence,status_requested,offer_max_us;
 bool music_trace_take_benchmark(void){bool b=benchmark_pending;benchmark_pending=false;return b;}
 /* Sole owner of capture protocol output. Preserve partial writes across retries;
  * an unplugged/paused host cannot block the analyser or grow memory usage. */
 static void writer(void *unused)
 {
     (void)unused;
-    uint8_t records[MUSIC_TRACE_BATCH*MUSIC_TRACE_BYTES];char line[MUSIC_TRACE_LINE_BYTES];
+    static uint8_t records[MUSIC_TRACE_PCM_BYTES],p[MUSIC_TRACE_PCM_BYTES];
+    static char line[MUSIC_TRACE_PCM_LINE_BYTES];
     size_t size=0,offset=0;unsigned seen=~0u;uint32_t status_ms=0;
     for(;;){
         unsigned c=atomic_load(&control);
@@ -58,8 +72,8 @@ static void writer(void *unused)
             /* A cancelled partial packet is terminated before the status line,
              * allowing host resynchronization with an explicit CRC failure. */
             offset=0;
-            size=snprintf(line,sizeof line,"\nMC_CONFIG:fw=%s gain=%d rate=62.5 spectrum=raw_fft_power_bfloat16\nMC_SESSION:%u %s format=2 frame_ms=16 bytes=64 renderer=%s\n",
-                esp_app_get_description()->version,CONFIG_EYES_AUDIO_GAIN_DB,c>>1,c&1?"start":"stop",c&1?"paused":"running");
+            size=snprintf(line,sizeof line,"\nMC_CONFIG:fw=%s gain=%d rate=62.5 spectrum=raw_fft_power_bfloat16\nMC_SESSION:%u %s format=%u frame_ms=16 bytes=%u renderer=%s\n",
+                esp_app_get_description()->version,CONFIG_EYES_AUDIO_GAIN_DB,c>>1,c&1?"start":"stop",atomic_load(&capture_pcm)?3:2,atomic_load(&capture_pcm)?MUSIC_TRACE_PCM_BYTES:MUSIC_TRACE_BYTES,c&1?"paused":"running");
             seen=c;status_ms=esp_timer_get_time()/1000;
         }
         if(offset<size){
@@ -68,18 +82,22 @@ static void writer(void *unused)
             if(offset<size){vTaskDelay(pdMS_TO_TICKS(10));continue;}
             size=offset=0;
         }
-        unsigned n=0;uint8_t p[MUSIC_TRACE_BYTES];
+        unsigned n=0;bool pcm=false;
         while(n<MUSIC_TRACE_BATCH && xQueueReceive(queue,p,0)==pdTRUE){
-            if((c&1) && (unsigned)(p[22]|p[23]<<8)==(c>>1))memcpy(records+(n++)*MUSIC_TRACE_BYTES,p,MUSIC_TRACE_BYTES);
+            if((c&1) && (unsigned)(p[22]|p[23]<<8)==(c>>1)){
+                pcm=!memcmp(p+64,"PCM1",4);
+                if(pcm){memcpy(records,p,sizeof records);n=1;break;}
+                memcpy(records+(n++)*MUSIC_TRACE_BYTES,p,MUSIC_TRACE_BYTES);
+            }
         }
-        if(n){size=music_trace_line(line,records,n);continue;}
+        if(n){size=pcm?music_trace_pcm_line(line,records):music_trace_line(line,records,n);continue;}
         uint32_t now=esp_timer_get_time()/1000;
         unsigned requested=atomic_exchange(&status_requested,0);
         if(requested || ((c&1)&&now-status_ms>=1000)){
             status_ms=now;size=0;
             if(requested&2)size=snprintf(line,sizeof line,"MC_CONFIG:fw=%s gain=%d rate=62.5 spectrum=raw_fft_power_bfloat16\n",esp_app_get_description()->version,CONFIG_EYES_AUDIO_GAIN_DB);
-            size+=snprintf(line+size,sizeof line-size,"MC_STATE:%s session=%u frames=%u lost=%u renderer=%s\n",c&1?"recording":"idle",c>>1,
-                atomic_load(&sequence),atomic_load(&lost),c&1?"paused":"running");continue;
+            size+=snprintf(line+size,sizeof line-size,"MC_STATE:%s session=%u frames=%u lost=%u renderer=%s offer_max_us=%u writer_stack=%u\n",c&1?"recording":"idle",c>>1,
+                atomic_load(&sequence),atomic_load(&lost),c&1?"paused":"running",atomic_load(&offer_max_us),(unsigned)uxTaskGetStackHighWaterMark(NULL));continue;
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -90,10 +108,13 @@ esp_err_t music_trace_enable(bool on)
     if(on==(bool)(old&1)){atomic_fetch_or(&status_requested,2);return ESP_OK;}
     if(on&&!usb_ready)return ESP_ERR_INVALID_STATE;
     if(on&&!queue){
-        queue=xQueueCreate(128,MUSIC_TRACE_BYTES);if(!queue)return ESP_ERR_NO_MEM;
-        if(xTaskCreatePinnedToCore(writer,"music_trace",4096,NULL,3,NULL,1)!=pdPASS){vQueueDelete(queue);queue=NULL;return ESP_ERR_NO_MEM;}
+        queue_storage=heap_caps_malloc(128*MUSIC_TRACE_PCM_BYTES,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+        if(!queue_storage)return ESP_ERR_NO_MEM;
+        queue=xQueueCreateStatic(128,MUSIC_TRACE_PCM_BYTES,queue_storage,&queue_control);
+        if(!queue){heap_caps_free(queue_storage);return ESP_ERR_NO_MEM;}
+        if(xTaskCreatePinnedToCore(writer,"music_trace",4096,NULL,3,NULL,1)!=pdPASS){vQueueDelete(queue);heap_caps_free(queue_storage);queue=NULL;return ESP_ERR_NO_MEM;}
     }
-    if(on){atomic_store(&sequence,0);atomic_store(&lost,0);}
+    if(on){atomic_store(&sequence,0);atomic_store(&lost,0);atomic_store(&offer_max_us,0);}
     atomic_store(&control,on?((((old>>1)+1)&65535)<<1)|1:(old&~1u));
     return ESP_OK;
 }
@@ -114,7 +135,11 @@ void music_trace_poll(void)
         if(c=='\n'||c=='\r'){
             command[used]=0;
             if(!overflow){
-                if(!strcmp(command,"MC_START"))music_trace_enable(true);
+                if(!strcmp(command,"MC_START")||!strcmp(command,"MC_START_PCM")){
+                    bool pcm=!strcmp(command,"MC_START_PCM");
+                    if(music_trace_active()&&pcm!=atomic_load(&capture_pcm))music_trace_enable(false);
+                    atomic_store(&capture_pcm,pcm);music_trace_enable(true);
+                }
                 else if(!strcmp(command,"MC_BENCH")&&!music_trace_active())benchmark_pending=true;
                 else if(!strcmp(command,"MC_STOP"))music_trace_enable(false);
                 else if(!strcmp(command,"MC_PING"))atomic_fetch_or(&status_requested,1);
@@ -125,10 +150,13 @@ void music_trace_poll(void)
 }
 void music_trace_context(bool dancing,bool listening){atomic_store(&context,(dancing?64u:0)|(listening?128u:0));}
 bool music_trace_active(void){return atomic_load(&control)&1;}
-void music_trace_offer(const audio_features_t *a,uint32_t ms,float kick,float mean,float previous,float presence,unsigned flags,const float power[16],uint32_t cpu_us)
+void music_trace_offer(const audio_features_t *a,uint32_t ms,float kick,float mean,float previous,float presence,unsigned flags,const float power[16],uint32_t cpu_us,const int16_t pcm[512])
 {
     unsigned c=atomic_load(&control);if(!(c&1))return;
-    uint8_t p[MUSIC_TRACE_BYTES];music_trace_pack(p,a,ms,kick,mean,previous,presence,flags|atomic_load(&context),c>>1,power,atomic_fetch_add(&sequence,1),cpu_us);
+    const int64_t t0=esp_timer_get_time();
+    static uint8_t p[MUSIC_TRACE_PCM_BYTES];music_trace_pack(p,a,ms,kick,mean,previous,presence,flags|atomic_load(&context),c>>1,power,atomic_fetch_add(&sequence,1),cpu_us);
+    if(atomic_load(&capture_pcm))music_trace_pcm_pack(p,pcm);else memset(p+64,0,4);
     if(xQueueSend(queue,p,0)!=pdTRUE)atomic_fetch_add(&lost,1);
+    unsigned us=(unsigned)(esp_timer_get_time()-t0);if(us>atomic_load(&offer_max_us))atomic_store(&offer_max_us,us);
 }
 #endif

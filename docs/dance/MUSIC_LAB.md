@@ -122,3 +122,5 @@ and does not stop on an unexpected USB disconnect. Microphone analysis remains
 analysis timing and sixteen raw FFT power bands, with per-track and corpus
 frequency summaries (~240 KB/minute). Legacy captures remain readable. See
 [the current protocol and workflow](../../tools/music-lab/README.md).
+
+The recorder now also supports lossless stereo PCM and a local timeline editor with range labels: [stereo capture and verification](STEREO_CAPTURE.md).

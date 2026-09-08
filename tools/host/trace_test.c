@@ -11,5 +11,9 @@ int main(void){
  f=fopen("tools/host/out/trace-v2-fixture.log","w");assert(f);assert(fwrite(line,1,size,f)==size);fclose(f);
  assert(p[24]==42&&p[28]==9&&p[29]==3);assert(!music_trace_line(line,p,9));
  music_trace_pack(p,&a,0,1,1,1,-1,255,65535,power,0xffffffff,100000);assert(p[6]==255&&p[7]==255&&p[14]==0&&p[22]==255&&p[23]==255);
+ uint8_t stereo[MUSIC_TRACE_PCM_BYTES];memcpy(stereo,p,64);int16_t pcm[512];for(int i=0;i<512;i++)pcm[i]=(i&1)?-1234:2345;
+ music_trace_pcm_pack(stereo,pcm);assert(!memcmp(stereo+64,"PCM1",4));assert(stereo[68]==0x29&&stereo[69]==9&&stereo[70]==0x2e&&stereo[71]==0xfb);
+ char rawline[MUSIC_TRACE_PCM_LINE_BYTES];size=music_trace_pcm_line(rawline,stereo);assert(size==MUSIC_TRACE_PCM_LINE_BYTES);
+ f=fopen("tools/host/out/trace-v3-fixture.log","w");assert(f);assert(fwrite(rawline,1,size,f)==size);fclose(f);
  puts("PASS: v1 prefix, 64-byte raw-spectrum encoding, CRC framing, saturation, sequence IDs; fixtures written");
 }

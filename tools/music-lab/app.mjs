@@ -1,4 +1,5 @@
 import {parseLine,decode,pack,unpack,summarize,summarizeCorpus,BAND_EDGES_HZ} from './trace.mjs';
+import {createReplay} from './replay-ui.mjs';
 const $=id=>document.getElementById(id);
 let lastPerf=null,collectedBytes=0;
 let deviceConfig=null,stopAck=null,connecting=false,editing=null;
@@ -8,11 +9,13 @@ let port,reader,reading=false,demoTimer,latest,lastReceived=0,history=[],history
 let meta={format:2,created:new Date().toISOString(),demo:false,tracks:[],transportEvents:[]};
 const fields=['track','kind','style','volume','setup','notes'];
 function notice(s){$('notice').textContent=s;}
+const replay=createReplay(()=>{unsaved=true;},notice);
 function status(s){$('status').textContent=s;}
 function controls(){
  const fresh=performance.now()-lastReceived<1500;
  $('start').disabled=!!run||!!editing||!latest||!fresh;$('save-labels').hidden=!editing;
  $('stop').disabled=!run;$('download').disabled=!!run||!records.length;
+ $('capture-stereo').disabled=connecting||!!port;
  $('connect').disabled=connecting||!!port||!!demoTimer;$('disconnect').disabled=!port;
  $('demo').disabled=!!port||!!run||!!demoTimer||records.length>0;
  $('import').disabled=!!run||!!port||!!demoTimer;$('new').disabled=!!run;
@@ -21,7 +24,7 @@ function controls(){
 }
 function receive(p){
  latest=decode(p);lastReceived=performance.now();history.push(latest);historyPackets.push(p);if(history.length>256){history.shift();historyPackets.shift();}
- if(run){records.push(p);collectedBytes+=p.length;unsaved=true;if(records.length>=500000){endRun();notice('Session limit reached (about two hours). Download before starting a new session.');}}
+ if(run){records.push(p);collectedBytes+=p.length;unsaved=true;if((records.length>=500000||collectedBytes>=128000000)){endRun();notice('Session size limit reached. Download before starting a new session.');}}
 }
 function line(s){
  try{for(const p of parseLine(s))receive(p);}catch(e){notice(e.message);meta.transportEvents.push({type:'invalid_packet',at:new Date().toISOString()});}
@@ -30,7 +33,7 @@ function line(s){
  const loss=s.match(/MC_LOST:(\d+)/);if(loss){meta.transportEvents.push({type:'device_queue_overflow',frames:+loss[1],deviceMs:latest?.ms});notice(`Device dropped ${loss[1]} frames; marked in the session.`);}
  const cfg=s.match(/MC_CONFIG:(.*?)(?:\x1b\[[0-9;]*m)?$/);if(cfg)deviceConfig=cfg[1];
  const state=s.match(/MC_STATE:(recording|idle).*?frames=(\d+) lost=(\d+)/);
- if(state){deviceLost=+state[3];if(run)(run.captureHealth??=[]).push({deviceMs:latest?.ms,frames:+state[2],lost:deviceLost});}
+ if(state){deviceLost=+state[3];if(run)(run.captureHealth??=[]).push({deviceMs:latest?.ms,frames:+state[2],lost:deviceLost,offerMaxUs:Number(s.match(/offer_max_us=(\d+)/)?.[1])||null,writerStack:Number(s.match(/writer_stack=(\d+)/)?.[1])||null});}
  if(s.includes('MC_SESSION:'))meta.transportEvents.push({type:'device_session',message:s.replace(/\x1b\[[0-9;]*m/g,''),at:new Date().toISOString(),frame:records.length});
  if(s.includes('MC_SESSION:')&&s.includes('stop')){stopAck?.();if(run){mark('Device capture stopped');endRun();}}
  if(s.includes('MC_SESSION:'))status(s.replace(/\x1b\[[0-9;]*m/g,'').slice(s.indexOf('MC_SESSION:')));
@@ -47,7 +50,7 @@ $('connect').onclick=async()=>{
   reading=true;status('USB connected. Starting feature stream…');notice('');controls();
   const decoder=new TextDecoder();let buffer='';
   reader=port.readable.getReader();
-  await send("MC_START");
+  await send($('capture-stereo').checked?"MC_START_PCM":"MC_START");
   heartbeat=setInterval(()=>{if(reading)send('MC_PING').catch(e=>notice(e.message));},2000);
   while(reading){const {value,done}=await reader.read();if(done)break;
    buffer+=decoder.decode(value,{stream:true});let i;
@@ -61,7 +64,7 @@ $('connect').onclick=async()=>{
   meta.transportEvents.push({type:'usb_disconnected',at:new Date().toISOString(),frame:records.length});
   reader?.releaseLock();reader=null;reading=false;connecting=false;
   if(port){try{await port.close();}catch{}port=null;}
-  lastReceived=0;status('USB disconnected. Saved runs remain available. An unexpected disconnect leaves capture mode on; reconnect or hold PWR for 2 seconds to exit.');controls();
+  lastReceived=0;status('USB disconnected. Saved runs remain available. An unexpected disconnect leaves capture mode on; reconnect to resume, or tap the screen / hold PWR for 2 seconds to exit.');controls();
  }
 };
 $('disconnect').onclick=async()=>{
@@ -69,10 +72,10 @@ $('disconnect').onclick=async()=>{
  stopAck=null;reading=false;await reader?.cancel();
 };
 $('start').onclick=()=>{
- if(records.length>=500000)return notice('Download this session and reload before recording more.');
+ if((records.length>=500000||collectedBytes>=128000000))return notice('Download this session and reload before recording more.');
  if(!latest||performance.now()-lastReceived>1500)return notice('Waiting for live device frames.');
  if(!$('track').value.trim())return notice('Give this run a track or reference name.');
- run={};fields.forEach(id=>run[id]=$(id).value.trim());
+ replay.clear();run={};fields.forEach(id=>run[id]=$(id).value.trim());
  run.deviceConfig=deviceConfig;run.captureMode=latest.power?'exclusive':'legacy';
  run.startFrame=records.length;run.startDeviceMs=latest.ms;run.deviceSession=latest.session;run.markers=[];
  run.startedUTC=new Date().toISOString();started=performance.now();notice('');controls();
@@ -85,6 +88,7 @@ function endRun(){
  run.hostDurationMs=Math.round(performance.now()-started);run.summary.unobservedHostMs=Math.max(0,run.hostDurationMs-run.summary.sampledSeconds*1000);meta.tracks.push(run);run=null;unsaved=true;renderTracks();controls();
 }
 $('stop').onclick=endRun;
+$('replay-save-session').onclick=()=>$('download').click();
 function renderTracks(){
  const el=$('tracks');el.replaceChildren();
  for(const t of meta.tracks){const details=document.createElement('details'),d=document.createElement('summary');const s=t.summary;
@@ -92,6 +96,7 @@ function renderTracks(){
  for(const m of t.markers){const line=document.createElement('div');line.textContent=`${(m.hostElapsedMs/1000).toFixed(1)}s · ${m.label}`;details.append(line);}
  const edit=document.createElement('button');edit.textContent='Edit labels';edit.disabled=!!run;
  edit.onclick=()=>{if(run)return;editing=t;fields.forEach(id=>$(id).value=t[id]||'');controls();$('track').focus();};details.append(edit);
+ const listen=document.createElement('button');listen.textContent='Replay & label';listen.disabled=!!run||!s.audioFrames;if(!s.audioFrames)listen.textContent='Features only · no audio';listen.onclick=()=>{if(!run)replay.open(t,records.slice(t.startFrame,t.endFrame));};details.append(listen);
  if(s.spectrum){const p=document.createElement('p');p.textContent='Frequency energy: '+s.spectrum.energyPercent.map((v,i)=>`${BAND_EDGES_HZ[i]}–${BAND_EDGES_HZ[i+1]} Hz ${v.toFixed(1)}%`).join(' · ');details.append(p);}
  const health=document.createElement('p');health.textContent=`${s.featureHz?.toFixed(2)??'multiple segments'} audio frames/s · ${s.segments} segment(s) · ${s.droppedFrames??'unknown'} sequence gaps · ${Math.max(0,t.hostDurationMs/1000-s.sampledSeconds).toFixed(1)}s host time without samples (includes boundaries)`;details.append(health);
  el.append(details);}
@@ -101,38 +106,40 @@ $('save-labels').onclick=()=>{if(!editing)return;fields.forEach(id=>editing[id]=
 $('new').onclick=()=>{
  if(unsaved)return notice('Download this session before starting a new one.');
  if(demoTimer){clearInterval(demoTimer);demoTimer=null;latest=null;lastReceived=0;fields.forEach(id=>$(id).value=id==='kind'?'music':'');}
- editing=null;collectedBytes=0;records=[];history=[];historyPackets=[];meta={format:2,created:new Date().toISOString(),demo:false,tracks:[],transportEvents:[]};
+ replay.clear();editing=null;collectedBytes=0;records=[];history=[];historyPackets=[];meta={format:2,created:new Date().toISOString(),demo:false,tracks:[],transportEvents:[]};
  $('tracks').textContent='No runs yet.';renderSpectrum();$('events').replaceChildren();$('timer').textContent='00:00';
  notice('');status(port?'USB connected':'No device connected');controls();
 };
 $('download').onclick=()=>{
+ $('replay-save-hint').textContent='Session downloaded · includes current annotations';
  meta.spectrumSummary=summarizeCorpus(meta.demo?[]:meta.tracks);meta.totalFrames=records.length;meta.exported=new Date().toISOString();
  const url=URL.createObjectURL(pack(meta,records)),a=document.createElement('a');a.href=url;
  a.download=`${meta.demo?'DEMO-':''}companion-music-${meta.created.slice(0,19).replaceAll(':','-')}.mcal`;a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);unsaved=false;
 };
 $('import').onclick=()=>{if(records.length&&unsaved){notice('Download your current session before opening another.');return;}$('file').click();};
 $('file').onchange=async()=>{
- try{const f=$('file').files[0];if(!f)return;if(f.size>64000000)throw new Error('Session exceeds 64 MB limit.');
+ try{const f=$('file').files[0];if(!f)return;if(f.size>256000000)throw new Error('Session exceeds 256 MB limit.');
  const data=unpack(await f.arrayBuffer());
  if(!Array.isArray(data.meta.tracks))throw new Error('Missing session notebook');
  for(const t of data.meta.tracks){if(!Number.isInteger(t.startFrame)||!Number.isInteger(t.endFrame)||t.startFrame<0||t.endFrame<t.startFrame||t.endFrame>data.records.length)throw new Error('Invalid run boundaries');t.summary=summarize(data.records.slice(t.startFrame,t.endFrame));t.markers=t.markers||[];}
- editing=null;records=data.records;collectedBytes=records.reduce((n,p)=>n+p.length,0);meta=data.meta;historyPackets=records.slice(-256);history=historyPackets.map(decode);latest=history.at(-1);lastReceived=0;unsaved=false;
+ replay.clear();editing=null;records=data.records;collectedBytes=records.reduce((n,p)=>n+p.length,0);meta=data.meta;historyPackets=records.slice(-256);history=historyPackets.map(decode);latest=history.at(-1);lastReceived=0;unsaved=false;
  renderTracks();notice(meta.demo?'This is a simulated session, not device evidence.':'Saved session opened.');controls();
  }catch(e){notice(e.message);}
 };
 $('demo').onclick=()=>{
  meta.demo=true;$('track').value='Simulated 150 BPM groove';$('style').value='Demo';status('SIMULATED SIGNAL — no device evidence');
  let f=0;demoTimer=setInterval(()=>{for(let i=0;i<4;i++){
- const p=new Uint8Array(24),v=new DataView(p.buffer);const phase=f%25,k=15+180*Math.exp(-phase/3);
+ const p=new Uint8Array(1092),v=new DataView(p.buffer);const phase=f%25,k=15+180*Math.exp(-phase/3);
  v.setUint32(0,1000+f*16,true);v.setUint16(4,300,true);v.setUint16(6,k*4,true);v.setUint16(8,100,true);v.setUint16(10,k*3,true);v.setUint16(12,1500,true);
- p[14]=255;p[15]=51;p[16]=255;p[18]=phase===0?3:0;p[19]=k;p[20]=90;p[21]=45;v.setUint16(22,1,true);receive(p);f++;}},64);controls();
+ p[14]=255;p[15]=51;p[16]=255;p[18]=(phase===0?3:0)|((f%125)<75?64:0);p[19]=k;p[20]=90;p[21]=45;v.setUint16(22,1,true);v.setUint32(24,f,true);p.set([80,67,77,49],64);
+ for(let j=0;j<256;j++){const t=(f*256+j)/16000;v.setInt16(68+j*4,Math.round(2000*Math.sin(2*Math.PI*440*t)),true);v.setInt16(70+j*4,Math.round(1000*Math.sin(2*Math.PI*660*t)),true);}receive(p);f++;}},64);controls();
 };
 setInterval(()=>{
  controls();if(run){const sec=Math.floor((performance.now()-started)/1000);$('timer').textContent=`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`;}
  $('size').textContent=(collectedBytes/1024).toFixed(0);
  if(latest){$('bpm').textContent=latest.bpm?latest.bpm.toFixed(0):'—';$('confidence').textContent=(latest.confidence*100).toFixed(0)+'%';$('level').textContent=latest.rms;
  const recent=summarize(historyPackets);
- $('health').textContent=performance.now()-lastReceived>1500?'No live frames. Saved data is retained.':`${latest.flags&16?'CLIPPING · lower playback level':'Signal arriving'} · ${recent.featureHz?.toFixed(1)??'—'} audio frames/s · ${latest.power?'Renderer paused · ':''}${latest.flags&64?'Would dance':latest.flags&128?'Speech response':'No dance admission'} · ${deviceLost} device drops${latest.cpuUs!==null?' · analysis '+latest.cpuUs+' µs':''}${latest.flags&8?' · own voice flagged':''}`;
+ $('health').textContent=performance.now()-lastReceived>1500?'No live frames. Saved data is retained.':`${latest.flags&16?'CLIPPING · lower playback level':'Signal arriving'} · ${recent.featureHz?.toFixed(1)??'—'} audio frames/s · ${latest.hasAudio?'Stereo PCM · ':''}${latest.power?'Renderer paused · ':''}${latest.flags&64?'Would dance':latest.flags&128?'Speech response':'No dance admission'} · ${deviceLost} device drops${latest.cpuUs!==null?' · analysis '+latest.cpuUs+' µs':''}${latest.flags&8?' · own voice flagged':''}`;
  if(latest.power)drawSpectrum(latest.power);}
  else{for(const id of ['bpm','confidence','level'])$(id).textContent='—';$('health').textContent='Waiting for feature packets…';}
  const c=$('graph').getContext('2d');c.clearRect(0,0,900,280);const max=Math.max(30,...history.map(a=>a.kick));

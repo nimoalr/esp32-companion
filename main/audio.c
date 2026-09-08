@@ -491,7 +491,7 @@ static void audio_task(void *arg)
         portENTER_CRITICAL(&s_lock);
         s_feat.cpu_us = us;
         portEXIT_CRITICAL(&s_lock);
-        music_trace_offer(&s_feat,(uint32_t)(t0/1000),s_trace.kick,s_trace.mean,s_trace.previous,s_trace.presence,s_trace.flags,s_band_power,us);
+        music_trace_offer(&s_feat,(uint32_t)(t0/1000),s_trace.kick,s_trace.mean,s_trace.previous,s_trace.presence,s_trace.flags,s_band_power,us,pcm);
     }
     s_task = NULL;
     vTaskDelete(NULL);

@@ -1,5 +1,8 @@
 # Dedicated capture and frequency coverage
 
+This describes the initial v2 feature-only change. For the subsequent lossless
+stereo stream, static screen message and timeline editor, see [Stereo capture](STEREO_CAPTURE.md).
+
 The owner's “Close the Curtains” reference exposed a difference between display
 FPS and useful captured coverage. The saved legacy run contains 11,965 records:
 191.4 seconds of 16 ms frames over 220.8 seconds of host recording, across four

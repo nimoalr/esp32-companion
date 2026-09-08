@@ -169,7 +169,7 @@ typedef struct {
     uint8_t painted_cracks;
     bool recording;
     behavior_t capture_behavior;
-    uint32_t capture_tick;
+    uint32_t capture_tick,capture_entered;
     uint32_t bench_since,bench_taps;
     int bench_case;
     glass_t glass;
@@ -537,6 +537,23 @@ static void drain_taps(void)
     }
 }
 
+/* One static message, then no raster or display traffic until explicit exit. */
+static void capture_message(void)
+{
+    const char *lines[]={"USB MUSIC", "RECORD MODE", "Stereo mics ready", "Tap screen to exit"};
+    for(int y=0;y<DISPLAY_H;y+=DISPLAY_BAND_ROWS){
+        int rows=DISPLAY_H-y;if(rows>DISPLAY_BAND_ROWS)rows=DISPLAY_BAND_ROWS;
+        uint16_t *pixels=display_acquire_band();memset(pixels,0,DISPLAY_W*rows*2);
+        gfx_band_t band={pixels,0,y,DISPLAY_W,rows};
+        for(int i=0;i<4;i++){
+            const gfx_font_t *font=i<2?&font_spleen_16x32:&font_spleen_12x24;
+            gfx_text(&band,font,(DISPLAY_W-gfx_text_width(font,lines[i]))/2,150+i*44,lines[i],gfx_rgb(130,185,155),GFX_TRANSPARENT);
+        }
+        display_push(0,y,DISPLAY_W,rows,pixels);
+    }
+    display_wait_idle();brightness_set_now(20);
+}
+
 static void eyes_closed_now(render_ctx_t *c, uint32_t now_ms)
 {
     eye_pose_t closed = EYE_POSE_NEUTRAL;
@@ -659,17 +676,20 @@ static void render_task(void *arg)
         music_trace_poll();
         if(music_trace_active()) {
             if(!c.recording) {
-                c.recording=true;c.bench_since=0;s_perf_active=false;
+                c.recording=true;c.capture_entered=now_ms;drain_taps();c.bench_since=0;s_perf_active=false;
                 speech_set_inhibited(true);
                 push_drain();brightness_set_now(0);
                 c.mode=MODE_EYES;power_wake_to_active(now_ms);state=POWER_ACTIVE;
                 behavior_init(&c.capture_behavior,now_ms);c.capture_tick=0;
                 sync_audio(&c,true);
                 if(!audio_running())music_trace_enable(false);
+                capture_message();
             }
             /* No animation, raster, texture, PSRAM frame copy or display push.
              * Worker/push tasks remain blocked on their empty queues. */
-            drain_taps();
+            touch_event_t capture_touch;
+            while(xQueueReceive(s_tap_q,&capture_touch,0)==pdTRUE)
+                if(capture_touch.type==TOUCH_TAP && now_ms-c.capture_entered>500)music_trace_enable(false);
             power_update(now_ms,now_ms);
             if(power_take_key()==2)music_trace_enable(false);
             if(now_ms-c.capture_tick>=16) {
