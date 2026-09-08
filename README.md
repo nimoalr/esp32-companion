@@ -32,6 +32,20 @@ Tunables live under `idf.py menuconfig` -> "Eyes" (display clock and
 brightness, power timeouts, thresholds, CPU clock, deep state). Defaults are in
 `sdkconfig.defaults`.
 
+The 16 MiB flash uses [`partitions.csv`](partitions.csv): a **4 MiB factory
+application** at `0x10000`, with the original 24 KiB NVS settings partition at
+`0x9000` and 4 KiB PHY partition at `0xF000`. The remaining 11.94 MiB is
+unallocated. There are no OTA slots. The current firmware occupies about
+813 KiB, leaving roughly 3.2 MiB in the application slot.
+
+For an existing checkout with the old generated `sdkconfig`, select
+`idf.py menuconfig` -> "Partition Table" -> "Custom partition table CSV"
+and set the CSV filename to `partitions.csv`, then rebuild. Fresh configurations
+select it from the defaults. Use the full `idf.py -p PORT flash` command to
+update both the partition table and application; `app-flash` alone does not
+update the table. No erase is needed: settings and calibration stay at their
+existing offsets.
+
 ## What it does
 
 **Eyes.** Two orange capsules blink every 3..10 s and dart to a new spot

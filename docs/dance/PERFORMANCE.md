@@ -40,4 +40,4 @@ Send `MC_BENCH` followed by a newline over `/dev/cu.usbmodem101` at 115200 baud 
 
 Passed: `dance_test`, `bar_runs_test`, `charge_cache_test`, `dance_quality`, `glass_test`, and `sweep`, built with undefined-behavior checking. The sweep exercised 49,932 frames with zero bounding-box/guard violations. Cache tests compare generic versus cached pixels and tiled output; bar tests compare 15,000 fractional/clipped rows; dance tests exercise both quality settings and old/new damage cleanup.
 
-AddressSanitizer on this Mac deadlocked inside its own shadow-memory initialization before the tests entered `main`; those processes were stopped. No ASan pass is claimed. Build succeeds with the existing stack-frame size checks; final app partition has 21% free.
+AddressSanitizer on this Mac deadlocked inside its own shadow-memory initialization before the tests entered `main`; those processes were stopped. No ASan pass is claimed. Build succeeds with the existing stack-frame size checks. The benchmark used the original 1 MiB application partition (21% free); the subsequent custom layout expands it to 4 MiB, leaving about 80% free without changing renderer RAM usage.
