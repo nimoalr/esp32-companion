@@ -26,6 +26,7 @@ bool speech_purring(void);      /* currently rendering a purr; excludes queued/d
 /* Invalidate queued and active affection without discarding impact effects. */
 void speech_cancel_purr(void);
 void speech_cancel_voice(void);
+void speech_set_inhibited(bool on); /* exclusive recording: suppress voices and effects */
 /* settings */
 void speech_set_register(voice_register_t reg);
 void speech_set_volume(int pct);

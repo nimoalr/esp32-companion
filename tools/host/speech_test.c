@@ -49,5 +49,11 @@ int main(void)
     writes=last_nonzero=0;action=0;speech_cancel_purr();say(&next);assert(writes>7); /* purr cancellation leaves words intact */
     writes=last_nonzero=0;action=3;speech_effect(SFX_BONK,1);req_t effect={.kind=REQ_EFFECT};say(&effect);
     assert(writes>=50&&!sfx_active(&s_effects)&&!uxQueueMessagesWaiting(s_effect_q));
+    speech_effect(SFX_BONK,1);speech_set_inhibited(true);assert(!uxQueueMessagesWaiting(s_effect_q));
+    assert(!speech_word(0,.5f,true));assert(!speech_gesture(VOICE_PURR,.5f,true));
+    speech_effect(SFX_GLASS,1);assert(!uxQueueMessagesWaiting(s_effect_q));
+    writes=last_nonzero=0;say(&effect);assert(!writes);mix_effects(pcm,160);assert(!sfx_active(&s_effects));
+    speech_set_inhibited(false);assert(speech_word(0,.5f,true));
+    puts("PASS exclusive capture suppresses queued/new effects and voices, and restores speech on exit");
     puts("PASS drained I2S before amplifier-off, effects arriving during playback, active purr and word interruption at next block, queued purr invalidation, intact replacement word, simultaneous bonk + crack");
 }

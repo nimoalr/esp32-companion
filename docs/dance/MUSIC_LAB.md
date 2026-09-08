@@ -112,3 +112,13 @@ ffmpeg -v error -y -f rawvideo -pixel_format rgb24 -video_size 932x265 -framerat
 tools/host/build.sh rush_test -fsanitize=undefined -fno-sanitize-recover=all
 tools/host/bin/rush_test
 ```
+
+## Dedicated recording update
+
+USB recording now pauses all eye rendering and display transfers until explicit
+exit (Disconnect / MC_STOP, or a two-second PWR hold). It has no lease timeout
+and does not stop on an unexpected USB disconnect. Microphone analysis remains
+62.5 frames/s; display FPS is deliberately zero. V2 adds CRC/sequence tracking,
+analysis timing and sixteen raw FFT power bands, with per-track and corpus
+frequency summaries (~240 KB/minute). Legacy captures remain readable. See
+[the current protocol and workflow](../../tools/music-lab/README.md).

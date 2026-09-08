@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {decode,parseLine,pack,unpack,summarize} from './trace.mjs';
+import {decode,parseLine,pack,unpack,summarize,summarizeCorpus,crc32} from './trace.mjs';
 const [p]=parseLine(readFileSync('tools/host/out/trace-fixture.log','utf8'));
 assert.equal(p.length,24);const a=decode(p);assert.equal(a.ms,123456);assert.equal(a.rms,300);assert.equal(a.bpm,150);assert.equal(a.session,7);
 assert.equal(a.flags,3);assert.equal(a.confidence,1);assert.equal(a.ratio,.4);
@@ -9,7 +9,25 @@ assert.equal(parseLine('MC1:'+Buffer.from(p).toString('hex')+'\x1b[0m').length,1
 const records=[];for(let i=0;i<3750;i++){const q=p.slice();new DataView(q.buffer).setUint32(0,1000+i*16,true);records.push(q);}
 const s=summarize(records);assert.equal(s.bytes,90000);assert.equal(s.beats,3750);assert.equal(s.missingMs,0);assert.equal(s.segments,1);
 const meta={format:1,demo:true,tracks:[{track:'synthetic <label>',startFrame:0,endFrame:3750,markers:[]}]};
-const blob=pack(meta,records);const round=unpack(await blob.arrayBuffer());assert.deepEqual(round.meta,meta);assert.deepEqual(round.records,records);
+const blob=pack(meta,records);const round=unpack(await blob.arrayBuffer());assert.deepEqual(round.meta,{...meta,recordBytes:24});assert.deepEqual(round.records,records);
 assert.throws(()=>unpack(new ArrayBuffer(3)));const truncated=new Uint8Array(await blob.arrayBuffer()).slice(0,-1).buffer;assert.throws(()=>unpack(truncated));
 new DataView(records[200].buffer).setUint32(0,1000+200*16+64,true);assert(summarize(records).missingMs>0);
 console.log('PASS: firmware fixture decoding, malformed packets, one-minute storage, metadata/binary round trip, timing gaps');
+
+const [v2]=parseLine(readFileSync('tools/host/out/trace-v2-fixture.log','utf8'));
+assert.equal(v2.length,64);const b=decode(v2);assert.equal(b.sequence,42);assert.equal(b.cpuUs,777);
+b.power.forEach((v,i)=>assert(Math.abs(v-(i+1)*.001)<(i+1)*.001*.004));
+const damaged=readFileSync('tools/host/out/trace-v2-fixture.log','utf8').replace('MC2:40','MC2:41');assert.throws(()=>parseLine(damaged));
+assert.equal(crc32(new TextEncoder().encode('123456789')),0xcbf43926);
+const v2frames=Array.from({length:6250},(_,i)=>{const q=v2.slice(),d=new DataView(q.buffer);d.setUint32(0,1000+i*16,true);d.setUint32(24,i,true);return q;});
+const vs=summarize(v2frames);assert.equal(vs.bytes,400000);assert.equal(vs.featureHz,62.5);assert.equal(vs.droppedFrames,0);assert.equal(vs.cpuMaxUs,777);assert(vs.spectrum);
+assert(Math.abs(vs.spectrum.energyPercent.reduce((a,b)=>a+b,0)-100)<1e-6);
+v2frames.splice(100,3);assert.equal(summarize(v2frames).droppedFrames,3);
+const mixed=unpack(await pack(meta,[p,v2]).arrayBuffer());assert.equal(mixed.meta.format,2);assert.equal(decode(mixed.records[0]).power,null);assert.deepEqual(decode(mixed.records[1]),b);
+const corpus=summarizeCorpus([{summary:vs},{summary:vs}]);assert.equal(corpus.tracks,2);assert.deepEqual(corpus.equalTrackPercent,vs.spectrum.energyPercent);
+console.log('PASS: v2 raw power, CRC corruption, mixed legacy import, 62.5 Hz cadence, exact sequence loss and corpus weighting');
+const first={frames:10,meanPower:[1,...Array(15).fill(0)],energyPercent:[100,...Array(15).fill(0)]};
+const second={frames:90,meanPower:[0,1,...Array(14).fill(0)],energyPercent:[0,100,...Array(14).fill(0)]};
+const weighted=summarizeCorpus([{summary:{spectrum:first}},{summary:{spectrum:second}},{summary:{spectrum:null}}]);
+assert.equal(weighted.tracks,2);assert.deepEqual(weighted.equalTrackPercent.slice(0,2),[50,50]);assert.deepEqual(weighted.energyPercent.slice(0,2),[10,90]);
+console.log('PASS: unequal-duration clips have distinct equal-track and pooled-energy summaries; legacy spectra excluded');

@@ -28,6 +28,7 @@ typedef struct {
 
 static QueueHandle_t s_q, s_effect_q;
 static sfx_t s_effects;
+static atomic_bool s_inhibited;
 typedef struct {sfx_id_t id;float level;} effect_req_t;
 static volatile bool s_busy;
 static atomic_bool s_purring;
@@ -49,23 +50,25 @@ static bool wait_audio(void)
 static void mix_effects(int16_t *pcm,int n)
 {
     effect_req_t e;
+    if(atomic_load(&s_inhibited)){while(xQueueReceive(s_effect_q,&e,0)==pdTRUE){}memset(&s_effects,0,sizeof s_effects);return;}
     while(xQueueReceive(s_effect_q,&e,0)==pdTRUE)sfx_start(&s_effects,e.id,e.level);
     if(sfx_active(&s_effects))sfx_mix(&s_effects,pcm,n);
 }
 void speech_effect(sfx_id_t id,float level)
 {
-    if(!s_effect_q || !s_q)return;
+    if(atomic_load(&s_inhibited)||!s_effect_q || !s_q)return;
     effect_req_t e={id,level};if(xQueueSend(s_effect_q,&e,0)!=pdTRUE)return;
     const req_t wake={.kind=REQ_EFFECT};xQueueSend(s_q,&wake,0);
 }
 
 static bool canceled(const req_t *r)
 {
-    return r->epoch!=atomic_load(&s_epoch) ||
+    return atomic_load(&s_inhibited) || r->epoch!=atomic_load(&s_epoch) ||
         (r->kind==REQ_GESTURE && r->id==VOICE_PURR && r->purr_epoch!=atomic_load(&s_purr_epoch));
 }
 void speech_cancel_purr(void){atomic_fetch_add(&s_purr_epoch,1);atomic_store(&s_purring,false);}
 void speech_cancel_voice(void){atomic_fetch_add(&s_epoch,1);atomic_store(&s_purring,false);}
+void speech_set_inhibited(bool on){atomic_store(&s_inhibited,on);if(on){speech_cancel_voice();if(s_effect_q)xQueueReset(s_effect_q);}}
 
 /* One 10 ms ramp from the last emitted sample; cancellation does not wait for
  * a looping gesture or a word to finish and does not cut at arbitrary amplitude. */
@@ -97,12 +100,12 @@ static void drain_sound(void)
 
 static void say(const req_t *r)
 {
-    if(r->kind!=REQ_EFFECT && canceled(r))return;
+    if(atomic_load(&s_inhibited)||(r->kind!=REQ_EFFECT && canceled(r)))return;
     if (!wait_audio()) {
         ESP_LOGW(TAG, "no audio, dropped");
         return;
     }
-    if(r->kind!=REQ_EFFECT && canceled(r))return;
+    if(atomic_load(&s_inhibited)||(r->kind!=REQ_EFFECT && canceled(r)))return;
     audio_set_muted(true);
     audio_pa(true);
     play_silence(PA_LEAD_MS);
@@ -174,7 +177,7 @@ esp_err_t speech_init(void)
 
 static bool post(const req_t *r, bool interrupt)
 {
-    if (!s_q) return false;
+    if (atomic_load(&s_inhibited)||!s_q) return false;
     if (s_busy && !interrupt) return false;
     if (interrupt) {atomic_fetch_add(&s_epoch,1);xQueueReset(s_q);}
     req_t queued=*r;queued.epoch=atomic_load(&s_epoch);queued.purr_epoch=atomic_load(&s_purr_epoch);

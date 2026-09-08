@@ -1,127 +1,91 @@
-# Music Lab
+# Music Lab — dedicated USB recording
 
-Local coordination page for labeled, full-track ESP32 microphone feature capture.
-No server-side processing, external libraries, accounts, uploads or waveform storage.
-The firmware does not change detection thresholds from these recordings automatically.
+Run `tools/music-lab/serve.sh`, then open http://127.0.0.1:8765/ in Chrome/Edge.
+The page uses Web Serial; no accounts, cloud, raw audio recording, or device flash writes.
 
-## Start
+1. Connect ESP32. `MC_START` enables exclusive recording: the screen goes dark,
+   animations/personality/rendering and display transfers stop, microphone analysis stays on.
+2. Label each reference, Start run before playback, mark issues, End run afterward.
+   Ending a run keeps the device in recording mode for the next track.
+3. Download the notebook before closing/reloading the page.
+4. Disconnect explicitly sends `MC_STOP`. Alternatively hold PWR for two seconds.
+   Unexpected USB loss or a backgrounded browser **does not end recording mode**.
+   There is no heartbeat lease. Reconnect to resume; a finite queue cannot preserve
+   all samples during an arbitrarily long disconnect, and gaps are reported.
 
-On the Mac, from the repository root:
+The normal microphone gain and music-admission thresholds are unchanged. A cheap
+shadow behavior update labels whether the detector **would dance/listen**; these are
+not rendered emotions. Own voice and impact effects are inhibited. On exit the
+normal renderer/personality resume and the normal inactivity countdown restarts.
 
-```sh
-tools/music-lab/serve.sh
+## Cadence and transport
+
+Audio remains 16 kHz stereo, 256 samples/channel per analysis frame: **62.5 feature
+frames/s**. Display FPS is zero during capture and is not a capture-rate metric.
+Shortening the audio window would reduce the current 62.5 Hz FFT-bin resolution,
+so this change improves reliability without changing detector timing or FFT size.
+
+A low-priority writer on core 1 sends at most eight records per CRC32-protected
+`MC2:` hexadecimal line. It preserves partial writes and retries nonblocking USB
+writes. Audio enqueue never waits. Queue: 128 × 64 bytes (~2 seconds), writer stack
+4 KiB, USB TX ring 4 KiB. A stalled reader eventually causes counted queue drops;
+sequence numbers additionally expose transport gaps. Stop can discard pending
+transport data; the page ends an active run and retains already received records.
+
+`MC_START` is idempotent; reconnecting does not reset a live session or its sequence.
+`MC_PING` requests status, not a lease renewal. `MC_STATE` reports produced frames,
+queue drops and renderer state. A host that stops reading cannot block the audio
+or control loops. Existing UART/log output is not used for feature transport.
+
+## Version 2: 64 bytes/frame, about 240 KB/minute
+
+All integers little-endian. The first 24 bytes retain the v1 layout:
+
+| Bytes | Contents |
+|---|---|
+| 0–3 | Device milliseconds |
+| 4–5 | Raw stereo RMS, ADC LSB |
+| 6–11 | Kick, running mean and previous kick RMS, quarter-LSB units |
+| 12–13 | BPM × 10 |
+| 14–17 | Presence, bass ratio, confidence, speech modulation depth |
+| 18 | Candidate/beat/speech/own-output/clipping/rush/would-dance/would-listen flags |
+| 19–21 | Existing gain-adjusted bass/mid/high display levels |
+| 22–23 | Session ID |
+| 24–27 | Sequence, incremented for every offered frame, including queue drops |
+| 28–29 | Analysis CPU time, microseconds (excludes packet packing/enqueue) |
+| 30–31 | Peak ADC magnitude; 65535 marks a converted legacy record |
+| 32–63 | Sixteen raw FFT band powers, positive bfloat16 |
+
+Raw spectrum is the sum of squared FFT magnitudes in each band **before automatic
+band gain and presence weighting**, with the existing Hann window and mono mix.
+Bfloat16 preserves the float exponent range with approximately 0.4% relative
+rounding error, using bit operations on the device. It is not calibrated SPL.
+Band edges in Hz: 62.5, 125, 187.5, 250, 312.5, 375, 437.5, 562.5, 750, 1000,
+1312.5, 1750, 2375, 3187.5, 4250, 5687.5, 8000. DC and the Nyquist bin are omitted.
+
+The page saves each track’s mean band power and integrated energy percentages.
+The corpus view includes equal-track weighting and pooled energy weighting,
+separately for music, speech, quiet and other noise. These answer different
+questions; long/loud tracks dominate pooled energy. Compare matched microphone
+gain/setup, and remember the bands have unequal widths. Legacy recordings retain
+all old data but cannot supply a reliable raw frequency split retroactively.
+
+`.mcal`: `MCALv002`, 32-bit JSON length, JSON metadata, then 64-byte records.
+Readers still accept `MCALv001` / 24-byte records; mixed exports promote legacy
+records with missing-spectrum markers. Storage is ~14.4 MB/hour plus metadata.
+The page caps sessions at 500,000 frames and imports at 64 MB. No automatic
+sensitivity retuning is performed; retain speech/noise negatives and held-out tracks.
+
+## Offline tools and checks
+
 ```
-
-On Windows with Python installed:
-
-```powershell
-py -m http.server 8765 --bind 127.0.0.1 --directory tools/music-lab
-Start-Process http://localhost:8765
-```
-
-Open http://localhost:8765 in Chrome or Edge. This uses the browser's
-[Web Serial API](https://developer.chrome.com/docs/capabilities/serial), which
-requires a secure context and a user-initiated port selection; localhost qualifies.
-Close `idf.py monitor`, the serial logger or any other program holding the port.
-Click **Connect ESP32** and select its USB JTAG/serial port. The page starts the
-feature stream; wake the companion with the power button if it is asleep.
-The device's **Record music USB / Stop music capture** menu remains available too.
-
-Name each run, choose music/speech/quiet/noise, and note style, playback level,
-speaker/distance and any expected BPM. Start the run before playback, then mark
-**Track starts**. Mark missed kicks, snares instead of kicks, false dancing,
-breakdowns, tempo/loop changes and good tracking as they happen. End each run,
-then start another. Download the session before closing the page. **Disconnect**
-sends the device a stop command. Unplugging USB also ends capture. The page sends a heartbeat every two seconds;
-90 seconds without control traffic ends abandoned capture and restores ordinary
-sleep timing. A device-menu capture needs the page connected within that window.
-
-The page can reopen `.mcal` sessions; expand a run to review markers or correct
-its labels. Corrections update metadata without changing captured frames. New session
-requires downloading any unsaved recording first. The simulated signal is clearly
-labeled as a demo in both the page and file and cannot be mixed into a real run.
-
-## Useful first collection
-
-Start with the two troublesome tracks in full, at the usual volume. Add a few
-contrasting styles, including sparse/breakdown-heavy music and dense rolling bass.
-Repeat one or two at quieter and louder levels, keeping device placement stable.
-Add speech/TV and a quiet-room run as negative examples. Keep some complete tracks
-aside when tuning; otherwise we can improve familiar tracks while hurting new ones.
-A useful first set is roughly 30–60 minutes, not hours of the same groove.
-
-These labels are reference categories and human observations, not beat-accurate
-ground truth. Marker timestamps use the latest device frame and have roughly
-100 ms of transport delay, plus human reaction time. The page does not control
-Spotify playback. It cannot tell from the title where a song started; mark it.
-
-## What is retained
-
-Every 16 ms analysis frame becomes an explicitly encoded 24-byte record:
-
-| Bytes | Meaning |
-| --- | --- |
-| 0–3 | Device milliseconds, unsigned little endian |
-| 4–5 | Full-band RMS, LSB |
-| 6–11 | Kick RMS, pre-update kick mean, previous kick RMS; each uint16 in quarter-LSB units |
-| 12–13 | Detector BPM × 10 |
-| 14 | Presence × 255 |
-| 15 | Bass ratio × 127.5 (range 0–2) |
-| 16 | Tempo confidence × 255 |
-| 17 | Speech modulation depth × 64 |
-| 18 | Flags: candidate, accepted beat, speech, own voice, clipping, rush, dancing, listening |
-| 19–21 | Normalized bass/mid/high × 255 |
-| 22–23 | Device recording-session ID |
-
-The host file is `MCALv001` (8 bytes), JSON-byte-count (uint32 LE), UTF-8 JSON,
-then the records. JSON contains run frame ranges, labels, device configuration,
-markers, summaries, one-second performance samples and transport warnings. Frame timestamps expose timing gaps;
-queue overflow is reported explicitly. The page caps one session at 500,000
-frames (about 133 minutes / 12 MB of feature data).
-
-Storage is **90,000 bytes per minute**, about 450 KB for a five-minute track and
-5.4 MB per hour, plus labels. Device flash receives **zero recording writes**.
-The analyser makes a nonblocking copy to a 128-record queue (3,072 payload bytes).
-A low-priority task with a 3 KB stack batches ASCII-hex packets directly to the
-secondary USB console; it avoids sending the bulk stream through the slower UART
-or holding the global log lock. There is no second FFT or audio capture pass.
-The queue/task are allocated once, on first use, and reused. The USB driver also
-reserves 2 KB TX and 256 bytes RX plus its bookkeeping at startup. When idle, the writer
-blocks on its queue. USB control reads are bounded and nonblocking, every 100 ms.
-
-Capture keeps microphones continuously active and the device awake, suppresses
-spontaneous speech/effects, and preserves ordinary music admission thresholds.
-This deliberately differs from normal intermittent listening. Entering the mic
-axis wizard ends music capture because that wizard uses a different gain.
-Dancing/listening flags reflect the render task's latest state (up to one frame
-behind), including manual dance. Own playback and clipping are separately flagged.
-
-This is enough to tune onset gates, confidence, presence and session timing. It
-cannot replay different frequency filters or recover the original sound: those
-experiments still need source audio or a fresh run. No automatic global sensitivity
-adjustment is made from music-only evidence.
-
-## Offline inspection and reproduction
-
-Plain-C export, without NumPy or another runtime dependency:
-
-```sh
 tools/host/build.sh music_report
 tools/host/bin/music_report session.mcal frames.csv labels.json
-```
-
-Compare detector candidates and accepted beats around marked sections; assess
-false positives on speech/noise and keep whole-track holdouts. Any resulting
-threshold change should be checked against the existing audio regressions and
-replayed on held-out recordings before applying it to firmware.
-
-Tests:
-
-```sh
-tools/host/build.sh trace_test -DAUDIO_ANALYSIS_HOST -fsanitize=undefined -fno-sanitize-recover=all
+tools/host/build.sh trace_test -DAUDIO_ANALYSIS_HOST -fsanitize=undefined
 tools/host/bin/trace_test
 node tools/music-lab/trace.test.mjs
 ```
 
-The Node check only tests the browser's plain-JavaScript codec; Node is not needed
-for using the page or the C exporter.
+The plain-C exporter accepts both versions and includes raw powers, sequence,
+analysis time and peak for v2. Browser codec tests cover legacy/mixed imports,
+CRC corruption, saturation, gaps, exact frame rate and corpus aggregation.

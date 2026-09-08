@@ -19,4 +19,3 @@ static inline power_state_t power_policy_next(power_state_t state, uint32_t now,
     }
     return state;
 }
-#define MUSIC_CONTROL_LEASE_MS 90000u

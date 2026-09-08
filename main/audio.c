@@ -94,7 +94,10 @@ static float s_dir_corr;
 static int s_dir_peak;
 static float s_dir_level_db;
 static float s_presence;              /* 0..1: is there real sound, from the raw level (quiet room ~18 LSB) */
-static float s_band_max[16], s_bands[16];
+static float s_band_max[16], s_bands[16], s_band_power[16];
+#ifndef AUDIO_ANALYSIS_HOST
+static struct {float kick,mean,previous,presence;unsigned flags;} s_trace;
+#endif
 /* speech: the mid band's envelope pulses at syllable rate (3-8 Hz) */
 static float s_sp_fast, s_sp_slow, s_sp_mod;
 static int s_sp_on, s_sp_off;
@@ -205,6 +208,7 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
         for (int b = 0; b < 16; b++) {
             float pw = 0.f;
             for (int k = k_edge[b]; k < k_edge[b + 1]; k++) pw += s_re[k] * s_re[k] + s_im[k] * s_im[k];
+            s_band_power[b]=pw;
             const float lv = sqrtf(pw);
             s_band_max[b] *= 0.998f;
             if (lv > s_band_max[b]) s_band_max[b] = lv;
@@ -434,8 +438,8 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     s_feat.dir_pre = s_micdir.pre;
     portEXIT_CRITICAL(&s_lock);
 #ifndef AUDIO_ANALYSIS_HOST
-    music_trace_offer(&s_feat,now_ms,kick_e,trace_mean,trace_prev,s_presence,
-        candidate | (beat<<1) | (s_speech<<2) | (own_voice<<3) | ((peak>=32760)<<4) | ((s_rush.event_ms==now_ms)<<5));
+    s_trace.kick=kick_e;s_trace.mean=trace_mean;s_trace.previous=trace_prev;s_trace.presence=s_presence;
+    s_trace.flags=candidate | (beat<<1) | (s_speech<<2) | (own_voice<<3) | ((peak>=32760)<<4) | ((s_rush.event_ms==now_ms)<<5);
 #else
     (void)trace_mean;(void)trace_prev;
 #endif
@@ -487,6 +491,7 @@ static void audio_task(void *arg)
         portENTER_CRITICAL(&s_lock);
         s_feat.cpu_us = us;
         portEXIT_CRITICAL(&s_lock);
+        music_trace_offer(&s_feat,(uint32_t)(t0/1000),s_trace.kick,s_trace.mean,s_trace.previous,s_trace.presence,s_trace.flags,s_band_power,us);
     }
     s_task = NULL;
     vTaskDelete(NULL);

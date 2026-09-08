@@ -22,7 +22,7 @@ python3 tools/host/tile.py sheet.png 6 2 tools/host/out/e_*.ppm   # cols, downsc
 | `rim_test` | physical-disc visibility, hidden pauses, staggered peeks, rotated touch retreat, interrupted orbit and loop recovery for all ten rim actions |
 | `expression_preview` | all 51 poses plus attitude, playful, rim, high-roller, transition and before/after recovery videos; use `expressions.sh` to encode into `docs/expressions/` |
 | `dance_preview`, `dance.sh` | real spectrum, mirror-ball, spotlight and background-laser rendering; a synthetic kick/breakdown/return sequence in `docs/dance/` |
-| `dance_test` | all-fill laser occlusion, horizontal emitter row, rotated damage bounds, tiled rendering, independent 30–60 s timer, music response, clean exit, 30 Hz cap and dance timing at two frame rates |
+| `dance_test` | all-fill laser occlusion, horizontal emitter row, rotated damage bounds, tiled rendering, independent 30–60 s timer, music response, clean exit, 20 Hz cap and dance timing at two frame rates |
 | `interaction_test` | all 26 idle choices, situational handling/conversation/food, purr affection phases, accepted-line gestures, scene priority, quiet rotation and tapped lower lids |
 | `personality_preview` | real behavior/renderer preview of petting and purring, knock recovery, and conversation; `personality.sh` exports a small MP4 |
 | `play_test` | continuous caresses, randomized sickness and games, rigid puck collisions, staged headbutts, crack compositing and procedural effects |

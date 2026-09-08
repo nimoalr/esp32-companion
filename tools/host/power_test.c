@@ -23,8 +23,6 @@ int main(void)
     }
     assert(!power_idle_expired(0xfffffff0u,0xfffffff8u,30000));
     assert(power_idle_expired(30000,0xfffffff0u,30000));
-    assert(!power_idle_expired(1000+MUSIC_CONTROL_LEASE_MS-1,1000,MUSIC_CONTROL_LEASE_MS));
-    assert(power_idle_expired(1000+MUSIC_CONTROL_LEASE_MS,1000,MUSIC_CONTROL_LEASE_MS));
     /* A confirmed session stays awake for hours without any fresh onset or
      * confidence requirement in the power layer. Exit starts a fresh deadline. */
     uint32_t activity=1000,since=1000;power_state_t state=POWER_ACTIVE;
@@ -56,5 +54,5 @@ int main(void)
         behavior_update(&b,&in,t,&out);assert(b.state==BEH_MUSIC);
         assert(power_music_present(&in.audio,b.state==BEH_MUSIC));
     }
-    puts("PASS 30-minute dim deadline, three-hour music wake hold, audible breakdown, fresh countdown after music, false-onset rejection, touch wake, timestamp wrap, capture lease and varied nap/wake cycles");
+    puts("PASS 30-minute dim deadline, three-hour music wake hold, audible breakdown, fresh countdown after music, false-onset rejection, touch wake, timestamp wrap and varied nap/wake cycles");
 }

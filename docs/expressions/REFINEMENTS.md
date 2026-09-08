@@ -33,10 +33,10 @@ rejuvenate the dimmed character.
 audible breakdown grace period. Power does not demand fresh kicks or re-check
 rhythm confidence once behavior has admitted music. When the session exits, the
 normal inactivity countdown starts afresh. Unadmitted onsets do not count. A
-live Music Lab session intentionally stays awake too;
-its page sends a heartbeat every two seconds. Without control traffic for
-**90 seconds**, capture stops and ordinary sleep timing resumes. Closing a page
-can no longer leave an orphaned feature stream awake for hours.
+Music Lab recording now uses a dedicated mode: the analyser stays awake while
+the screen and renderer are paused. It persists through USB loss and browser
+backgrounding until explicit Disconnect/MC_STOP or a two-second PWR hold.
+See [capture reliability](../dance/CAPTURE_RELIABILITY.md).
 
 ## Loose eyes, rather than round pucks
 
@@ -124,7 +124,7 @@ runs only during a fade; the full-strength cached fill keeps its integer path.
 ## Validation and reproduction
 
 Host tests cover the three-hour idle deadline, timestamp wrap, false-onset
-rejection, capture lease, four-stroke qualification, interruption through actual
+rejection, four-stroke qualification, interruption through actual
 speech rendering, tap-spam escalation, retained anger under speech, rounded-body
 collisions, all-shard removal, damage coverage, tile equality, anger-mark cleanup
 and outgoing dance transitions to every animation. Existing audio/rush, character,

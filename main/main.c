@@ -167,6 +167,9 @@ typedef struct {
     petting_t pet;
     unsigned effect_seen;
     uint8_t painted_cracks;
+    bool recording;
+    behavior_t capture_behavior;
+    uint32_t capture_tick;
     uint32_t bench_since,bench_taps;
     int bench_case;
     glass_t glass;
@@ -653,6 +656,44 @@ static void render_task(void *arg)
 
     for (;;) {
         now_ms = ms_now();
+        music_trace_poll();
+        if(music_trace_active()) {
+            if(!c.recording) {
+                c.recording=true;c.bench_since=0;s_perf_active=false;
+                speech_set_inhibited(true);
+                push_drain();brightness_set_now(0);
+                c.mode=MODE_EYES;power_wake_to_active(now_ms);state=POWER_ACTIVE;
+                behavior_init(&c.capture_behavior,now_ms);c.capture_tick=0;
+                sync_audio(&c,true);
+                if(!audio_running())music_trace_enable(false);
+            }
+            /* No animation, raster, texture, PSRAM frame copy or display push.
+             * Worker/push tasks remain blocked on their empty queues. */
+            drain_taps();
+            power_update(now_ms,now_ms);
+            if(power_take_key()==2)music_trace_enable(false);
+            if(now_ms-c.capture_tick>=16) {
+                c.capture_tick=now_ms;
+                audio_features_t capture_audio={0};audio_get_features(&capture_audio);
+                behavior_in_t in={.cal=&g_settings.cal,.audio=capture_audio,.mic_available=c.mic_ok,.idle_allowed=true};
+                behavior_out_t out;
+                behavior_update(&c.capture_behavior,&in,now_ms,&out);
+                music_trace_context(c.capture_behavior.state==BEH_MUSIC,c.capture_behavior.state==BEH_LISTENING);
+            }
+            vTaskDelay(pdMS_TO_TICKS(5));
+            continue;
+        }
+        if(c.recording) {
+            c.recording=false;speech_set_inhibited(false);drain_taps();
+            const float energy=c.beh.energy,valence=c.beh.valence;
+            behavior_init(&c.beh,now_ms);c.beh.energy=energy;c.beh.valence=valence;
+            c.beh.taps_seen=c.tap_count;c.beh.strokes_seen=c.stroke_count;
+            memset(&c.pet,0,sizeof c.pet);
+            leave_ui(&c,now_ms);power_wake_to_active(now_ms);state=POWER_ACTIVE;
+            brightness_set_now(g_settings.brightness_active);
+            stats_t0=esp_timer_get_time();frames=0;raster_us_sum=0;raster_us_max=0;rects_sum=0;
+            s_push_us_sum=s_push_frames=0;music_trace_context(false,false);
+        }
 
         if(music_trace_take_benchmark()) {
             c.bench_since=now_ms;c.bench_taps=c.tap_count;c.bench_case=-1;
@@ -767,7 +808,6 @@ static void render_task(void *arg)
         }
         if(c.mode!=MODE_EYES || state!=POWER_ACTIVE || c.beh.state!=BEH_PETTED ||
            c.beh.shake>=.16f || c.sm.id==ANIM_DANCE || music_trace_active())speech_cancel_purr();
-        music_trace_poll();
         music_trace_context(c.mode==MODE_EYES && c.sm.id==ANIM_DANCE,c.mode==MODE_EYES && c.beh.state==BEH_LISTENING);
         sync_audio(&c, (c.sm.id == ANIM_DANCE && bo.override_anim < 0) || bo.want_mic || c.bench_since);
         if (audio_running()) {
@@ -777,7 +817,6 @@ static void render_task(void *arg)
         {
             pmic_battery_t pb;
             power_battery(&pb);
-            if(pb.present && !pb.vbus && music_trace_active())music_trace_enable(false);
             uint16_t fx, fy;
             persona_in_t pi = {
                 .in_ui = c.mode == MODE_UI || music_trace_active() || c.bench_since,
