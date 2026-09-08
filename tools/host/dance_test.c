@@ -16,7 +16,7 @@ static void paint(uint16_t *fb,const dance_lasers_t *l)
 {
     for(int y=0;y<466;y+=16) dance_lasers_paint(l,fb+y*466,0,y,466,466-y<16?466-y:16,shapes);
 }
-static void compositor(int fx)
+static void compositor(int fx,int samples)
 {
     eyes_init(&eyes,0);eyes_set_hotspot(&eyes,true);eyes_set_idle_rates(&eyes,0,Q16_ONE,0);
     memset(&lasers,0,sizeof lasers);
@@ -24,11 +24,13 @@ static void compositor(int fx)
     eyes_set_bar_heights(&eyes,0,bars);eyes_set_bar_heights(&eyes,1,bars);
     eyes_set_spots(&eyes,2,sx,sy,.3);eyes_set_disco(&eyes,.13,0);
     eyes_set_face_angle(&eyes,fx*11.f);eyes_set_fx(&eyes,fx,1);
-    eyes_update(&eyes,16,shapes);paint(plain,NULL);memcpy(before,plain,sizeof plain);
+    eyes_update(&eyes,16,shapes);
+    for(int i=0;i<2;i++)shapes[i].aa_samples=samples;
+    paint(plain,NULL);memcpy(before,plain,sizeof plain);
     unsigned changed_pixels=0;
     for(int f=0;f<90;f++) {
-        music.beat_count=f/3;music.last_beat_ms=(f/3)*120+1000;
-        assert(dance_background_update(&lasers,1,1,&music,(uint32_t)f*40+1000,(float)f*4));
+        music.beat_count=f/3;music.last_beat_ms=(f/3)*150+1000;
+        assert(dance_background_update(&lasers,1,1,&music,(uint32_t)f*50+1000,(float)f*4));
         for(int k=0;k<DANCE_LASER_MAX;k++)if(lasers.beam[k].light) {
             const dance_ray_t *ray=&lasers.beam[k];
             assert(hypotf(ray->origin_x-233,ray->origin_y-233)<=230);
@@ -52,14 +54,14 @@ static void compositor(int fx)
         memcpy(before,after,sizeof before);
     }
     assert(changed_pixels>10000);
-    assert(dance_lasers_update(&lasers,0,&music,5000,0));paint(after,&lasers);
+    assert(dance_lasers_update(&lasers,0,&music,5600,0));paint(after,&lasers);
     assert(!memcmp(after,plain,sizeof plain));
     for(int y=0;y<466;y++)for(int x=0;x<466;x++)if(after[y*466+x]!=before[y*466+x])
         assert(x>=lasers.damage[0]&&x<lasers.damage[2]&&y>=lasers.damage[1]&&y<lasers.damage[3]);
-    assert(!dance_lasers_update(&lasers,0,&music,5001,0));
+    assert(!dance_lasers_update(&lasers,0,&music,5601,0));
     unsigned updates=0;
     for(uint32_t t=6000;t<7000;t++)updates+=dance_lasers_update(&lasers,1,&music,t,0);
-    assert(updates==30);
+    assert(updates==20);
 }
 static float timing(uint32_t step)
 {
@@ -73,7 +75,7 @@ static float timing(uint32_t step)
     }
     assert(sm.dance_beats_seen==3&&sm.dance_beat_ms==1800); /* no invented kicks */
     const float spin=sm.disco_spin;
-    anim_set(&sm,&eyes,ANIM_NEUTRAL,7500);assert(eyes.laser_mix==0);
+    anim_set(&sm,&eyes,ANIM_NEUTRAL,7500);anim_update(&sm,&eyes,8300);assert(eyes.laser_mix==0);
     return spin;
 }
 static void independent_timer(void)
@@ -103,7 +105,31 @@ static void independent_timer(void)
         } else if(seen&&!ended){assert(t-started>=30000&&t-started<61532);ended=true;}
     }
     assert(seen&&ended&&overlap==15);
-    anim_set(&a,&eyes,ANIM_NEUTRAL,102000);assert(eyes.laser_mix==0);
+    anim_set(&a,&eyes,ANIM_NEUTRAL,102000);anim_update(&a,&eyes,102700);assert(eyes.laser_mix==0);
+}
+static void schedule_occupancy(void)
+{
+    unsigned long slots[4]={0};
+    for(unsigned seed=1;seed<=32;seed++) {
+        anim_sm_t sm;eyes_init(&eyes,1000);anim_init(&sm,&eyes,1000);sm.rng=seed*7919;
+        anim_set(&sm,&eyes,ANIM_DANCE,1000);unsigned seen=0;
+        for(unsigned t=1000;t<601000;t+=32) {
+            audio_features_t a={.active=true,.loud=.8f,.bass=.7f,.kick=.8f,.bpm=150,.beat_count=t/400,.last_beat_ms=t-t%400};
+            anim_set_audio(&sm,&a);anim_update(&sm,&eyes,t);
+            unsigned mode=(eyes.laser_mix>.15f?1:0)|(eyes.spot_mix>.15f?2:0);slots[mode]++;seen|=1u<<mode;
+        }
+        assert(seen==15);
+    }
+    unsigned long total=slots[0]+slots[1]+slots[2]+slots[3];
+    assert(slots[3]*100<total*25 && slots[1]*100>total*25 && slots[2]*100>total*10);
+    printf("PASS 32 ten-minute schedules: dark %.1f%%, lasers solo %.1f%%, spots solo %.1f%%, together %.1f%%\n",
+        slots[0]*100./total,slots[1]*100./total,slots[2]*100./total,slots[3]*100./total);
+    anim_sm_t sm;eyes_init(&eyes,1000);anim_init(&sm,&eyes,1000);anim_set(&sm,&eyes,ANIM_DANCE,1000);
+    sm.dance_visual=1;sm.dance_visual_len=100000;
+    for(unsigned t=1000;t<4000;t+=10){audio_features_t a={.active=true,.loud=.7f};a.bands[0]=(t/10)%2;anim_set_audio(&sm,&a);
+        float held=sm.dance_bar_sample[0];uint32_t sampled=sm.dance_bar_ms;anim_update(&sm,&eyes,t);
+        if(sampled&&t-sampled<40)assert(sm.dance_bar_sample[0]==held);}
+    assert(eyes.fx_mix==1.f);puts("PASS 25 Hz spectrum sampling and completed fade reaches opaque fast path");
 }
 static void reactivity_and_tiles(void)
 {
@@ -182,14 +208,43 @@ static void organic_and_rush(void)
     a.raw_loud=0;anim_set_audio(&sm,&a);anim_update(&sm,&eyes,4200);assert(!sm.rush_ms);
     puts("PASS: smooth independent disco cameras/textures, fresh rush event, no retrigger, expiry, stale/quiet rejection");
 }
+static void transitions(void)
+{
+    /* A zero-opacity fill must match the actual hotspot-shaded eye pixel for pixel. */
+    eyes_init(&eyes,1000);eyes_set_hotspot(&eyes,true);eyes_set_idle_rates(&eyes,0,Q16_ONE,0);
+    eyes_update(&eyes,1100,shapes);paint(plain,NULL);
+    for(int fx=1;fx<=3;fx++) {
+        eyes_set_fx(&eyes,fx,0);eyes_update(&eyes,1100,shapes);paint(after,NULL);
+        assert(!memcmp(after,plain,sizeof plain));
+    }
+    /* Every selectable exit retains the outgoing fill and both light layers on
+     * its first frame, then completely releases them within a bounded tail. */
+    for(int id=0;id<ANIM_COUNT;id++)if(id!=ANIM_DANCE) {
+        anim_sm_t sm;eyes_init(&eyes,1000);anim_init(&sm,&eyes,1000);anim_set(&sm,&eyes,ANIM_DANCE,1000);
+        audio_features_t a={.active=true,.raw_loud=300,.loud=.7f,.bass=.5f,.kick=.8f,.bpm=150};
+        anim_set_audio(&sm,&a);sm.dance_visual=2;sm.dance_visual_len=100000;
+        sm.dance_lasers_on=sm.dance_spots_on=true;sm.dance_laser_len=sm.dance_spot_len=100000;
+        for(unsigned t=1016;t<=2600;t+=16)anim_update(&sm,&eyes,t);
+        float mix=eyes.fx_mix,laser=eyes.laser_mix,spot=eyes.spot_mix;
+        eye_pose_t old[2];memcpy(old,eyes.mod,sizeof old);
+        anim_set(&sm,&eyes,(anim_id_t)id,2600);
+        assert(fabsf(eyes.fx_mix-mix)<.0001f&&fabsf(eyes.laser_mix-laser)<.0001f&&fabsf(eyes.spot_mix-spot)<.0001f);
+        assert(!memcmp(old,eyes.mod,sizeof old));
+        float previous=mix;
+        for(unsigned t=2616;t<3350;t+=16){anim_update(&sm,&eyes,t);assert(eyes.fx_mix<=previous+.0001f);assert(previous-eyes.fx_mix<.05f);previous=eyes.fx_mix;}
+        assert(!eyes.fx&&!eyes.laser_mix&&!eyes.spot_mix);
+    }
+    puts("PASS zero-mix hotspot continuity and smooth bounded dance exits to every animation");
+}
 int main(void)
 {
+    schedule_occupancy();
     dance_fill_t a,b;dance_fill_disco(&a,0);dance_fill_disco(&b,1);assert(!memcmp(&a,&b,sizeof a));
     dance_fill_disco(&b,.13f);assert(memcmp(&a,&b,sizeof a));
     for(int i=0;i<4096;i++)assert(a.tex[i]<=31&&b.tex[i]<=31);
-    for(int fx=0;fx<=3;fx++)compositor(fx);
-    independent_timer();reactivity_and_tiles();lighting_variation();organic_and_rush();
+    for(int samples=2;samples<=4;samples+=2)for(int fx=0;fx<=3;fx++)compositor(fx,samples);
+    independent_timer();reactivity_and_tiles();lighting_variation();organic_and_rush();transitions();
     float fast=timing(16),slow=timing(32);assert(fabsf(fast-slow)<.01f);
-    printf("PASS: all-fill laser occlusion, row/rim fixture layouts, rotated damage + switch-off, tiles, audio response, independent 30-60 s timer, 30 Hz cap, texture turn, coast timing (spin %.4f / %.4f)\n",fast,slow);
+    printf("PASS: all-fill laser occlusion, row/rim fixture layouts, rotated damage + switch-off, tiles, audio response, independent 30-60 s timer, 20 Hz cap, texture turn, coast timing (spin %.4f / %.4f)\n",fast,slow);
     printf("RAM: texture=%zu, laser snapshot=%zu, eye state=%zu bytes (host pointer sizes)\n",sizeof(dance_fill_t),sizeof(dance_lasers_t),sizeof(eyes_t));
 }

@@ -72,7 +72,7 @@ static void spot_geometry(dance_lasers_t *l,float mix,const audio_features_t *a,
         const uint8_t *rgb=color[(i+l->spot_seed/17)%4];
         float level=unit(mix)*(.55f+.45f*unit(a->loud));
         for(int k=0;k<2;k++) {
-            raster_shape_t *s=&l->spot[2*i+k];memset(s,0,sizeof *s);
+            raster_shape_t *s=&l->spot[2*i+k];memset(s,0,sizeof *s);s->aa_samples=2;
             float brightness=level*(k?.70f:.22f);
             raster_build_lut(l->spot_lut[2*i+k],rgb[0]*brightness,rgb[1]*brightness,rgb[2]*brightness);
             s->lut=l->spot_lut[2*i+k];
@@ -95,8 +95,8 @@ bool dance_background_update(dance_lasers_t *l, float mix,float spots, const aud
 {
     (void)face; /* Fixture rigs stay in display coordinates, independent of face orientation. */
     const bool laser_on=mix>.01f,spot_on=spots>.01f,on=laser_on||spot_on;
-    const uint32_t bucket = (uint32_t)((uint64_t)now * 30 / 1000);
-    if (on && l->active && bucket == l->bucket) return false;
+    const uint32_t bucket = (uint32_t)((uint64_t)now * 20 / 1000);
+    if (on && l->active && now-l->updated_ms < 50) return false;
     l->damage[0] = l->damage[1] = 466; l->damage[2] = l->damage[3] = 0;
     include_lights(l);
     if (!on) { bool changed = l->active; l->active = l->laser_on=l->spots_on=false; return changed; }

@@ -1,5 +1,8 @@
 # Situational expressions
 
+Latest behavior changes and validation: [Refinements](REFINEMENTS.md).
+Full recent-request status: [Audit](REQUEST_AUDIT.md).
+
 The newer [wobble and touch pass](WOBBLE_PLAY.md) adds the sickness gauge,
 wobble games, escalating headbutts and continuous-caress recognition to this wiring.
 
@@ -19,8 +22,8 @@ Start-Process docs/expressions/personality.mp4
 
 | Situation | Visible response |
 | --- | --- |
-| Two forehead strokes within 2.5 s | Happy for 0.9 s, love until 2.4 s, then beating hearts while petting continues. Further strokes extend petting without restarting the sequence. |
-| Mouth actually playing a purr | Love for 0.9 s, beating hearts until 3.3 s, then happy until playback ends. This overrides an idle face or petting phase, including when the purr comes from a stationary forehead hold. |
+| Four deliberate forehead strokes over at least 1.5 s, less than 2 s apart | Happy for 0.9 s, love until 2.4 s, then beating hearts while petting continues. Further strokes extend petting without restarting the sequence. |
+| Mouth actually playing a purr | Love for 0.9 s, beating hearts until 3.3 s, then happy until playback ends. This overrides an idle face or petting phase after the qualified stroke sequence. |
 | Petting/purr finishes | A relieved exhale if unoccupied; no delayed performance if attention has moved elsewhere. |
 | Picked up after resting | A double-take, allowed to finish during gentle movement. No automatic carry purr. |
 | Walking/carrying | Curious, or determined when energetic and in a good mood. |
@@ -33,16 +36,16 @@ Start-Process docs/expressions/personality.mp4
 
 Actual purring is reported by the speech task during gesture rendering, so
 queued or rejected requests do not start heart eyes. The face never masks a
-poke, handling, dance, KO, sleep or a menu. A steady forehead hold still needs
-3.5 seconds, and carrying/motion resets it. A later deliberate hold can purr
-again; recent-word suppression no longer converts a repeated purr into babble.
+poke, handling, dance, KO, sleep or a menu. A resting finger cannot start purring.
+State changes cancel queued and active purrs; a later qualified stroke sequence
+can purr again. Recent-word suppression does not convert a repeated purr to babble.
 
 ## Company, food and attitude
 
 | Situation | Visible response |
 | --- | --- |
-| Someone speaking | Mostly curious, with occasional nods, happiness, a double-take or a suspicious look when sour. Selected choreography finishes before the next listening-face roll. |
-| Conversation pauses for over 2 s | A nod, or a loading/thinking action when tired. Renewed speech interrupts it. |
+| Someone speaking | Occasional listening appearances (at most 6.5 s, with an 18–35 s gap). Sour moods retain annoyance/skepticism; strong headbutt anger blocks listening takeover. |
+| Conversation pauses for over 2 s | A nod, or a loading/thinking action when tired. Renewed speech waits for the next listening window. |
 | Hungry and connected to USB | Hearts below 20% battery; relief at 20–79%; smug satisfaction at 80% and above. |
 | Disconnected from USB | Pleading below 20%; a nod otherwise. |
 | Battery below 15%, away from USB | One pleading scene when free, at most once every five minutes. Works without a speaker. Unknown battery readings do not trigger it. |

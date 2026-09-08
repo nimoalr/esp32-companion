@@ -34,6 +34,7 @@
 #include "gfx.h"
 #include "audio.h"
 #include "music_trace.h"
+#include "glass.h"
 #include "speech.h"
 #include "persona.h"
 #include "dance_lasers.h"
@@ -166,6 +167,9 @@ typedef struct {
     petting_t pet;
     unsigned effect_seen;
     uint8_t painted_cracks;
+    uint32_t bench_since,bench_taps;
+    int bench_case;
+    glass_t glass;
     int poke_eye;
     uint32_t stroke_count;
     bool stroke_forehead;
@@ -189,6 +193,8 @@ typedef struct {
 static raster_job_t s_wjob;
 static TaskHandle_t s_worker, s_render;
 static uint32_t s_frame_no;
+static bool s_perf_active;
+static uint64_t s_perf_local,s_perf_wait,s_perf_copy,s_perf_props;
 
 static void raster_worker(void *arg)
 {
@@ -208,8 +214,11 @@ static void raster_split(uint16_t *band, int x0, int y, int w, int rows, const r
     const int top = rows / 2;
     s_wjob = (raster_job_t){ band + (size_t)top * w, x0, y + top, w, rows - top, shapes, lasers };
     xTaskNotifyGive(s_worker);
+    int64_t pt=s_perf_active?esp_timer_get_time():0;
     dance_lasers_paint(lasers,band, x0, y, w, top, shapes);
+    if(s_perf_active){s_perf_local+=esp_timer_get_time()-pt;pt=esp_timer_get_time();}
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    if(s_perf_active)s_perf_wait+=esp_timer_get_time()-pt;
 }
 
 /* Eyes + accessories, or a UI screen, into one band piece. */
@@ -221,10 +230,11 @@ static void paint_piece(uint16_t *band, int x0, int y, int w, int rows, const re
         ui_paint(&c->ui, &gb);
     } else {
         raster_split(band, x0, y, w, rows, c->shapes, &c->lasers);
-        if (c->beh.crack_stage>=2){const gfx_band_t glass={band,x0,y,w,rows};cracks_paint(&glass,c->beh.crack_stage);}
+        if (c->glass.stage>=2){const gfx_band_t glass={band,x0,y,w,rows};glass_paint(&c->glass,&glass);}
         if (acc_any(&c->acc)) {
             const gfx_band_t gb = { .dst = band, .x0 = x0, .y0 = y, .w = w, .rows = rows };
-            acc_paint(&c->acc, &gb, now_ms);
+            int64_t pt=s_perf_active?esp_timer_get_time():0;
+            acc_paint(&c->acc, &gb, now_ms);if(s_perf_active)s_perf_props+=esp_timer_get_time()-pt;
         }
     }
 }
@@ -255,7 +265,7 @@ typedef struct {
 static framebuf_t s_fb[FB_SLOTS];
 static int s_fb_psram_cur;
 
-#define MAX_PIECES      (UI_MAX_DIRTY + ACC_MAX_DIRTY + 3)
+#define MAX_PIECES      (UI_MAX_DIRTY + ACC_MAX_DIRTY + GLASS_MAX_DIRTY + 3)
 
 typedef struct {
     frame_piece_t pieces[MAX_PIECES];
@@ -331,7 +341,9 @@ static void render_frame(const rect_t *dirty, int ndirty, const render_ctx_t *c,
         for (int y = r->y0; y < r->y1; y += DISPLAY_BAND_ROWS) {
             const int rows = (r->y1 - y) < DISPLAY_BAND_ROWS ? (r->y1 - y) : DISPLAY_BAND_ROWS;
             paint_piece(scratch, r->x0, y, w, rows, c, now_ms);
+            int64_t pt=s_perf_active?esp_timer_get_time():0;
             memcpy(block + (size_t)(y-r->y0)*w,scratch,(size_t)w*rows*2);
+            if(s_perf_active)s_perf_copy+=esp_timer_get_time()-pt;
         }
         pieces[n++] = (frame_piece_t){ *r, block };
         off += (bytes + 63) & ~(size_t)63;
@@ -384,7 +396,7 @@ static void push_psram_rect(framebuf_t *fb, const frame_piece_t *p)
 
 static void push_task(void *arg)
 {
-    push_job_t job;
+    static push_job_t job; /* A full sparse-damage job is larger than this task's 4 KB stack. */
     for (;;) {
         xQueueReceive(s_push_q, &job, portMAX_DELAY);
         if (!display_wait_vsync(VSYNC_TIMEOUT_MS)) s_vsync_miss++;
@@ -415,6 +427,7 @@ static void push_drain(void)
 
 static void enter_ui(render_ctx_t *c, bool first_boot, uint32_t now_ms)
 {
+    speech_cancel_voice();
     c->mode = MODE_UI;
     ui_init(&c->ui, &g_settings, first_boot, now_ms);
     c->ui.music_recording=music_trace_active();
@@ -572,14 +585,15 @@ static void do_sleep(render_ctx_t *c)
 
 static void on_transition(render_ctx_t *c, power_state_t from, power_state_t to, uint32_t now_ms)
 {
+    if(to==POWER_DROWSY || to==POWER_SLEEP)speech_cancel_voice();
     switch (to) {
     case POWER_SLEEP:
         speech_word(CLIP_GOOD_NIGHT, 0.7f, true);
         break;
     case POWER_DROWSY:
         c->saved_anim = c->user_anim;
-        c->user_anim = ANIM_SLEEPY;
-        anim_set(&c->sm, &c->eyes, ANIM_SLEEPY, now_ms);
+        c->user_anim = behavior_doze_face(power_idle_ms(now_ms));
+        anim_set(&c->sm, &c->eyes, c->user_anim, now_ms);
         brightness_target(g_settings.brightness_aod);
         break;
     case POWER_ACTIVE:
@@ -640,6 +654,14 @@ static void render_task(void *arg)
     for (;;) {
         now_ms = ms_now();
 
+        if(music_trace_take_benchmark()) {
+            c.bench_since=now_ms;c.bench_taps=c.tap_count;c.bench_case=-1;
+            speech_cancel_voice();
+        }
+        if(c.bench_since && (now_ms-c.bench_since>=48000 || c.tap_count!=c.bench_taps || c.mode==MODE_UI)) {
+            c.bench_since=0;anim_set(&c.sm,&c.eyes,c.beh.state==BEH_MUSIC?ANIM_DANCE:c.user_anim,now_ms);
+            ESP_LOGI(TAG,"DANCE_BENCH done");
+        }
         /* Gestures on the eyes: a tap is a poke, a stroke is petting; the PWR button opens the setup UI. */
         touch_event_t ev;
         while (xQueueReceive(s_tap_q, &ev, 0) == pdTRUE) {
@@ -703,26 +725,35 @@ static void render_task(void *arg)
                 bi.stroke_forehead = c.stroke_forehead;
             }
             bi.idle_allowed = state == POWER_ACTIVE;
+            bi.dozing=state==POWER_DROWSY;
+            bi.unattended_ms=power_idle_ms(now_ms);
             bi.purring = speech_purring();
             bi.shown_anim = c.sm.id;
             bi.shown_anim_done = now_ms-c.sm.t_change_ms >= anim_action_ms(c.sm.id);
             bi.have_accel = power_last_accel(bi.accel, &bi.accel_ms);
             behavior_update(&c.beh, &bi, now_ms, &bo);
             if (bo.dance_flourish && c.sm.id == ANIM_DANCE) anim_dance_flourish(&c.sm, bo.dance_flourish, now_ms);
-            const anim_id_t want = bo.override_anim >= 0 ? (anim_id_t)bo.override_anim : c.user_anim;
+            const anim_id_t want = c.bench_since?ANIM_DANCE:bo.override_anim >= 0 ? (anim_id_t)bo.override_anim : c.user_anim;
             if (want != c.sm.id && state == POWER_ACTIVE) {
+                if(want==ANIM_HEADBUTT || want==ANIM_PUCKS || want==ANIM_KNOCKED_OUT || want==ANIM_DANCE ||
+                   want==ANIM_DIZZY || want==ANIM_SEASICK || want==ANIM_CROSS_EYED)speech_cancel_voice();
                 anim_set(&c.sm, &c.eyes, want, now_ms);
             }
+            if(state==POWER_DROWSY) {
+                anim_id_t doze=behavior_doze_face(bi.unattended_ms);
+                if(doze!=c.sm.id)anim_set(&c.sm,&c.eyes,doze,now_ms);
+            }
+            if(c.sm.id==ANIM_PUCKS)memset(bo.env,0,sizeof bo.env);
             eyes_set_env(&c.eyes, 0, &bo.env[0]);
             eyes_set_env(&c.eyes, 1, &bo.env[1]);
             /* a finger resting on the screen: the eyes settle on it and stop wandering (Vector's focus) */
             uint16_t fx, fy;
-            const bool finger = touch_pressed(&fx, &fy) && c.sm.id != ANIM_DANCE;   /* the dance is not to be stared out of */
+            const bool finger = touch_pressed(&fx, &fy) && c.sm.id != ANIM_DANCE && c.sm.id != ANIM_PUCKS;
             eyes_set_attention(&c.eyes, finger && c.sm.id != ANIM_KNOCKED_OUT && c.sm.id != ANIM_RECOVERING, fx, fy);
             /* mood: a tired character is dimmer and paler, an energetic one glows */
             const float energy = behavior_energy(&c.beh);
             eyes_set_mood(&c.eyes, (int32_t)((0.85f + 0.15f * energy) * 65536.f), (int32_t)((0.90f + 0.10f * energy) * 65536.f));
-            c.sm.motion_x=c.beh.gx;c.sm.motion_y=c.beh.gy;
+            c.sm.motion_x=-c.beh.loose_x;c.sm.motion_y=-c.beh.loose_y;
             eyes_set_face_angle(&c.eyes, c.sm.id==ANIM_PUCKS?0:bo.face_angle_deg);
             acc_set_angle(&c.acc, bo.face_angle_deg);
             {
@@ -732,10 +763,13 @@ static void render_task(void *arg)
             }
             acc_set_knocked_out(&c.acc, bo.knocked_out || c.sm.id == ANIM_KNOCKED_OUT, now_ms);
             acc_set_zz(&c.acc, bo.zz || c.sm.id == ANIM_SLEEPING, now_ms);
+            acc_set_anger(&c.acc,c.beh.valence<-.65f && (c.sm.id==ANIM_ANGRY || c.sm.id==ANIM_HEADBUTT));
         }
+        if(c.mode!=MODE_EYES || state!=POWER_ACTIVE || c.beh.state!=BEH_PETTED ||
+           c.beh.shake>=.16f || c.sm.id==ANIM_DANCE || music_trace_active())speech_cancel_purr();
         music_trace_poll();
         music_trace_context(c.mode==MODE_EYES && c.sm.id==ANIM_DANCE,c.mode==MODE_EYES && c.beh.state==BEH_LISTENING);
-        sync_audio(&c, (c.sm.id == ANIM_DANCE && bo.override_anim < 0) || bo.want_mic);
+        sync_audio(&c, (c.sm.id == ANIM_DANCE && bo.override_anim < 0) || bo.want_mic || c.bench_since);
         if (audio_running()) {
             anim_set_audio(&c.sm, &af);
         }
@@ -746,7 +780,7 @@ static void render_task(void *arg)
             if(pb.present && !pb.vbus && music_trace_active())music_trace_enable(false);
             uint16_t fx, fy;
             persona_in_t pi = {
-                .in_ui = c.mode == MODE_UI || music_trace_active(),
+                .in_ui = c.mode == MODE_UI || music_trace_active() || c.bench_since,
                 .power = state == POWER_ACTIVE ? 0 : state == POWER_DROWSY ? 1 : 2,
                 .beh = c.beh.state,
                 .anim = c.sm.id,
@@ -784,10 +818,8 @@ static void render_task(void *arg)
         if (c.mode == MODE_UI && (int32_t)(c.ui.last_input_ms - activity_ms) > 0) {
             activity_ms = c.ui.last_input_ms;
         }
-        if (af.active && af.last_beat_ms && (int32_t)(af.last_beat_ms - activity_ms) > 0) {
-            activity_ms = af.last_beat_ms;      /* music playing counts as company */
-        }
-        if(music_trace_active())activity_ms=now_ms;
+        if (power_music_present(&af,c.beh.state==BEH_MUSIC))activity_ms=now_ms;
+        if(music_trace_active() || c.bench_since)activity_ms=now_ms;
         const power_state_t next = power_update(now_ms, activity_ms);
         if (c.mode == MODE_UI) {
             if (next != POWER_ACTIVE || now_ms - c.ui.last_input_ms >= UI_TIMEOUT_MS) {
@@ -810,7 +842,7 @@ static void render_task(void *arg)
             continue;
         }
 
-        rect_t dirty[UI_MAX_DIRTY + ACC_MAX_DIRTY + 2];
+        static rect_t dirty[UI_MAX_DIRTY + ACC_MAX_DIRTY + GLASS_MAX_DIRTY + 2];
         int ndirty = 0;
         if (c.mode == MODE_UI) {
             ui_sensors_t sens = { 0 };
@@ -850,10 +882,29 @@ static void render_task(void *arg)
                 if (!rect_is_empty(&r)) dirty[ndirty++] = r;
             }
         } else {
+            if(c.bench_since) {
+                unsigned elapsed=now_ms-c.bench_since,which=elapsed/6000;
+                static const int fill[]={1,1,1,1,1,2,0,1};
+                bool lasers=which==1||which>=3,spots=which>=2;
+                if(c.bench_case!=(int)which){c.bench_case=which;ESP_LOGI(TAG,"DANCE_BENCH case=%u fx=%d lasers=%d spots=%d",which,fill[which],lasers,spots);}
+                audio_features_t a={.active=true,.raw_loud=400,.loud=.85f,.bass=.75f,.kick=.9f,.bpm=150,
+                    .beat_count=1+elapsed/400,.last_beat_ms=c.bench_since+elapsed/400*400};
+                for(int i=0;i<16;i++)a.bands[i]=.5f+.45f*sinf(elapsed*.003f+i*.7f);
+                anim_set_audio(&c.sm,&a);
+                c.sm.dance_visual=fill[which];c.sm.dance_visual_len=100000;
+                c.sm.dance_lasers_on=lasers;c.sm.dance_spots_on=spots;
+                c.sm.dance_laser_len=c.sm.dance_spot_len=100000;
+                c.lasers.laser_seed=17;c.lasers.spot_seed=713;
+                c.lasers.arrangement=c.lasers.spot_arrangement=which>=4;
+                eyes_set_face_angle(&c.eyes,which==7?33:0);
+            }
             anim_update(&c.sm, &c.eyes, now_ms);
             eyes_update(&c.eyes, now_ms, c.shapes);
+            s_perf_active=c.bench_since!=0;
+            if(c.sm.id==ANIM_DANCE && (c.eyes.laser_mix>.01f || c.eyes.spot_mix>.01f))
+                for(int i=0;i<2;i++)c.shapes[i].aa_samples=2;
             if(c.sm.effect_serial!=c.effect_seen){c.effect_seen=c.sm.effect_serial;if(!music_trace_active())speech_effect(c.sm.effect,c.sm.effect_level);}
-            if(!music_trace_active() && c.beh.crack_stage>c.painted_cracks && c.beh.crack_stage>=2)speech_effect(SFX_GLASS,.5f+.12f*c.beh.crack_stage);
+            if(!music_trace_active() && c.beh.crack_stage>c.painted_cracks && c.beh.crack_stage>=2)speech_effect(c.beh.crack_stage==4?SFX_SHATTER:SFX_GLASS,c.beh.crack_stage==4?.9f:.8f);
             const bool laser_changed=dance_background_update(&c.lasers,c.eyes.laser_mix,c.eyes.spot_mix,&c.sm.audio,now_ms,c.eyes.face_deg);
 
             /* Dirty rects: union of each eye's previous and current bounding box. */
@@ -877,9 +928,13 @@ static void render_task(void *arg)
             }
             /* Background changes are capped at 30 Hz; intervening eye frames
              * repaint their own rectangles over the unchanged laser snapshot. */
-            if(c.painted_cracks!=c.beh.crack_stage){
-                c.painted_cracks=c.beh.crack_stage;dirty[0]=(rect_t){0,0,466,466};ndirty=1;
-            }
+            static glass_rect_t gr[GLASS_MAX_DIRTY];unsigned released=c.glass.released;
+            int ng=glass_update(&c.glass,c.beh.crack_stage,now_ms-c.beh.crack_ms,now_ms,gr);
+            if(!music_trace_active() && c.glass.stage==4 && c.glass.released>released)speech_effect(SFX_TINKLE,.55f);
+            c.painted_cracks=c.beh.crack_stage;
+            if(ng==1 && gr[0].x0==0 && gr[0].y0==0 && gr[0].x1==466 && gr[0].y1==466) {
+                dirty[0]=(rect_t){0,0,466,466};ndirty=1;
+            } else for(int i=0;i<ng;i++)dirty[ndirty++]=rect_align((rect_t){gr[i].x0,gr[i].y0,gr[i].x1,gr[i].y1});
             if(laser_changed){
                 rect_t r=rect_align((rect_t){c.lasers.damage[0],c.lasers.damage[1],c.lasers.damage[2],c.lasers.damage[3]});
                 for(int i=0;i<ndirty;i++)r=rect_union(&r,&dirty[i]);
@@ -929,6 +984,9 @@ static void render_task(void *arg)
                 }
                 usb_prev = b.vbus;
             }
+            if(c.bench_since)ESP_LOGI(TAG,"DANCE_COST case=%d local=%u wait=%u copy=%u props=%u",c.bench_case,
+                (unsigned)(s_perf_local/frames),(unsigned)(s_perf_wait/frames),(unsigned)(s_perf_copy/frames),(unsigned)(s_perf_props/frames));
+            s_perf_local=s_perf_wait=s_perf_copy=s_perf_props=0;
             char audio_s[288] = "";
             if (af.active) {
                 snprintf(audio_s, sizeof audio_s, " | audio cpu %u us rms %.0f kick %.2f ratio %.2f, beats %" PRIu32 " %d bpm conf %.2f, speech %d/%.2f, L %.0f R %.0f dir %+.2f clap %u lag %+.2f bal %.2f corr %.2f pk %d (loud %u pre %d%%)",

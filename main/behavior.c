@@ -24,7 +24,7 @@
 
 #define SHAKE_ON_G          ((float)CONFIG_EYES_SHAKE_MG / 1000.f)
 #define DIZZY_AFTER_MS      900.f
-#define KO_AFTER_MS         3600.f
+#define KO_AFTER_MS         7500.f
 #define KO_DURATION_MS      8000
 #define GROGGY_MS           3000
 #define FACE_DOWN_MS        1500
@@ -88,7 +88,7 @@ static void feel_mood(behavior_t *b, const behavior_in_t *in, uint32_t now_ms)
     float e = b->energy, v = b->valence;
     if (b->shake > 0.08f) { e += 0.03f; if (b->shake > SHAKE_ON_G && b->state != BEH_MUSIC && !in->dancing) v -= 0.06f; }
     if (in->user_interacting) e += 0.015f;
-    if (in->audio.active && in->audio.speech) { e += 0.01f; v += 0.01f; }
+    if (!in->dozing && in->audio.active && in->audio.speech && b->state==BEH_LISTENING) { e += 0.01f; if(v>-.35f)v += 0.01f; }
     switch (b->state) {
     case BEH_MUSIC:   e += 0.02f; v += 0.01f; break;
     case BEH_PETTED:  e += 0.02f; v += 0.05f; break;
@@ -100,6 +100,10 @@ static void feel_mood(behavior_t *b, const behavior_in_t *in, uint32_t now_ms)
     e += (0.4f - e) * 0.01f;               /* slow drift toward a calm baseline */
     e += (frand(b) - 0.5f) * 0.03f;        /* wandering */
     v += (0.f - v) * 0.004f;               /* grudges and gratitude fade over minutes */
+    if(in->dozing && in->unattended_ms>60000 && !in->user_interacting && !in->purring) {
+        e += (.15f-e)*.02f;
+        v += (-.45f-v)*.008f; /* mild neglect, not the same anger as mistreatment */
+    }
     if (e < 0.f) e = 0.f;
     if (e > 1.f) e = 1.f;
     if (v < -1.f) v = -1.f;
@@ -111,6 +115,28 @@ static void feel_mood(behavior_t *b, const behavior_in_t *in, uint32_t now_ms)
 float behavior_valence(const behavior_t *b)
 {
     return b->valence;
+}
+
+anim_id_t behavior_doze_face(uint32_t ms)
+{
+    if(ms<60000)return ANIM_BORED;
+    if(ms<68000)return ANIM_PLEADING;
+    if(ms<80000)return ANIM_SAD;
+    if(ms<90000)return ANIM_SLEEPY;
+    /* A sleepy performance, never activity: brief check-ins do not renew the
+     * real dim/sleep deadline. Unequal naps vary across successive cycles. */
+    uint32_t cycle=(ms-90000)/120000,phase=(ms-90000)%120000;
+    uint32_t nap=50000+(cycle*7919u)%35000,awake=8000+(cycle*3571u)%8000;
+    if(phase<nap)return ANIM_SLEEPING;
+    phase-=nap;
+    if(phase<3000)return ANIM_SLEEPY;
+    if(phase<3000+awake) {
+        static const anim_id_t check[]={ANIM_BORED,ANIM_SAD,ANIM_LAZY_PUDDLE,ANIM_PLEADING,ANIM_ANNOYED};
+        return check[cycle%5];
+    }
+    if(phase<9000+awake)return ANIM_YAWN;
+    if(phase<14000+awake)return ANIM_SLEEPY;
+    return ANIM_SLEEPING;
 }
 
 void behavior_feel(behavior_t *b, float valence_delta)
@@ -146,6 +172,8 @@ void behavior_suspend_scenes(behavior_t *b, uint32_t now_ms)
 {
     b->reaction_anim = b->idle_action = -1;
     b->was_purring = false;
+    b->pet_strokes=0;b->pet_started_ms=b->last_stroke_ms=0;
+    if(b->state==BEH_PETTED){b->state=BEH_IDLE;b->state_since_ms=now_ms;}
     b->next_action_ms = now_ms + 20000;
     b->context_primed = false;
 }
@@ -257,6 +285,11 @@ static void feel_motion(behavior_t *b, const behavior_in_t *in, uint32_t now_ms)
     /* shake: how far the magnitude departs from 1 g, smoothed over ~0.3 s */
     const float dev = fabsf(mag - 1.f);
     const float fdt = (float)(dt>100?100:dt);
+    /* Specific force includes gravity when tilted and inertia while shaken.
+     * Retain a quick signed vector for the snow-globe eyes; the slow gaze
+     * gravity and scalar sickness envelope are not suitable physics inputs. */
+    b->loose_x+=(sg[0]-b->loose_x)*fdt/(25.f+fdt);
+    b->loose_y+=(sg[1]-b->loose_y)*fdt/(25.f+fdt);
     for(int i=0;i<3;i++) {
         float change=fabsf(sg[i]-b->prev_screen[i]);b->prev_screen[i]=sg[i];
         b->axis_motion[i]+=(change-b->axis_motion[i])*fdt/(350.f+fdt);
@@ -339,7 +372,9 @@ static void roll_listen_face(behavior_t *b, uint32_t now_ms)
 {
     const float r = frand(b);
     /* Timing/affect only: the microphones do not recognise sentence meaning. */
-    if (r < .45f) b->listen_anim = ANIM_CURIOUS;
+    if (b->valence<-.35f) b->listen_anim=r<.7f?ANIM_ANNOYED:ANIM_SKEPTICAL;
+    else if(b->valence>.35f)b->listen_anim=r<.75f?ANIM_HAPPY:ANIM_NOD;
+    else if (r < .45f) b->listen_anim = ANIM_CURIOUS;
     else if (r < .70f) b->listen_anim = ANIM_NOD;
     else if (r < .85f) b->listen_anim = b->valence < -.2f ? ANIM_SUSPICIOUS : ANIM_HAPPY;
     else b->listen_anim = b->energy < .4f ? ANIM_THINKING : ANIM_DOUBLE_TAKE;
@@ -376,15 +411,18 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
     const bool stroked = in->stroke_count != b->strokes_seen;
     b->strokes_seen = in->stroke_count;
     if (stroked && in->stroke_forehead && b->shake < .16f && !b->rhythm_since_ms) {
-        b->pet_strokes = b->last_stroke_ms && now_ms-b->last_stroke_ms < 2500 ? 2 : 1;
+        if(!b->last_stroke_ms || now_ms-b->last_stroke_ms>=2000){b->pet_strokes=0;b->pet_started_ms=now_ms;}
+        if(b->pet_strokes<4)b->pet_strokes++;
         b->last_stroke_ms = now_ms;
-    } else if (stroked || b->shake >= .16f || (b->last_stroke_ms && now_ms-b->last_stroke_ms >= 2500)) {
+    } else if (stroked || tapped || b->shake >= .16f || (b->last_stroke_ms && now_ms-b->last_stroke_ms >= 2000)) {
         b->pet_strokes = 0;
+        b->last_stroke_ms=b->pet_started_ms=0;
     }
+    const bool pet_ready=b->pet_strokes>=4 && now_ms-b->pet_started_ms>=1500;
 
     /* dancing: the owner is dancing with him, so shaking is part of it, never dizziness or a knock-out */
     const bool dancing = b->state == BEH_MUSIC || in->dancing;
-    if (dancing) {b->shake_time_ms = 0.f;b->sickness=0;}
+    if (dancing) {b->shake_time_ms = 0.f;b->sickness=0;b->pet_strokes=0;b->last_stroke_ms=b->pet_started_ms=0;}
     const bool shaking_hard = !dancing && (b->shake_time_ms >= DIZZY_AFTER_MS || (b->sickness>.32f && b->shake>.12f));
     const bool face_down = b->face_down_since_ms && (now_ms - b->face_down_since_ms) >= FACE_DOWN_MS;
     uint32_t in_state = now_ms - b->state_since_ms;
@@ -400,19 +438,21 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
     } else if(b->state!=BEH_IDLE && b->state!=BEH_POKED)b->burst_taps=0;
     if(slam && !shaking_hard && !face_down) {
         if(b->headbutt_stage<4)b->headbutt_stage++;
-        b->valence=fmaxf(-1,b->valence-.15f-.06f*b->headbutt_stage);
+        b->valence=fminf(-.45f,fmaxf(-1,b->valence-.15f-.06f*b->headbutt_stage));
+        b->anger_until_ms=now_ms+45000+15000*b->headbutt_stage;
+        b->idle_anim=ANIM_ANGRY;
         b->reaction_anim=b->idle_action=-1;enter(b,BEH_HEADBUTT,now_ms);in_state=0;
     }
 
     /* Touch can interrupt a conversational/handling response, including repeated
      * pokes. Leave urgent reactions and dance to their own state machines. */
-    if (!dancing && (tapped || (stroked && b->pet_strokes >= 2 && b->state != BEH_PETTED)) &&
+    if (!dancing && (tapped || (stroked && pet_ready && b->state != BEH_PETTED)) &&
         (b->state == BEH_LISTENING || b->state == BEH_STARTLED ||
          b->state == BEH_CARRIED || b->state == BEH_PETTED || b->state == BEH_POKED))
         enter(b, BEH_IDLE, now_ms);
 
     /* --- transitions, highest priority first --- */
-    if (!dancing && b->state != BEH_KNOCKED_OUT && (b->shake_time_ms >= KO_AFTER_MS || (b->sickness>=.95f && b->shake>.16f))) {
+    if (!dancing && b->state != BEH_KNOCKED_OUT && b->shake_time_ms >= KO_AFTER_MS && b->shake>SHAKE_ON_G) {
         enter(b, BEH_KNOCKED_OUT, now_ms);
         b->shake_time_ms = 0.f;
         b->sickness=.45f;
@@ -468,7 +508,9 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
             if (face_down) { enter(b, BEH_FACE_DOWN, now_ms); break; }
             if (out->event == BEH_EV_BODY_TAP) { enter(b, BEH_STARTLED, now_ms); break; }
             if (in->audio.active && in->audio.speech) b->speech_last_ms = now_ms;
-            if (!in->audio.active || now_ms - b->speech_last_ms > 2000 || tapped) { enter(b, BEH_IDLE, now_ms); break; }
+            if (in->dozing || !in->audio.active || now_ms - b->speech_last_ms > 2000 || in_state>=6500 || tapped) {
+                b->next_listen_ms=now_ms+18000+(uint32_t)(frand(b)*17000);enter(b, BEH_IDLE, now_ms);break;
+            }
             if (now_ms - b->listen_roll_ms > 4500 &&
                 ((in->shown_anim == b->listen_anim && in->shown_anim_done) || now_ms-b->listen_roll_ms > 8000))
                 roll_listen_face(b, now_ms);
@@ -506,7 +548,8 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
                 /* the dance he was put in by hand: same rule */
                 if (stroked) out->dance_flourish = 2;
             }
-            else if (stroked && in->stroke_forehead && b->pet_strokes >= 2) {
+            else if (stroked && in->stroke_forehead && pet_ready) {
+                b->anger_until_ms=0; /* deliberate care can reconcile him */
                 enter(b, BEH_PETTED, now_ms);
             }
             else if (tapped) {
@@ -518,7 +561,9 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
                 if (in->poke_eye) b->valence -= 0.03f;
                 enter(b, BEH_POKED, now_ms);
             }
-            else if (in->audio.active && in->audio.speech && !in->user_interacting) {
+            else if (!in->dozing && in->audio.active && in->audio.speech && !in->user_interacting &&
+                     (!b->anger_until_ms || (int32_t)(now_ms-b->anger_until_ms)>=0) &&
+                     (!b->next_listen_ms || (int32_t)(now_ms-b->next_listen_ms)>=0)) {
                 b->speech_last_ms = now_ms;
                 roll_listen_face(b, now_ms);
                 enter(b, BEH_LISTENING, now_ms);
@@ -635,6 +680,10 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
     }
 
     if (b->reaction_anim >= 0) out->override_anim = b->reaction_anim;
+    if(b->anger_until_ms && (int32_t)(b->anger_until_ms-now_ms)>0 &&
+       (b->state==BEH_IDLE || b->state==BEH_POKED || b->state==BEH_LISTENING)) {
+        b->idle_action=b->reaction_anim=-1;b->idle_anim=ANIM_ANGRY;out->override_anim=ANIM_ANGRY;
+    }
     if (affectionate) {
         const uint32_t purr_ms = now_ms-b->purr_since_ms;
         out->override_anim = purr_ms < 900 ? ANIM_LOVE : purr_ms < 3300 ? ANIM_HEARTS : ANIM_HAPPY;

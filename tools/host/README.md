@@ -55,3 +55,26 @@ Music calibration: [local USB Music Lab](../music-lab/README.md). `music_report`
 exports its compact sessions to CSV and JSON. `trace_test` writes a firmware-format
 fixture for the browser codec test; `rush_test` checks short-loop event detection.
 `dance_organic_preview` renders the independent disco cameras and two rush flourishes.
+
+Additional regression harnesses: `power_test` (finite idle policy), `speech_test`
+(actual voice-loop cancellation with mocked I/O), `glass_test` (shards, damage
+and anger mark). `review_preview` renders the latest four-panel refinements.
+
+`tools/host/glass_sounds.sh` regenerates the compact recorded glass effects and
+`docs/voice/glass_foley.wav` from bundled CC0 excerpts. See
+[`GLASS_SOUNDS.md`](../../docs/expressions/GLASS_SOUNDS.md) for sources and clip order.
+
+### Dance performance checks
+
+`dance_test` checks independent show occupancy across 32 ten-minute runs, the
+25 Hz spectrum target and 20 Hz lighting caps, both edge-quality settings,
+opaque eye interiors, damage cleanup, and transitions. `bar_runs_test` compares
+15,000 fractional/clipped spectrum rows with the original per-pixel path.
+`charge_cache_test` compares the cached charging ring with generic geometry
+and tiled output. `dance_quality` exports a four-versus-two-sample edge
+comparison to `out/dance-quality.ppm` and checks tiled equality.
+
+Regenerate the fixed rim cache from the repository root with
+`tools/host/build.sh charge_cache && tools/host/bin/charge_cache`. It uses
+22,894 bytes of flash and no persistent RAM. See
+[on-device benchmark instructions](../../docs/dance/PERFORMANCE.md).

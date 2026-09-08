@@ -1,4 +1,5 @@
 #include "music_trace.h"
+#include "power_policy.h"
 #include <math.h>
 static unsigned quant(float f,unsigned max){return !(f>0)?0:f>=max?max:(unsigned)(f+.5f);}
 static void le16(uint8_t *p,unsigned n){p[0]=n;p[1]=n>>8;}
@@ -30,7 +31,9 @@ void music_trace_pack(uint8_t p[24],const audio_features_t *a,uint32_t ms,float 
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
 static QueueHandle_t queue;
-static bool usb_ready;
+static bool usb_ready,benchmark_pending;
+bool music_trace_take_benchmark(void){bool b=benchmark_pending;benchmark_pending=false;return b;}
+static uint32_t control_ms;
 /* Producer reads one atomic control word: session << 1 | enabled. */
 static atomic_uint control, lost, context;
 static const char hex[]="0123456789abcdef";
@@ -68,6 +71,7 @@ esp_err_t music_trace_enable(bool on)
     }
     unsigned next=on?((((old>>1)+1)&65535)<<1)|1:(old&~1u);
     atomic_store(&control,next);
+    if(on)control_ms=esp_timer_get_time()/1000;
     if(on)ESP_LOGI("music_trace","MC_CONFIG:fw=%s gain=%d",esp_app_get_description()->version,CONFIG_EYES_AUDIO_GAIN_DB);
     ESP_LOGI("music_trace","MC_SESSION:%u %s format=1 frame_ms=16 bytes=24",next>>1,on?"start":"stop");
     return ESP_OK;
@@ -87,6 +91,7 @@ void music_trace_poll(void)
     uint32_t now=esp_timer_get_time()/1000;
     if(now-previous<100)return;
     previous=now;
+    if(music_trace_active() && power_idle_expired(now,control_ms,MUSIC_CONTROL_LEASE_MS))music_trace_enable(false);
     if(!usb_ready)return;
     char bytes[32];int n=usb_serial_jtag_read_bytes(bytes,sizeof bytes,0);
     for(int i=0;i<n;i++) {
@@ -94,7 +99,9 @@ void music_trace_poll(void)
         if(c=='\n'||c=='\r') {
             command[used]=0;
             if(!overflow) {
+                if(!strcmp(command,"MC_START") || !strcmp(command,"MC_PING"))control_ms=now;
                 if(!strcmp(command,"MC_START"))music_trace_enable(true);
+                else if(!strcmp(command,"MC_BENCH"))benchmark_pending=true;
                 else if(!strcmp(command,"MC_STOP"))music_trace_enable(false);
                 else if(!strcmp(command,"MC_PING"))ESP_LOGI("music_trace","MC_STATE:%s",music_trace_active()?"recording":"idle");
             }

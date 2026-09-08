@@ -18,6 +18,8 @@ typedef struct {
     const imu_cal_t *cal;
     audio_features_t audio;     /* .active false when the mics are off */
     bool idle_allowed;         /* renderer is active; no cameos queued while sleeping/in menus */
+    bool dozing;
+    uint32_t unattended_ms;
     anim_id_t shown_anim;       /* current animation, for one-shot idle scene completion */
     bool shown_anim_done;
     bool purring;              /* actual mouth playback, not a predicted touch reaction */
@@ -78,6 +80,7 @@ typedef struct {
     float shake;                /* smoothed |a| deviation from 1 g, in g */
     float sickness;
     float axis_motion[3], prev_screen[3];
+    float loose_x, loose_y;    /* calibrated screen acceleration, with sensor noise filtered */
     anim_id_t game_anim, dizzy_anim;
     uint32_t game_len_ms, dizzy_len_ms, last_play_ms;
     uint32_t burst_ms, crack_ms;
@@ -92,6 +95,7 @@ typedef struct {
     uint32_t music_quiet_since_ms; /* last confirmed rhythm; breakdown grace */
     uint32_t music_silence_since_ms;
     uint32_t speech_last_ms;    /* last frame with speech */
+    uint32_t next_listen_ms, anger_until_ms;
     float voice_dir;            /* smoothed direction of the voice along the mic axis */
     /* handling */
     float prev_mag;             /* |a| of the previous sample, g */
@@ -128,6 +132,7 @@ typedef struct {
     uint8_t pet_strokes;
     uint32_t strokes_seen;
     uint32_t last_stroke_ms;
+    uint32_t pet_started_ms;
     int poked_eye;              /* 0 none, 1 left, 2 right, during BEH_POKED */
     uint32_t mood_tick_ms;
     uint32_t rng;
@@ -140,6 +145,7 @@ typedef struct {
 
 float behavior_energy(const behavior_t *b);
 float behavior_valence(const behavior_t *b);
+anim_id_t behavior_doze_face(uint32_t unattended_ms);
 /* a nudge to the valence from outside the behaviour (the persona's judgement of an event) */
 void behavior_feel(behavior_t *b, float valence_delta);
 /* Couple an accepted utterance to a face, without replacing an authored scene

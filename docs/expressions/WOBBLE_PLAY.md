@@ -1,5 +1,7 @@
 # Wobble games, touch escalation and caresses
 
+**Updated:** [Refinements](REFINEMENTS.md) supersedes the original round-puck physics, two-stroke petting, early knockout and static final-glass behavior below.
+
 [Watch the 12-second animation grid](play.mp4).
 Order: **pucks, slot machine, seasick / cross-eyed, jelly, headbutt**.
 The pucks, reels and jelly finish in the regular dizzy face. The headbutt panel

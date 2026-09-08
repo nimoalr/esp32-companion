@@ -39,10 +39,13 @@ as a renderer/debug option. Three moving heads have coloured tapered beams
 and elliptical pools, with phase-offset motion and independent colour choices.
 Their pan/tilt targets sweep smoothly and bass changes the beam opening.
 
-Spotlight shows last **18–36 seconds**, with **6–15 second** breaks. Their timer,
+Spotlight shows last **18–36 seconds**, with **45–75 second** breaks. Their timer,
 random state and fade are independent of the **30–60 second** laser shows and
-**8–16 second** laser breaks. Either can appear alone or both together. The
-compositor prepares an immutable snapshot at no more than 30 Hz and retains
+**30–50 second** laser breaks. Either can appear alone or both together. At entry, one starts after 3–6 seconds
+and the other waits 28–40 seconds. Across 32 ten-minute seeded runs, lasers
+were alone 37.7% of the time, spotlights alone 15.0%, both 17.0%, and neither
+30.3% (including entry and fades). The
+compositor prepares an immutable snapshot at no more than 20 Hz and retains
 opaque eye silhouettes over the lights. Changes include old and new bounds,
 including when either layer switches off.
 
@@ -87,3 +90,5 @@ tools/host/build.sh dance_test -fsanitize=undefined -fno-sanitize-recover=all
 tools/host/bin/dance_test
 tools/host/build.sh dance_bench && tools/host/bin/dance_bench
 ```
+
+See [hardware performance measurements and validation](PERFORMANCE.md).

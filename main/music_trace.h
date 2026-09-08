@@ -11,6 +11,7 @@ void music_trace_pack(uint8_t out[MUSIC_TRACE_BYTES],const audio_features_t *a,u
 void music_trace_init(void);
 esp_err_t music_trace_enable(bool on);
 bool music_trace_active(void);
+bool music_trace_take_benchmark(void); /* one bounded diagnostic requested over USB */
 void music_trace_poll(void); /* bounded nonblocking USB commands, render task only */
 void music_trace_context(bool dancing,bool listening);
 void music_trace_offer(const audio_features_t *a,uint32_t ms,float kick,float mean,float previous,float presence,unsigned flags);

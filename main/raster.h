@@ -1,6 +1,6 @@
 /*
- * Analytic scanline rasteriser for eye shapes. Fixed point (Q16.16) throughout;
- * no floating point anywhere on the per-pixel or per-row path.
+ * Analytic scanline rasteriser for eye shapes. Fixed-point pixel paths;
+ * rotated geometry uses floating point per sub-row.
  *
  * A shape is a rounded rectangle with an independent, optionally elliptical
  * radius per corner (a capsule when all four equal min(hw, hh)), optionally
@@ -11,7 +11,7 @@
  *     arc is a positive bend).
  * Optionally the fill is shaded by a hot spot: a separable Gaussian lightness
  * falloff in screen space, sampled from two per-axis tables.
- * Each pixel row is sampled on four sub-scanlines; horizontal coverage on the
+ * Each pixel row is sampled on four sub-scanlines (two for busy dance scenes); horizontal coverage on the
  * edge pixels is exact. Coverage (0..255) indexes a 256-entry RGB565 LUT that
  * blends the eye colour over black.
  */
@@ -36,6 +36,7 @@ typedef struct { int32_t y0, y1, x0, slope; } raster_edge_t;
 
 typedef struct {
     bool visible;
+    uint8_t aa_samples;    /* 2 for busy dance geometry, otherwise 4 (including default 0) */
     /* Geometry, Q16 pixels, screen coordinates */
     int32_t cx, cy;         /* centre */
     int32_t hw, hh;         /* half width / half height */

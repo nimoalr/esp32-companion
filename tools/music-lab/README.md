@@ -32,7 +32,9 @@ speaker/distance and any expected BPM. Start the run before playback, then mark
 **Track starts**. Mark missed kicks, snares instead of kicks, false dancing,
 breakdowns, tempo/loop changes and good tracking as they happen. End each run,
 then start another. Download the session before closing the page. **Disconnect**
-sends the device a stop command. Unplugging USB also ends capture.
+sends the device a stop command. Unplugging USB also ends capture. The page sends a heartbeat every two seconds;
+90 seconds without control traffic ends abandoned capture and restores ordinary
+sleep timing. A device-menu capture needs the page connected within that window.
 
 The page can reopen `.mcal` sessions; expand a run to review markers or correct
 its labels. Corrections update metadata without changing captured frames. New session

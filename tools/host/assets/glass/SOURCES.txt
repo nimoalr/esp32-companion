@@ -1,0 +1,14 @@
+CC0 source excerpts, converted to 16 kHz mono PCM.
+
+knock_excerpt.wav: IMALUIGI, Glass Knock (2016-11-07), excerpt 6.155–6.545 seconds
+https://freesound.org/people/IMALUIGI/sounds/367704/
+Public preview: https://cdn.freesound.org/previews/367/367704_2379144-hq.mp3
+
+break_excerpt.wav: Till Behrend, uploaded with permission by TinyWorlds,
+Glass Break (2015-01-28), first 1.08 seconds
+https://opengameart.org/content/glass-break
+Original: https://opengameart.org/sites/default/files/glass_breaking.wav
+
+Both source pages list CC0; checked 2026-09-08.
+https://creativecommons.org/publicdomain/zero/1.0/
+See docs/expressions/GLASS_SOUNDS.md for processing and firmware use.

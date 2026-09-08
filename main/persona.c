@@ -332,13 +332,6 @@ void persona_tick(persona_t *p, const persona_in_t *in, uint32_t now_ms, persona
             else say_word(out, CLIP_EXCUSE_ME, level, false);
         }
     }
-    /* a finger resting: a purr, once per touch (not during the dance: nothing touches the dance) */
-    else if (gentle_touch) {
-        if (!p->purred && (int32_t)(now_ms - p->finger_since_ms) > 3500 && free) {
-            p->purred = true;
-            say_gesture(out, VOICE_PURR, level, false);
-        }
-    }
     /* battery */
     else if (!in->usb && in->batt_pct >= 0 && in->batt_pct < 15 && in->power == 0 && free &&
              (!p->low_batt_ms || (int32_t)(now_ms - p->low_batt_ms) > 600000)) {

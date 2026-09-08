@@ -503,6 +503,7 @@ esp_err_t audio_start(void)
 
     /* Full duplex like the Waveshare BSP: the RX side alone left the ES7210's data line silent. */
     i2s_chan_config_t chan = I2S_CHANNEL_DEFAULT_CONFIG(CONFIG_EYES_AUDIO_I2S_NUM, I2S_ROLE_MASTER);
+    chan.dma_desc_num=6;chan.dma_frame_num=240; /* 90 ms at 16 kHz; speech drains 120 ms before PA off. */
     chan.auto_clear = true;
     ESP_RETURN_ON_ERROR(i2s_new_channel(&chan, &s_tx, &s_rx), TAG, "i2s channel");
     const i2s_std_config_t std = {

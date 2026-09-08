@@ -10,6 +10,7 @@ idf_component_register(
         "dance_lasers.c"
         "anim.c"
         "play.c"
+        "glass.c"
         "sfx.c"
         "i2c_bus.c"
         "imu.c"
@@ -50,3 +51,7 @@ idf_component_register(
         nvs_flash
         esp_driver_i2s
 )
+
+# Task stacks are deliberately small. Catch oversized automatic frame/job arrays
+# at build time; persistent render buffers must not live on a task stack.
+target_compile_options(${COMPONENT_LIB} PRIVATE -Werror=frame-larger-than=4096)

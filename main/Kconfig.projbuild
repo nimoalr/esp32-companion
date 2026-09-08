@@ -120,14 +120,13 @@ menu "Eyes"
             default 240
 
         config EYES_USB_NO_LIGHT_SLEEP
-            bool "Skip light sleep while USB power is present"
+            bool "Keep USB console alive between DROWSY frames"
             default y
             help
                 Light sleep drops the USB-Serial/JTAG console. With USB
-                plugged in there is nothing to save, so DROWSY keeps the
-                chip awake between frames (still dimmed and at the low
-                frame rate) and never goes on to SLEEP, so no peripheral
-                is switched off. On battery light sleep is used as usual.
+                plugged in, DROWSY keeps the chip awake between dimmed
+                frames. Its timeout still leads to panel-off SLEEP on
+                both USB and battery. An active Music Lab session stays awake.
 
         config EYES_ACTIVE_TIMEOUT_S
             int "ACTIVE -> DROWSY after this many seconds without touch or motion"
@@ -137,7 +136,7 @@ menu "Eyes"
         config EYES_DROWSY_MIN_S
             int "Minimum time in DROWSY before SLEEP (seconds)"
             range 10 36000
-            default 300
+            default 1800
 
         config EYES_DROWSY_FPS
             int "Frame rate in DROWSY (frames per second, divides 60)"

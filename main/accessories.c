@@ -59,6 +59,7 @@ void acc_set_angle(accessories_t *a, float deg)
 {
     a->angle_deg = deg;
 }
+void acc_set_anger(accessories_t *a,bool on){a->anger_on=on;}
 
 /* Rotate a point given relative to the screen centre by the face angle. */
 static void rot(const accessories_t *a, float x, float y, int *ox, int *oy)
@@ -86,7 +87,7 @@ void acc_set_zz(accessories_t *a, bool on, uint32_t now_ms)
 /* Props that turn with the face (the rim gauge does not). */
 static bool any_prop(const accessories_t *a)
 {
-    return a->ko_on || a->zz_on;
+    return a->ko_on || a->zz_on || a->anger_mix>0;
 }
 
 bool acc_any(const accessories_t *a)
@@ -198,6 +199,13 @@ static int zz_y(uint32_t now_ms, uint32_t t0)
 int acc_update(accessories_t *a, uint32_t now_ms, acc_rect_t out[ACC_MAX_DIRTY])
 {
     int n = 0;
+    uint32_t dt=a->anger_ms?now_ms-a->anger_ms:16;a->anger_ms=now_ms;
+    if(dt>100)dt=100;
+    a->anger_mix+=((a->anger_on?1.f:0.f)-a->anger_mix)*dt/(180.f+dt);
+    if(!a->anger_on && a->anger_mix<.01f)a->anger_mix=0;
+    if(a->anger_prev[0])n=add(out,n,a->anger_prev[0]-31,a->anger_prev[1]-31,a->anger_prev[0]+32,a->anger_prev[1]+32);
+    if(a->anger_mix>0){int x,y;rot(a,103,-116,&x,&y);n=add(out,n,x-31,y-31,x+32,y+32);a->anger_prev[0]=x;a->anger_prev[1]=y;}
+    else a->anger_prev[0]=0;
 
     /* rim gauge: the track sweeps in first, then the arc; on unplug the arc retracts, then the track */
     {
@@ -285,6 +293,14 @@ static bool inside_disc(const gfx_band_t *b, int r)
 void acc_paint(const accessories_t *a, const gfx_band_t *b, uint32_t now_ms)
 {
     colours();
+    if(a->anger_mix>0) {
+        int x,y;rot(a,103,-116,&x,&y);
+        float pulse=.82f+.18f*sinf(now_ms*.009f);
+        uint16_t red=gfx_rgb((int)(255*a->anger_mix*pulse),(int)(35*a->anger_mix),(int)(40*a->anger_mix));
+        /* Four inward arcs, like the comic anger mark, in a small clipped box. */
+        gfx_ring(b,x,y-25,19,5,130,230,red);gfx_ring(b,x+25,y,19,5,220,320,red);
+        gfx_ring(b,x,y+25,19,5,-50,50,red);gfx_ring(b,x-25,y,19,5,40,140,red);
+    }
     if (gauge_visible(a) && !inside_disc(b, CHG_R_OUT - CHG_THICK)) {
         if (a->chg_track > 0.f) gfx_ring(b, CX, CY, CHG_R_OUT, CHG_THICK, CHG_A0, CHG_A0 + (int)lrintf(a->chg_track), col_track);
         if (a->chg_arc > 0.f) gfx_ring(b, CX, CY, CHG_R_OUT, CHG_THICK, CHG_A0, CHG_A0 + (int)lrintf(a->chg_arc), col_chg);

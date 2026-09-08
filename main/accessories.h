@@ -35,12 +35,17 @@ typedef struct {
     float angle_deg;        /* face rotation, clockwise */
     float prev_angle_deg;
     bool first;
+    bool anger_on;
+    float anger_mix;
+    uint32_t anger_ms;
+    int anger_prev[2];
 } accessories_t;
 
 void acc_init(accessories_t *a, int left_cx, int right_cx, int cy);
 void acc_set_knocked_out(accessories_t *a, bool on, uint32_t now_ms);
 void acc_set_zz(accessories_t *a, bool on, uint32_t now_ms);
 void acc_set_angle(accessories_t *a, float deg);
+void acc_set_anger(accessories_t *a, bool on);
 /* Rim gauge: shown while `on`; the arc length is the battery percentage, green while charging. */
 void acc_set_charge(accessories_t *a, bool on, int pct, bool charging);
 /* The screen was cleared behind our back: repaint the static parts next frame. */

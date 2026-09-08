@@ -56,9 +56,9 @@ int main(void)
     behavior_out_t out;
     bool dizzy = false, ko = false, groggy = false, recovered = false;
     uint32_t ko_at = 0, groggy_at = 0;
-    for (uint32_t t = 1016; t < 22000; t += 16) {
+    for (uint32_t t = 1016; t < 30000; t += 16) {
         float magnitude = 1.f;
-        if (t >= 2000 && t < 6700) magnitude += sinf((float)t * 0.035f);
+        if (t >= 2000 && t < 12500) magnitude += sinf((float)t * 0.035f);
         in.accel[2] = (int16_t)(4096.f * magnitude); in.accel_ms = t;
         behavior_update(&beh, &in, t, &out);
         const anim_id_t want = out.override_anim < 0 ? ANIM_NEUTRAL : (anim_id_t)out.override_anim;
@@ -130,7 +130,7 @@ int main(void)
     const int32_t interrupted_gate = eyes.shape_gate[0];
     anim_set(&anim, &eyes, ANIM_NEUTRAL, 34064);
     assert(eyes.shape_gate[0] == interrupted_gate); /* Rapid tapping cannot pop it open. */
-    /* PR #1's dance fills must not leak into symbol eyes, or vice versa. */
+    /* Outgoing fills finish their fade before releasing the symbol eyes. */
     for (int fx = RASTER_FX_BARS; fx <= RASTER_FX_SPOTS; fx++) {
         const uint32_t t = 35000+(uint32_t)fx*2000;
         anim_set(&anim,&eyes,ANIM_DANCE,t);
@@ -139,7 +139,7 @@ int main(void)
         eyes_update(&eyes,t+300,shapes);
         assert(shapes[0].fx == fx && shapes[0].path_n == 0);
         anim_set(&anim,&eyes,ANIM_HEARTS,t+400);
-        anim_update(&anim,&eyes,t+700); eyes_update(&eyes,t+700,shapes);
+        anim_update(&anim,&eyes,t+1100); eyes_update(&eyes,t+1100,shapes);
         assert(shapes[0].fx == RASTER_FX_NONE && shapes[0].path_n > 0);
     }
     memset(before, 0, sizeof before);

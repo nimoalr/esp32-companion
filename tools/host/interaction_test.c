@@ -57,7 +57,7 @@ static void purring(void)
         persona_tick(&p,&in,t,&out);
         if(out.kind==SAY_GESTURE&&out.id==VOICE_PURR){assert(t>15500);purrs++;}
     }
-    assert(purrs==1);
+    assert(purrs==0);
     /* Movement restarts an in-progress hold, even while other speech is busy. */
     in.handling=true;persona_tick(&p,&in,20000,&out);assert(p.finger_since_ms==0);
     in.handling=false;in.speaking=true;persona_tick(&p,&in,21000,&out);
@@ -65,12 +65,14 @@ static void purring(void)
     in.handling=true;persona_tick(&p,&in,23000,&out);assert(p.finger_since_ms==0);
     behavior_t b;behavior_init(&b,1000);behavior_in_t bi={.stroke_forehead=true};behavior_out_t bo;
     bi.stroke_count=1;behavior_update(&b,&bi,1100,&bo);assert(b.state!=BEH_PETTED);
-    bi.stroke_count=2;behavior_update(&b,&bi,1900,&bo);assert(b.state==BEH_PETTED);
+    bi.stroke_count=2;behavior_update(&b,&bi,1900,&bo);assert(b.state!=BEH_PETTED);
+    bi.stroke_count=3;behavior_update(&b,&bi,2400,&bo);assert(b.state!=BEH_PETTED);
+    bi.stroke_count=4;behavior_update(&b,&bi,2900,&bo);assert(b.state==BEH_PETTED);
     behavior_init(&b,1000);bi.stroke_count=1;behavior_update(&b,&bi,1100,&bo);
     bi.stroke_count=2;behavior_update(&b,&bi,5000,&bo);assert(b.state!=BEH_PETTED);
     assert(!strcmp(behavior_state_name(BEH_CARRIED),"carried"));
     assert(!strcmp(behavior_state_name(BEH_PETTED),"petted"));
-    puts("PASS: carrying/grips cannot purr; settled hold once, motion resets it; two deliberate strokes");
+    puts("PASS: carrying/grips cannot purr; resting fingers stay quiet; four deliberate strokes over time");
 }
 static void handling_and_lids(void)
 {
@@ -130,21 +132,24 @@ static void contextual_faces(void)
     in.tap_count++;behavior_update(&b,&in,12300,&out);assert(b.state==BEH_POKED&&out.override_anim==ANIM_BOOP);
     in.tap_count++;behavior_update(&b,&in,12500,&out);
     in.tap_count++;behavior_update(&b,&in,12700,&out);assert(out.override_anim==ANIM_SUSPICIOUS);
-    /* Two real strokes can interrupt listening; ongoing strokes don't reset affection. */
+    /* Four deliberate strokes interrupt listening; ongoing strokes do not reset affection. */
     behavior_init(&b,1000);memset(&in,0,sizeof in);in.idle_allowed=true;
     in.audio.active=in.audio.speech=true;
     behavior_update(&b,&in,1100,&out);assert(b.state==BEH_LISTENING);
     in.stroke_forehead=true;in.stroke_count=1;behavior_update(&b,&in,1200,&out);
-    in.stroke_count=2;behavior_update(&b,&in,1900,&out);assert(b.state==BEH_PETTED&&out.override_anim==ANIM_HAPPY);
-    in.stroke_count=3;behavior_update(&b,&in,2900,&out);assert(out.override_anim==ANIM_LOVE);
-    in.stroke_count=4;behavior_update(&b,&in,4400,&out);assert(out.override_anim==ANIM_HEARTS);
-    b.moving_since_ms=4450;b.shake=.22f;behavior_update(&b,&in,4500,&out);assert(b.state!=BEH_PETTED&&out.override_anim!=ANIM_HEARTS);
+    in.stroke_count=2;behavior_update(&b,&in,1900,&out);assert(b.state!=BEH_PETTED);
+    in.stroke_count=3;behavior_update(&b,&in,2400,&out);assert(b.state!=BEH_PETTED);
+    in.stroke_count=4;behavior_update(&b,&in,2900,&out);assert(b.state==BEH_PETTED&&out.override_anim==ANIM_HAPPY);
+    in.stroke_count=5;behavior_update(&b,&in,3900,&out);assert(out.override_anim==ANIM_LOVE);
+    in.stroke_count=6;behavior_update(&b,&in,5400,&out);assert(out.override_anim==ANIM_HEARTS);
+    b.moving_since_ms=5450;b.shake=.22f;behavior_update(&b,&in,5500,&out);assert(b.state!=BEH_PETTED&&out.override_anim!=ANIM_HEARTS);
     /* A conversation's pause gets a thinking action only once; renewed speech interrupts it. */
     behavior_init(&b,1000);memset(&in,0,sizeof in);in.idle_allowed=true;
     b.energy=.2f;in.audio.active=in.audio.speech=true;
     behavior_update(&b,&in,1100,&out);in.audio.speech=false;
     behavior_update(&b,&in,3200,&out);assert(out.override_anim==ANIM_LOADING);
-    in.audio.speech=true;behavior_update(&b,&in,3300,&out);assert(b.state==BEH_LISTENING&&b.reaction_anim<0);
+    in.audio.speech=true;behavior_update(&b,&in,3300,&out);assert(b.state==BEH_IDLE);
+    behavior_update(&b,&in,b.next_listen_ms+1,&out);assert(b.state==BEH_LISTENING);
     /* Recovery finishes its protected choreography, then acknowledges the treatment. */
     behavior_init(&b,1000);in.audio.active=in.audio.speech=false;
     b.state=BEH_GROGGY;b.state_since_ms=1000;b.valence=-.6f;
@@ -230,11 +235,12 @@ static void voice_faces(void)
         pi.speech=false;pi.finger=true;pi.beh=BEH_KNOCKED_OUT;
         persona_tick(&p,&pi,16000,&say);persona_tick(&p,&pi,21000,&say);
         assert(!(say.kind==SAY_GESTURE&&say.id==VOICE_PURR));
-        /* Later deliberate holds may purr again, despite recent-utterance suppression. */
-        pi.beh=BEH_IDLE;persona_tick(&p,&pi,22000,&say);persona_tick(&p,&pi,26000,&say);
+        /* A later qualified stroke session can purr again; a resting finger cannot. */
+        pi.beh=BEH_IDLE;persona_tick(&p,&pi,22000,&say);
+        pi.beh=BEH_PETTED;persona_tick(&p,&pi,26000,&say);
         assert(say.kind==SAY_GESTURE&&say.id==VOICE_PURR&&say.face<0);purrs++;
-        pi.finger=false;persona_tick(&p,&pi,27000,&say);
-        pi.finger=true;persona_tick(&p,&pi,31000,&say);persona_tick(&p,&pi,35000,&say);
+        pi.finger=false;pi.beh=BEH_IDLE;persona_tick(&p,&pi,27000,&say);
+        pi.finger=true;persona_tick(&p,&pi,31000,&say);pi.beh=BEH_PETTED;persona_tick(&p,&pi,35000,&say);
         assert(say.kind==SAY_GESTURE&&say.id==VOICE_PURR);purrs++;
         pi.in_ui=true;pi.usb=true;persona_tick(&p,&pi,36000,&say);assert(say.face<0);
     }
@@ -260,4 +266,19 @@ static void continuous_caress(void)
     assert(touch.count>=8&&b.state==BEH_PETTED&&purrs==1);
     puts("PASS continuous caress reaches petting/purr without lifting finger; light handling tolerated, busy mouth defers once");
 }
-int main(void){cameos();purring();handling_and_lids();contextual_faces();purr_faces();voice_faces();continuous_caress();return 0;}
+static void interrupted_affection(void)
+{
+    behavior_t b;behavior_init(&b,1000);behavior_in_t in={.idle_allowed=true,.stroke_forehead=true};behavior_out_t out;
+    for(unsigned i=1;i<=4;i++){in.stroke_count=i;behavior_update(&b,&in,1000+i*600,&out);if(i<4)assert(b.state!=BEH_PETTED);}
+    assert(b.state==BEH_PETTED);in.purring=true;
+    for(unsigned t=3600;t<=4600;t+=200){in.tap_count++;behavior_update(&b,&in,t,&out);assert(out.override_anim!=ANIM_LOVE&&out.override_anim!=ANIM_HEARTS);}
+    assert(b.state==BEH_HEADBUTT&&b.pet_strokes==0);
+    in.purring=false;in.audio.active=in.audio.speech=true;
+    for(unsigned t=4700;t<45000;t+=100){behavior_update(&b,&in,t,&out);if(t>8000)assert(b.state!=BEH_LISTENING&&out.override_anim==ANIM_ANGRY);}
+    assert(b.valence<-.1f);
+    /* An abandoned stroke session cannot resume after menus/sleep. */
+    b.state=BEH_PETTED;b.pet_strokes=4;b.last_stroke_ms=45000;behavior_suspend_scenes(&b,45001);
+    assert(b.state==BEH_IDLE&&!b.pet_strokes&&!b.last_stroke_ms);
+    puts("PASS purring face -> tap spam -> headbutt, cleared stroke qualification, persistent anger despite speech, menu/sleep reset");
+}
+int main(void){cameos();purring();handling_and_lids();contextual_faces();purr_faces();voice_faces();continuous_caress();interrupted_affection();return 0;}

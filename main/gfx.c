@@ -1,9 +1,12 @@
+#include <stdint.h>
+#include "charge_coverage.h"
 #include "gfx.h"
+#include "esp_attr.h"
 
 #include <string.h>
 #include "raster.h"
 
-static uint32_t isqrt32(uint32_t v);
+static uint32_t IRAM_ATTR isqrt32(uint32_t v);
 
 uint16_t gfx_rgb(uint8_t r, uint8_t g, uint8_t b)
 {
@@ -11,7 +14,7 @@ uint16_t gfx_rgb(uint8_t r, uint8_t g, uint8_t b)
     return (uint16_t)((c >> 8) | (c << 8));
 }
 
-uint16_t gfx_scale(uint16_t color, uint8_t k)
+uint16_t IRAM_ATTR gfx_scale(uint16_t color, uint8_t k)
 {
     const uint16_t c = (uint16_t)((color >> 8) | (color << 8));
     uint32_t r = (c >> 11) & 0x1F, g = (c >> 5) & 0x3F, b = c & 0x1F;
@@ -168,7 +171,7 @@ void gfx_line(const gfx_band_t *b, int x0, int y0, int x1, int y1, int thick, ui
 }
 
 /* Integer sqrt of a 32-bit value. */
-static uint32_t isqrt32(uint32_t v)
+static uint32_t IRAM_ATTR isqrt32(uint32_t v)
 {
     uint32_t res = 0, bit = 1u << 30;
     while (bit > v) bit >>= 2;
@@ -181,7 +184,7 @@ static uint32_t isqrt32(uint32_t v)
 }
 
 /* Half-width (Q8) of the chord of radius r (px) at vertical offset dy (Q8). */
-static int32_t chord_q8(int32_t r_q8, int32_t dy_q8)
+static int32_t IRAM_ATTR chord_q8(int32_t r_q8, int32_t dy_q8)
 {
     const int64_t rr = (int64_t)r_q8 * r_q8 - (int64_t)dy_q8 * dy_q8;
     if (rr <= 0) return -1;
@@ -189,9 +192,10 @@ static int32_t chord_q8(int32_t r_q8, int32_t dy_q8)
 }
 
 /* Sector test: is direction (dx, dy) within [a0, a1] degrees clockwise from 12 o'clock? */
-static bool in_sector(int dx, int dy, int a0, int a1)
+typedef struct {int x0,y0,x1,y1,sweep;} ring_sector_t;
+static ring_sector_t ring_sector(int a0, int a1)
 {
-    if (a1 - a0 >= 360) return true;
+    if (a1-a0>=360)return (ring_sector_t){.sweep=360};
     /* screen y grows downward: 12 o'clock is (0, -1), clockwise increases x first */
     static const int16_t sin_t[91] = {
         0, 4, 9, 13, 18, 22, 27, 31, 36, 40, 44, 49, 53, 58, 62, 66, 71, 75, 79, 83, 88, 92, 96, 100, 104, 108, 112,
@@ -205,17 +209,20 @@ static bool in_sector(int dx, int dy, int a0, int a1)
     /* unit vectors of the two boundaries (screen coords) */
     const int d0x = SIN(b0), d0y = -COS(b0);
     const int d1x = SIN(b1), d1y = -COS(b1);
-    /* cross(d0, p) >= 0 means p is clockwise of d0 (screen coords flip the sign) */
-    const int64_t c0 = (int64_t)d0x * dy - (int64_t)d0y * dx;   /* >= 0: clockwise of d0 */
-    const int64_t c1 = (int64_t)d1x * dy - (int64_t)d1y * dx;   /* <= 0: counter-clockwise of d1 */
-    if (sweep <= 180) return c0 >= 0 && c1 <= 0;
-    return c0 >= 0 || c1 <= 0;
+    return (ring_sector_t){d0x,d0y,d1x,d1y,sweep};
     #undef SIN
     #undef COS
 }
 
+static inline bool IRAM_ATTR in_sector(int dx,int dy,const ring_sector_t *s)
+{
+    if(s->sweep>=360)return true;
+    int64_t c0=(int64_t)s->x0*dy-(int64_t)s->y0*dx,c1=(int64_t)s->x1*dy-(int64_t)s->y1*dx;
+    return s->sweep<=180?(c0>=0&&c1<=0):(c0>=0||c1<=0);
+}
+
 /* One pixel range [px0, px1) of one row of a ring: exact sub-row coverage, sector-clipped. */
-static void ring_row(const gfx_band_t *b, int cx, int cy, int32_t ro8, int32_t ri8, int r_in, int a0_deg, int a1_deg,
+static void IRAM_ATTR ring_row(const gfx_band_t *b, int cx, int cy, int32_t ro8, int32_t ri8, int r_in, const ring_sector_t *sector,
                      uint16_t color, int py, int px0, int px1)
 {
     static uint8_t cov[512];
@@ -260,21 +267,31 @@ static void ring_row(const gfx_band_t *b, int cx, int cy, int32_t ro8, int32_t r
     for (int i = 0; i < n; i++) {
         if (!cov[i]) continue;
         const int px = px0 + i;
-        if (!in_sector(px - cx, py - cy, a0_deg, a1_deg)) continue;
+        if (!in_sector(px - cx, py - cy, sector)) continue;
         row[px - b->x0] = (cov[i] >= 255) ? color : gfx_scale(color, cov[i]);
     }
 }
 
-void gfx_ring(const gfx_band_t *b, int cx, int cy, int r_out, int thick, int a0_deg, int a1_deg, uint16_t color)
+void IRAM_ATTR gfx_ring(const gfx_band_t *b, int cx, int cy, int r_out, int thick, int a0_deg, int a1_deg, uint16_t color)
 {
     if (thick <= 0 || r_out <= 0) return;
     const int r_in = r_out - thick;
+    const ring_sector_t sector=ring_sector(a0_deg,a1_deg);
     int y_a = cy - r_out, y_b = cy + r_out + 1;
     if (y_a < b->y0) y_a = b->y0;
     if (y_b > b->y0 + b->rows) y_b = b->y0 + b->rows;
     const int32_t ro8 = r_out << 8, ri8 = r_in << 8;
 
     for (int py = y_a; py < y_b; py++) {
+        if(cx==233&&cy==233&&r_out==232&&thick==4&&(unsigned)py<466){
+            uint16_t *row=b->dst+(size_t)(py-b->y0)*b->w;
+            for(unsigned i=charge_row[py];i<charge_row[py+1];i++){
+                int x=charge_x[i];
+                if(x<b->x0||x>=b->x0+b->w||!in_sector(x-cx,py-cy,&sector))continue;
+                row[x-b->x0]=charge_cov[i]==255?color:gfx_scale(color,charge_cov[i]);
+            }
+            continue;
+        }
         /* Row extent: outer chord at the sub-row nearest the centre, hole from the inner chord at the farthest. */
         int32_t dyc = ((py << 8) + 128) - (cy << 8);
         if (dyc < 0) dyc = -dyc;
@@ -287,11 +304,11 @@ void gfx_ring(const gfx_band_t *b, int cx, int cy, int r_out, int thick, int a0_
             /* two slivers: the hole in between never gets a pixel */
             const int xi = (si_min >> 8) - 1;
             if (xi > 0) {
-                ring_row(b, cx, cy, ro8, ri8, r_in, a0_deg, a1_deg, color, py, cx - xo, cx - xi);
-                ring_row(b, cx, cy, ro8, ri8, r_in, a0_deg, a1_deg, color, py, cx + xi, cx + xo + 1);
+                ring_row(b, cx, cy, ro8, ri8, r_in, &sector, color, py, cx - xo, cx - xi);
+                ring_row(b, cx, cy, ro8, ri8, r_in, &sector, color, py, cx + xi, cx + xo + 1);
                 continue;
             }
         }
-        ring_row(b, cx, cy, ro8, ri8, r_in, a0_deg, a1_deg, color, py, cx - xo, cx + xo + 1);
+        ring_row(b, cx, cy, ro8, ri8, r_in, &sector, color, py, cx - xo, cx + xo + 1);
     }
 }

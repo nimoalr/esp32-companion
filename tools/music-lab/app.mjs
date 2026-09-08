@@ -2,6 +2,7 @@ import {parseLine,decode,pack,unpack,summarize} from './trace.mjs';
 const $=id=>document.getElementById(id);
 let lastPerf=null;
 let deviceConfig=null,stopAck=null,connecting=false,editing=null;
+let heartbeat=null;
 async function send(command){const w=port.writable.getWriter();try{await w.write(new TextEncoder().encode(command+"\n"));}finally{w.releaseLock();}}
 let port,reader,reading=false,demoTimer,latest,lastReceived=0,history=[],records=[],run=null,started=0,unsaved=false;
 let meta={format:1,created:new Date().toISOString(),demo:false,tracks:[],transportEvents:[]};
@@ -44,6 +45,7 @@ $('connect').onclick=async()=>{
   const decoder=new TextDecoder();let buffer='';
   reader=port.readable.getReader();
   await send("MC_START");
+  heartbeat=setInterval(()=>{if(reading)send('MC_PING').catch(e=>notice(e.message));},2000);
   while(reading){const {value,done}=await reader.read();if(done)break;
    buffer+=decoder.decode(value,{stream:true});let i;
    while((i=buffer.indexOf('\n'))>=0){line(buffer.slice(0,i).trim());buffer=buffer.slice(i+1);}
@@ -51,6 +53,7 @@ $('connect').onclick=async()=>{
   }
  }catch(e){notice(e.message);}
  finally{
+  clearInterval(heartbeat);heartbeat=null;
   if(run){mark('USB disconnected');endRun();}
   reader?.releaseLock();reader=null;reading=false;connecting=false;
   if(port){try{await port.close();}catch{}port=null;}

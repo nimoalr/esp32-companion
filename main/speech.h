@@ -23,6 +23,9 @@ bool speech_word(int clip, float level, bool interrupt);
 bool speech_busy(void);
 void speech_effect(sfx_id_t id,float level);
 bool speech_purring(void);      /* currently rendering a purr; excludes queued/dropped requests */
+/* Invalidate queued and active affection without discarding impact effects. */
+void speech_cancel_purr(void);
+void speech_cancel_voice(void);
 /* settings */
 void speech_set_register(voice_register_t reg);
 void speech_set_volume(int pct);

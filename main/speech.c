@@ -2,11 +2,13 @@
 
 #include <string.h>
 #include <stdatomic.h>
+#ifndef SPEECH_HOST_TEST
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
-#include "esp_log.h"
 #include "esp_timer.h"
+#endif
+#include "esp_log.h"
 #include "adpcm.h"
 #include "audio.h"
 
@@ -21,6 +23,7 @@ typedef struct {
     req_kind_t kind;
     int id;
     float level, energy;
+    unsigned epoch,purr_epoch;
 } req_t;
 
 static QueueHandle_t s_q, s_effect_q;
@@ -28,6 +31,7 @@ static sfx_t s_effects;
 typedef struct {sfx_id_t id;float level;} effect_req_t;
 static volatile bool s_busy;
 static atomic_bool s_purring;
+static atomic_uint s_epoch,s_purr_epoch;
 static voice_t s_voice;
 static voice_register_t s_reg = VOICE_REG_HIGH;
 static int16_t s_block[BLOCK];
@@ -51,32 +55,66 @@ static void mix_effects(int16_t *pcm,int n)
 void speech_effect(sfx_id_t id,float level)
 {
     if(!s_effect_q || !s_q)return;
-    effect_req_t e={id,level};xQueueOverwrite(s_effect_q,&e);
+    effect_req_t e={id,level};if(xQueueSend(s_effect_q,&e,0)!=pdTRUE)return;
     const req_t wake={.kind=REQ_EFFECT};xQueueSend(s_q,&wake,0);
+}
+
+static bool canceled(const req_t *r)
+{
+    return r->epoch!=atomic_load(&s_epoch) ||
+        (r->kind==REQ_GESTURE && r->id==VOICE_PURR && r->purr_epoch!=atomic_load(&s_purr_epoch));
+}
+void speech_cancel_purr(void){atomic_fetch_add(&s_purr_epoch,1);atomic_store(&s_purring,false);}
+void speech_cancel_voice(void){atomic_fetch_add(&s_epoch,1);atomic_store(&s_purring,false);}
+
+/* One 10 ms ramp from the last emitted sample; cancellation does not wait for
+ * a looping gesture or a word to finish and does not cut at arbitrary amplitude. */
+static void release_voice(void)
+{
+    int last=s_block[BLOCK-1];
+    for(int i=0;i<BLOCK;i++)s_block[i]=(int16_t)(last*(BLOCK-1-i)/BLOCK);
+    mix_effects(s_block,BLOCK);audio_write(s_block,BLOCK);
 }
 
 static void play_silence(int ms)
 {
     memset(s_block, 0, sizeof s_block);
-    for (int i = 0; i < ms / 10; i++) audio_write(s_block, BLOCK);
+    for (int i = 0; i < (ms+9) / 10; i++) audio_write(s_block, BLOCK);
+}
+
+/* I2S has 6 x 240 frames = 90 ms queued at 16 kHz. Keep the PA on
+ * through the drain, including effects arriving during another sound's tail. */
+static void drain_sound(void)
+{
+    int quiet=0,guard=300;
+    while(quiet<PA_TAIL_MS/10 && guard--) {
+        bool playing=sfx_active(&s_effects)||uxQueueMessagesWaiting(s_effect_q);
+        memset(s_block,0,sizeof s_block);mix_effects(s_block,BLOCK);
+        if(audio_write(s_block,BLOCK)!=ESP_OK)break;
+        quiet=playing?0:quiet+1;
+    }
 }
 
 static void say(const req_t *r)
 {
+    if(r->kind!=REQ_EFFECT && canceled(r))return;
     if (!wait_audio()) {
         ESP_LOGW(TAG, "no audio, dropped");
         return;
     }
+    if(r->kind!=REQ_EFFECT && canceled(r))return;
     audio_set_muted(true);
     audio_pa(true);
     play_silence(PA_LEAD_MS);
     const int64_t t0 = esp_timer_get_time();
+    memset(s_block,0,sizeof s_block);
     atomic_store_explicit(&s_purring, r->kind == REQ_GESTURE && r->id == VOICE_PURR, memory_order_relaxed);
     if (r->kind == REQ_WORD) {
         const clip_t *c = &k_clips[r->id];
         adpcm_state_t st = { 0, 0 };
         const float gain = r->level < 0.f ? 0.f : r->level > 1.f ? 1.f : r->level;
         for (uint32_t pos = 0; pos < c->samples; pos += BLOCK) {
+            if(canceled(r)){release_voice();break;}
             const int n = (int)(c->samples - pos < BLOCK ? c->samples - pos : BLOCK);
             adpcm_decode(&st, c->data + pos / 2, s_block, n & ~1);
             if (n & 1) s_block[n - 1] = 0;
@@ -97,6 +135,7 @@ static void say(const req_t *r)
         else voice_babble(&s_voice, r->level, r->energy);
         int guard = 500;    /* 5 s: a looping gesture (purr) needs voice_stop; here it is cut */
         while (voice_active(&s_voice) && guard--) {
+            if(canceled(r)){release_voice();voice_stop(&s_voice);break;}
             voice_render(&s_voice, s_block, BLOCK);
             mix_effects(s_block,BLOCK);
             if (audio_write(s_block, BLOCK) != ESP_OK) break;
@@ -104,7 +143,7 @@ static void say(const req_t *r)
         }
     }
     atomic_store_explicit(&s_purring, false, memory_order_relaxed);
-    play_silence(r->kind==REQ_EFFECT?10:PA_TAIL_MS);
+    drain_sound();
     audio_pa(false);
     audio_set_muted(false);
     ESP_LOGI(TAG, "said %s (%lld ms)", r->kind == REQ_WORD ? k_clips[r->id].name : r->kind == REQ_GESTURE ? k_voice_gestures[r->id].name : r->kind==REQ_EFFECT?"effect":"babble",
@@ -126,7 +165,7 @@ static void speech_task(void *arg)
 esp_err_t speech_init(void)
 {
     voice_init(&s_voice, (uint32_t)esp_timer_get_time());
-    s_effect_q=xQueueCreate(1,sizeof(effect_req_t));
+    s_effect_q=xQueueCreate(8,sizeof(effect_req_t)); /* bonk + crack in the same frame must both survive */
     s_q = xQueueCreate(2, sizeof(req_t));
     if (!s_q || !s_effect_q) return ESP_ERR_NO_MEM;
     if (xTaskCreatePinnedToCore(speech_task, "speech", 6144, NULL, 5, NULL, 0) != pdPASS) return ESP_ERR_NO_MEM;
@@ -137,26 +176,27 @@ static bool post(const req_t *r, bool interrupt)
 {
     if (!s_q) return false;
     if (s_busy && !interrupt) return false;
-    if (interrupt) xQueueReset(s_q);
-    return xQueueSend(s_q, r, 0) == pdTRUE;
+    if (interrupt) {atomic_fetch_add(&s_epoch,1);xQueueReset(s_q);}
+    req_t queued=*r;queued.epoch=atomic_load(&s_epoch);queued.purr_epoch=atomic_load(&s_purr_epoch);
+    return xQueueSend(s_q, &queued, 0) == pdTRUE;
 }
 
 bool speech_gesture(voice_id_t id, float level, bool interrupt)
 {
-    const req_t r = { REQ_GESTURE, (int)id, level, 0.f };
+    const req_t r = { .kind=REQ_GESTURE, .id=(int)id, .level=level };
     return post(&r, interrupt);
 }
 
 bool speech_babble(float level, float energy)
 {
-    const req_t r = { REQ_BABBLE, 0, level, energy };
+    const req_t r = { .kind=REQ_BABBLE, .level=level, .energy=energy };
     return post(&r, false);
 }
 
 bool speech_word(int clip, float level, bool interrupt)
 {
     if (clip < 0 || clip >= k_clips_n) return false;
-    const req_t r = { REQ_WORD, clip, level, 0.f };
+    const req_t r = { .kind=REQ_WORD, .id=clip, .level=level };
     return post(&r, interrupt);
 }
 

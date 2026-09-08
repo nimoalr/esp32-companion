@@ -11,6 +11,8 @@ typedef struct {
 /* Four sub-scanlines per row at y + 1/8, 3/8, 5/8, 7/8; weights sum to 255. */
 static const DRAM_ATTR int32_t k_sub_off[4] = { 8192, 24576, 40960, 57344 };
 static const DRAM_ATTR uint8_t k_sub_w[4] = { 64, 64, 64, 63 };
+static const DRAM_ATTR int32_t k_sub2_off[2] = { 16384, 49152 };
+static const DRAM_ATTR uint8_t k_sub2_w[2] = { 128, 127 };
 
 /* Slopes/bulges below 1/256 px are treated as zero so their reciprocals stay in range. */
 #define RCP_MIN_Q16  256
@@ -477,10 +479,12 @@ typedef struct {
     int32_t lx, ly, lo, hi;
     int32_t u,v,du,dv;
     int b;
+    int x,py;
 } bar_walk_t;
 
 static inline void IRAM_ATTR bar_walk_begin(const raster_shape_t *s, int x, int py, bar_walk_t *w)
 {
+    w->x=x;w->py=py;
     const int32_t rc = s->rot ? s->rc : Q16_ONE, rs = s->rot ? s->rs : 0;
     const int32_t X = ((int32_t)x << 16) + 0x8000 - s->cx, Y = ((int32_t)py << 16) + 0x8000 - s->cy;
     w->lx = (int32_t)(((int64_t)rc * X + (int64_t)rs * Y) >> 16);
@@ -518,16 +522,42 @@ static inline uint32_t IRAM_ATTR bar_walk_level(const raster_shape_t *s, bar_wal
         w->u+=w->du;w->v+=w->dv;
     }
     /* the mix against the plain fill */
-    if (s->fx_mix < 256) level = 31 + (((int)level - 31) * s->fx_mix >> 8);
+    if (s->fx_mix < 256) {
+        int base=s->hot?s->hot_g2l[((s->hot_gx[w->x]*s->hot_gy[w->py])>>8)+k_dither[(w->py&1)*2+(w->x&1)]]:31;
+        level=base+(((int)level-base)*s->fx_mix>>8);
+    }
+    w->x++;
     const int32_t rc = s->rot ? s->rc : Q16_ONE, rs = s->rot ? s->rs : 0;
     w->lx += rc;
     w->ly -= rs;
     return level;
 }
 
+static inline void IRAM_ATTR fill16(uint16_t *p,uint16_t v,int n);
+/* Upright opaque bars have a constant color between bar/gap boundaries. */
+static inline void IRAM_ATTR fill_bars_runs(uint16_t *dst,int n,const raster_shape_t *s,int x,int py)
+{
+    bar_walk_t w={0};bar_walk_begin(s,x,py,&w);
+    while(n>0) {
+        while(w.lx>=w.hi&&w.b<7){w.b++;w.lo=w.hi;w.hi+=s->bar_w;}
+        bool gap=w.b>0 && w.lx-w.lo<Q16_ONE;
+        int32_t boundary=gap?w.lo+Q16_ONE:w.hi;
+        int run=(int)(((int64_t)boundary-w.lx+65535)/65536);
+        if(run<1 || run>n)run=n;
+        unsigned level=s->bar_dim;
+        if(!gap) {
+            int32_t d=w.ly-s->bar_top[w.b];
+            if(d>=0)level=s->bar_lit;
+            else if(d>-Q16_ONE)level=s->bar_dim+(unsigned)(((int64_t)(s->bar_lit-s->bar_dim)*(d+Q16_ONE))>>16);
+        }
+        fill16(dst,s->lut2[63+(level<<6)],run);dst+=run;n-=run;w.lx+=run*Q16_ONE;
+    }
+}
+
 /* Solid core of the spectrum bars. */
 static inline void IRAM_ATTR fill_bars(uint16_t *dst, int n, const raster_shape_t *s, int x, int py)
 {
+    if(!s->rot && s->fx==RASTER_FX_BARS && s->fx_mix==256){fill_bars_runs(dst,n,s,x,py);return;}
     const uint16_t *lut2 = s->lut2 + 63;
     bar_walk_t w = {0};
     bar_walk_begin(s, x, py, &w);
@@ -613,13 +643,16 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
     uint8_t cov[COV_MAX];
     span_t sp[4][RASTER_MAX_SPANS];
     int ns[4];
+    const int nk = s->aa_samples == 2 ? 2 : 4;
+    const int32_t *sub_off = nk == 2 ? k_sub2_off : k_sub_off;
+    const uint8_t *sub_w = nk == 2 ? k_sub2_w : k_sub_w;
     int total = 0;
     bool multi = false;
     const int32_t ybase = py << 16;
 
-    for (int k = 0; k < 4; k++) {
-        ns[k] = s->path_n ? path_spans(s, ybase + k_sub_off[k], sp[k])
-                         : s->rot ? shape_spans_rot(s, ybase + k_sub_off[k], sp[k]) : shape_spans(s, ybase + k_sub_off[k], sp[k]);
+    for (int k = 0; k < nk; k++) {
+        ns[k] = s->path_n ? path_spans(s, ybase + sub_off[k], sp[k])
+                         : s->rot ? shape_spans_rot(s, ybase + sub_off[k], sp[k]) : shape_spans(s, ybase + sub_off[k], sp[k]);
         total += ns[k];
         if (ns[k] > 1) {
             multi = true;
@@ -636,7 +669,7 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
         int32_t L = INT32_MAX, R = INT32_MIN;      /* outer extent */
         int32_t CL = INT32_MIN, CR = INT32_MAX;    /* extent covered by every sub-row */
         int cnt = 0;
-        for (int k = 0; k < 4; k++) {
+        for (int k = 0; k < nk; k++) {
             if (ns[k]) {
                 const int32_t l = sp[k][0].l, r = sp[k][0].r;
                 if (l < L) L = l;
@@ -654,8 +687,8 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
             return;
         }
 
-        int cl = pl, cr = pl;   /* solid core [cl, cr), empty unless all four sub-rows present */
-        if (cnt == 4) {
+        int cl = pl, cr = pl;   /* solid core [cl, cr), empty unless all sub-rows present */
+        if (cnt == nk) {
             cl = (CL + 0xFFFF) >> 16;
             cr = CR >> 16;
             if (cl < pl) cl = pl;
@@ -668,8 +701,8 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
         if (cl > pl) {
             const int n = cl - pl;
             memset(cov, 0, (size_t)n);
-            for (int k = 0; k < 4; k++) {
-                if (ns[k]) cov_add(cov, pl, n, sp[k][0].l, sp[k][0].r, k_sub_w[k]);
+            for (int k = 0; k < nk; k++) {
+                if (ns[k]) cov_add(cov, pl, n, sp[k][0].l, sp[k][0].r, sub_w[k]);
             }
             blit_cov(row + (pl - bx0), cov, n, s, pl, py, over);
         }
@@ -685,8 +718,8 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
         if (pr > cr) {
             const int n = pr - cr;
             memset(cov, 0, (size_t)n);
-            for (int k = 0; k < 4; k++) {
-                if (ns[k]) cov_add(cov, cr, n, sp[k][0].l, sp[k][0].r, k_sub_w[k]);
+            for (int k = 0; k < nk; k++) {
+                if (ns[k]) cov_add(cov, cr, n, sp[k][0].l, sp[k][0].r, sub_w[k]);
             }
             blit_cov(row + (cr - bx0), cov, n, s, cr, py, over);
         }
@@ -700,7 +733,7 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
      * made a curved-lid row about six times the cost of a plain one.
      */
     int32_t L = INT32_MAX, R = INT32_MIN;
-    for (int k = 0; k < 4; k++) {
+    for (int k = 0; k < nk; k++) {
         for (int j = 0; j < ns[k]; j++) {
             if (sp[k][j].l < L) L = sp[k][j].l;
             if (sp[k][j].r > R) R = sp[k][j].r;
@@ -714,13 +747,13 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
         return;
     }
 
-    /* solid core: intersection of the four span lists, in whole pixels */
+    /* solid core: intersection of the sub-row span lists, in whole pixels */
     span_t core_a[2 * RASTER_MAX_SPANS], core_b[2 * RASTER_MAX_SPANS];
     span_t *core = core_a, *tmp = core_b;
     int ncore = 0;
-    if (ns[0] && ns[1] && ns[2] && ns[3]) {
+    if (ns[0]) {
         for (int j = 0; j < ns[0]; j++) core[ncore++] = sp[0][j];
-        for (int k = 1; k < 4 && ncore; k++) {
+        for (int k = 1; k < nk && ncore; k++) {
             int nt = 0, a = 0, b = 0;
             while (a < ncore && b < ns[k] && nt < 2 * RASTER_MAX_SPANS) {
                 const int32_t l = core[a].l > sp[k][b].l ? core[a].l : sp[k][b].l;
@@ -749,9 +782,9 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
         if (cl > x) {
             const int n = cl - x;
             memset(cov, 0, (size_t)n);
-            for (int k = 0; k < 4; k++) {
+            for (int k = 0; k < nk; k++) {
                 for (int j = 0; j < ns[k]; j++) {
-                    cov_add(cov, x, n, sp[k][j].l, sp[k][j].r, k_sub_w[k]);
+                    cov_add(cov, x, n, sp[k][j].l, sp[k][j].r, sub_w[k]);
                 }
             }
             blit_cov(row + (x - bx0), cov, n, s, x, py, over);
@@ -761,9 +794,9 @@ static void IRAM_ATTR render_row(uint16_t *row, int bx0, int bx1, int py, const 
                 /* the over-paint blend wants coverage for every pixel; keep the exact path */
                 const int n = cr - cl;
                 memset(cov, 0, (size_t)n);
-                for (int k = 0; k < 4; k++) {
+                for (int k = 0; k < nk; k++) {
                     for (int j = 0; j < ns[k]; j++) {
-                        cov_add(cov, cl, n, sp[k][j].l, sp[k][j].r, k_sub_w[k]);
+                        cov_add(cov, cl, n, sp[k][j].l, sp[k][j].r, sub_w[k]);
                     }
                 }
                 blit_cov(row + (cl - bx0), cov, n, s, cl, py, over);

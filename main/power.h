@@ -22,13 +22,7 @@
 #include <stdint.h>
 #include "esp_err.h"
 #include "pmic.h"
-
-typedef enum {
-    POWER_ACTIVE = 0,
-    POWER_DROWSY,
-    POWER_SLEEP,
-    POWER_DEEP,
-} power_state_t;
+#include "power_policy.h"
 
 typedef enum {
     POWER_WAKE_MOTION,
@@ -46,9 +40,10 @@ esp_err_t power_init(void);
  */
 power_state_t power_update(uint32_t now_ms, uint32_t touch_ms);
 power_state_t power_state(void);
+uint32_t power_idle_ms(uint32_t now_ms);
 const char *power_state_name(power_state_t s);
 
-/* True while USB power is present (and the USB-keeps-awake option is on): no light sleep, no SLEEP state. */
+/* USB console protection during DROWSY frame pacing; full SLEEP is still timed. */
 bool power_on_usb(void);
 
 /* In DROWSY: allow (true) or forbid (false) automatic light sleep. No-op in other states. */

@@ -724,6 +724,7 @@ static void rotate_about_centre(const eyes_t *e, int32_t x, int32_t y, int32_t *
 static void params_to_shape(eyes_t *e, int which, const EyeParams *p, raster_shape_t *s)
 {
     s->path_n = 0;
+    s->aa_samples = 0; /* render policy may lower this for the current dance frame */
     int32_t hx = p->hot_x, hy = p->hot_y;
     if (e->face_rot) {
         /* the eye's centre swings around the screen centre with the face */
@@ -757,7 +758,7 @@ static void params_to_shape(eyes_t *e, int which, const EyeParams *p, raster_sha
     s->bot_slant = p->slant_b;
     s->curve = p->curve;
     s->lut = e->lut[which];
-    s->hot = e->hot && !e->fx;
+    s->hot = e->hot && (!e->fx || e->fx_mix<1.f);
     s->fx = e->fx;
     if (e->fx) {
         s->fx_tex=e->dance_fill[e->fx==RASTER_FX_DISCO?which:0].tex;

@@ -64,6 +64,7 @@ typedef enum {
     ANIM_CROSS_EYED,
     ANIM_JELLY,
     ANIM_HEADBUTT,
+    ANIM_YAWN,
     ANIM_COUNT
 } anim_id_t;
 
@@ -82,6 +83,10 @@ typedef struct {
     uint32_t jit_t0_ms;
     uint32_t rng;
     pucks_t pucks;
+    eye_pose_t loose_pose[2], transition_mod[2];
+    int32_t transition_face[3];
+    int transition_fx;
+    float transition_mix, transition_laser, transition_spot;
     float motion_x, motion_y;
     unsigned effect_serial;
     sfx_id_t effect;
@@ -98,6 +103,8 @@ typedef struct {
     float dance_bass, dance_loud, dance_bal;   /* smoothed */
     uint32_t dance_last_sound_ms;
     int dance_flourish;         /* 0 none, 2 a slow sway (a stroke) */
+    uint32_t dance_bar_ms;
+    float dance_bar_sample[8];
     float dance_bars[2][8];     /* smoothed spectrum heights, left eye low bands, right eye high */
     int dance_visual;           /* the passing visual on top of the dance: 0 plain, 1 spectrum, 2 mirror ball, 3 spotlights */
     int dance_visual_last;
