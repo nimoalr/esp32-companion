@@ -111,6 +111,23 @@ intervals and your human labels. Click to seek; drag to select a range and drag 
 dance**, or **Comment only / unsure**, with arbitrary notes. Labels appear as timeline regions and editable cards, with deletion and a 30-step undo history; download the notebook again to retain edits. They never overwrite
 recorded detector decisions. Playback is local; the page does not auto-play.
 
+Each annotation also has two optional, independent fields:
+
+- **What's audible?** Speech only, speech + background music, music (including
+  singing), or other sound. Leaving it unlabelled makes no assumption.
+- **Dance movement:** no dance, slow sway, groove, or energetic. Leave unspecified
+  when only the binary response is known. Choosing a movement keeps the expected
+  response consistent; content never automatically chooses movement.
+
+Movement appears on the timeline and annotation card; content appears on the
+card. Both survive editing, undo and notebook export/import, including portable
+files with stems. Metadata stores optional `danceStyle` (`none`, `slow`, `groove`,
+`energetic`) and `audibleContent` (`speech`, `speech_music`, `music`, `other`). Old
+annotations retain their unspecified movement/content rather than gaining inferred
+labels. Content-only notes are allowed without a comment. The displayed detection
+score still measures binary dance admission, not movement intensity or content
+classification; offline exports preserve the extra fields for separate evaluation.
+
 Choose stereo, left, or right audition. Boost quiet replay changes only the
 preview (peak-based gain, capped at ×100). Original stereo WAV export preserves
 ADC sample values, channel order and levels. Sequence gaps become marked silence

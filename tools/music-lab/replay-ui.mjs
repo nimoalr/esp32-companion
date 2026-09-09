@@ -1,5 +1,5 @@
 import {createStems} from './stem-ui.mjs?v=portable4';
-import {timeline,wav,pcmStats,intervals,annotation,evaluate} from './replay.mjs?v=portable4';
+import {timeline,wav,pcmStats,intervals,annotation,evaluate,DANCE_STYLES,AUDIBLE_CONTENT} from './replay.mjs?v=portable4';
 const fmt=(s,precise=false)=>`${Math.floor(s/60)}:${(s%60).toFixed(precise?3:1).padStart(precise?6:4,'0')}`;
 export function createReplay(onEdit,notice){
  const $=id=>document.getElementById(id),audio=$('replay-audio'),canvas=$('replay-timeline');
@@ -15,8 +15,8 @@ export function createReplay(onEdit,notice){
  function setRange(a,b){selection=true;$('label-start').value=Math.max(0,Math.min(a,map.duration)).toFixed(3);$('label-end').value=Math.max(0,Math.min(b,map.duration)).toFixed(3);draw();}
  function snapshot(){undo.push(JSON.stringify(track.annotations||[]));if(undo.length>30)undo.shift();$('label-undo').disabled=false;}
  function changed(){onEdit();$('replay-save-hint').textContent='Unsaved edits · download session to keep labels and stem curves';}
- function resetEdit(){editing=-1;$('label-save').textContent='Add annotation';$('label-heading').textContent='What should happen here?';$('label-cancel').hidden=true;}
- function expected(value){$('label-expected').value=value;document.querySelectorAll('[data-expected]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.expected===value)));}
+ function resetEdit(){editing=-1;$('label-save').textContent='Add annotation';$('label-heading').textContent='What should happen here?';$('label-cancel').hidden=true;$('label-motion').value='';$('label-content').value='';}
+ function expected(value){$('label-expected').value=value;const motion=$('label-motion');if(value==='no_dance')motion.value='none';else if(value==='unsure'||motion.value==='none')motion.value='';document.querySelectorAll('[data-expected]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.expected===value)));}
  function download(p,name){const u=URL.createObjectURL(new Blob([p],{type:'audio/wav'})),a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),10000);}
  function preview(){
   if(!track)return;const current=audio.currentTime||0,wasPlaying=!audio.paused;audio.pause();if(url)URL.revokeObjectURL(url);
@@ -44,7 +44,7 @@ export function createReplay(onEdit,notice){
   }
   for(let px=0;px<P;px++)for(let ch=0;ch<2;ch++){const height=bars[px][ch]*28;c.fillStyle=ch?'#ae9ed9':'#8bbada';if(height)c.fillRect(G+px,71+ch*72-height,1,Math.max(1,height*2));}
   for(const r of dance)block(c,r,195,20,'#83b967');for(const r of listen)block(c,r,234,15,'#bb945c');
-  (track.annotations||[]).forEach((l,i)=>{block(c,l,277,29,l.expected==='dance'?'#70a85d':l.expected==='no_dance'?'#b97870':'#8875ab');if(visible(l)){c.save();c.beginPath();c.rect(Math.max(G,x(l.start))+3,278,Math.max(0,Math.min(W,x(l.end))-Math.max(G,x(l.start))-6),27);c.clip();c.fillStyle='#f4fff0';c.fillText(`${i+1} · ${l.label||({dance:'Dance',no_dance:'Stay quiet',unsure:'Note'}[l.expected])}`,Math.max(G,x(l.start))+7,295);c.restore();}});
+  (track.annotations||[]).forEach((l,i)=>{block(c,l,277,29,l.expected==='dance'?'#70a85d':l.expected==='no_dance'?'#b97870':'#8875ab');if(visible(l)){c.save();c.beginPath();c.rect(Math.max(G,x(l.start))+3,278,Math.max(0,Math.min(W,x(l.end))-Math.max(G,x(l.start))-6),27);c.clip();c.fillStyle='#f4fff0';c.fillText(`${i+1} · ${[DANCE_STYLES[l.danceStyle],l.label||AUDIBLE_CONTENT[l.audibleContent]||(!l.danceStyle?({dance:'Dance',no_dance:'No dance',unsure:'Note'}[l.expected]):'')].filter(Boolean).join(' · ')}`,Math.max(G,x(l.start))+7,295);c.restore();}});
   for(const g of map.gaps){if(g.end===g.start&&g.start>=view&&g.start<=view+span){c.fillStyle='#f69383';c.fillRect(x(g.start),30,3,H-30);}else if(visible(g)){block(c,g,30,H-30,'#c4636338');const left=Math.max(G,x(g.start)),right=Math.min(W,x(g.end));c.save();c.beginPath();c.rect(left,30,right-left,H-30);c.clip();c.strokeStyle='#ee8d8255';for(let xx=left-H;xx<right;xx+=10){c.beginPath();c.moveTo(xx,H);c.lineTo(xx+H,30);c.stroke();}c.restore();}}
   const [a,b]=range();if(selection&&b>a){c.save();c.beginPath();c.rect(G,0,P,H);c.clip();c.fillStyle='#c7eea51b';c.fillRect(x(a),29,x(b)-x(a),H-29);c.strokeStyle='#c2eaa0';c.lineWidth=1.5;c.strokeRect(x(a),29,x(b)-x(a),H-30);for(const t of [a,b]){c.fillStyle='#c2eaa0';c.fillRect(x(t)-4,29,8,18);c.fillRect(x(t)-2,H-14,4,12);}c.restore();}
   if(audio.currentTime>=view&&audio.currentTime<=view+span){c.fillStyle='#f5d790';const px=x(audio.currentTime);c.fillRect(px,25,1.5,H-25);c.beginPath();c.moveTo(px-5,25);c.lineTo(px+5,25);c.lineTo(px,32);c.fill();}
@@ -55,12 +55,13 @@ export function createReplay(onEdit,notice){
   stems.draw(view,span,audio.currentTime,selection?[a,b]:null);
   $('replay-selection').disabled=!selection||b<=a;$('zoom-selection').disabled=!selection||b<=a;$('label-save').disabled=!selection||b<=a;
  }
- function editLabel(i){const l=track.annotations[i];editing=i;setRange(l.start,l.end);expected(l.expected);$('label-comment').value=l.label;$('label-save').textContent='Save annotation';$('label-heading').textContent=`Edit annotation ${i+1}`;$('label-cancel').hidden=false;audio.currentTime=l.start;if(l.start<view||l.end>view+span){view=l.start;span=Math.max(2,l.end-l.start)*1.2;clampView();}draw();}
+ function editLabel(i){const l=track.annotations[i];editing=i;setRange(l.start,l.end);expected(l.expected);$('label-motion').value=l.danceStyle||'';$('label-content').value=l.audibleContent||'';$('label-comment').value=l.label;$('label-save').textContent='Save annotation';$('label-heading').textContent=`Edit annotation ${i+1}`;$('label-cancel').hidden=false;audio.currentTime=l.start;if(l.start<view||l.end>view+span){view=l.start;span=Math.max(2,l.end-l.start)*1.2;clampView();}draw();}
  function labels(){const root=$('range-labels');root.replaceChildren();$('label-count').textContent=(track.annotations||[]).length;
   if(!track.annotations?.length){const empty=document.createElement('div');empty.className='empty-labels';empty.textContent='Hear something worth noting? Drag across that passage, choose what he should do, and add an annotation. You can refine it afterward.';root.append(empty);}
   (track.annotations||[]).forEach((l,i)=>{const row=document.createElement('div');row.className='annotation-card';row.dataset.kind=l.expected;
-   const head=document.createElement('div');head.className='row';const title=document.createElement('strong');title.textContent=`${i+1} · ${{dance:'Should dance',no_dance:'No dancing',unsure:'Note'}[l.expected]}`;head.append(title);row.append(head);
+   const head=document.createElement('div');head.className='row';const title=document.createElement('strong');title.textContent=`${i+1} · ${DANCE_STYLES[l.danceStyle]||{dance:'Should dance',no_dance:'No dancing',unsure:'Note'}[l.expected]}`;head.append(title);row.append(head);
    const timing=document.createElement('div');timing.className='label-time';timing.textContent=`${fmt(l.start,true)} → ${fmt(l.end,true)}`;row.append(timing);
+   if(l.audibleContent){const content=document.createElement('p');content.textContent=AUDIBLE_CONTENT[l.audibleContent]||l.audibleContent;row.append(content);}
    if(l.label){const text=document.createElement('p');text.textContent=l.label;row.append(text);}
    const buttons=document.createElement('div');buttons.className='row';
    const play=document.createElement('button');play.textContent='▶ Listen';play.onclick=()=>{setRange(l.start,l.end);playRange();};buttons.append(play);
@@ -68,7 +69,7 @@ export function createReplay(onEdit,notice){
    const remove=document.createElement('button');remove.textContent='Delete';remove.onclick=()=>{snapshot();track.annotations.splice(i,1);resetEdit();changed();labels();draw();};buttons.append(remove);row.append(buttons);root.append(row);
   });
   const e=evaluate(map,track.annotations||[]);
-  $('label-score').textContent=`Human-labelled ${e.labelled.toFixed(2)}s · correctly dancing ${e.tp.toFixed(2)}s · missed dance ${e.fn.toFixed(2)}s · false dance ${e.fp.toFixed(2)}s · correctly quiet ${e.tn.toFixed(2)}s · conflicting labels excluded ${e.conflict.toFixed(2)}s. Unlabelled ranges and missing audio are excluded.`;
+  $('label-score').textContent=`Human-labelled ${e.labelled.toFixed(2)}s · correctly dancing ${e.tp.toFixed(2)}s · missed dance ${e.fn.toFixed(2)}s · false dance ${e.fp.toFixed(2)}s · correctly quiet ${e.tn.toFixed(2)}s · conflicting labels excluded ${e.conflict.toFixed(2)}s. Unlabelled ranges and missing audio are excluded. This score checks dance detection only; movement style and audible content are separate human labels.`;
  }
  function play(){audioGraph?.resume().catch(e=>notice(e.message));audio.play().catch(e=>notice(e.message));}
  function playRange(){if(!selection)return;const [a,b]=range();if(b<=a)return;playingSelection=true;audio.currentTime=a;play();}
@@ -82,12 +83,13 @@ export function createReplay(onEdit,notice){
  $('replay-play').onclick=()=>{playingSelection=false;if(audio.paused)play();else audio.pause();};
  $('replay-back').onclick=()=>{audio.currentTime=Math.max(0,audio.currentTime-5);draw();};$('replay-selection').onclick=playRange;
  $('replay-speed').onchange=()=>{audio.playbackRate=+$('replay-speed').value;};
- $('label-save').onclick=()=>{try{if(!track||!selection)return;const l=annotation(...range(),$('label-expected').value,$('label-comment').value,map.duration);snapshot();
-  track.annotations??=[];if(editing<0)track.annotations.push(l);else track.annotations[editing]=l;
+ $('label-save').onclick=()=>{try{if(!track||!selection)return;const l=annotation(...range(),$('label-expected').value,$('label-comment').value,map.duration,{danceStyle:$('label-motion').value,audibleContent:$('label-content').value});snapshot();
+  track.annotations??=[];if(editing<0)track.annotations.push(l);else{const {danceStyle,audibleContent,...previous}=track.annotations[editing];track.annotations[editing]={...previous,...l};}
   resetEdit();$('label-comment').value='';changed();labels();draw();$('label-feedback').textContent='Annotation saved to this session';
  }catch(e){notice(e.message);}};
  $('label-undo').onclick=()=>{if(!track||!undo.length)return;track.annotations=JSON.parse(undo.pop());$('label-undo').disabled=!undo.length;resetEdit();changed();labels();draw();};
  $('label-cancel').onclick=()=>{resetEdit();$('label-comment').value='';};
+ $('label-motion').onchange=()=>{const value=$('label-motion').value;if(value)expected(value==='none'?'no_dance':'dance');};
  $('expected-buttons').onclick=e=>{if(e.target.dataset.expected)expected(e.target.dataset.expected);};
  $('label-in').onclick=()=>setRange(audio.currentTime,Math.max(audio.currentTime+.016,range()[1]));$('label-out').onclick=()=>setRange(Math.min(range()[0],audio.currentTime),audio.currentTime);
  for(const id of ['label-start','label-end'])$(id).oninput=()=>{selection=true;draw();};

@@ -19,3 +19,21 @@ const legacy=p.slice(0,64);assert(!decode(legacy).hasAudio);assert.throws(()=>wa
 const round=unpack(await pack({tracks:[{annotations:labels}]},[legacy,...records]).arrayBuffer());assert.equal(round.meta.format,3);assert(!decode(round.records[0]).hasAudio);assert(decode(round.records[1]).hasAudio);assert.deepEqual(round.meta.tracks[0].annotations,labels);
 assert.throws(()=>parseLine(fs.readFileSync('tools/host/out/trace-v3-fixture.log','utf8').replace('50434d31','50434d30')));
 console.log('PASS: C stereo fixture, bit-exact L/R WAV, silent sequence gaps, channel audition, mixed files, range labels and overlap-safe scoring');
+
+// Content and movement are independent; old labels stay unspecified.
+const gentle=annotation(0,.016,'dance','',map.duration,{danceStyle:'slow',audibleContent:'speech_music'});
+const singing=annotation(.016,.032,'dance','',map.duration,{danceStyle:'energetic',audibleContent:'music'});
+const speech=annotation(.064,.08,'no_dance','',map.duration,{danceStyle:'none',audibleContent:'speech'});
+const contentOnly=annotation(0,.016,'unsure','',map.duration,{audibleContent:'music'});
+assert(!('danceStyle' in labels[0]));assert(!('danceStyle' in contentOnly));
+assert.throws(()=>annotation(0,.016,'dance','',map.duration,{danceStyle:'none'}));
+assert.throws(()=>annotation(0,.016,'no_dance','',map.duration,{danceStyle:'slow'}));
+assert.throws(()=>annotation(0,.016,'dance','',map.duration,{danceStyle:'fastest'}));
+assert.throws(()=>annotation(0,.016,'dance','',map.duration,{audibleContent:'singing_probably'}));
+assert.throws(()=>annotation(0,.016,'unsure','',map.duration));
+const newLabels=[gentle,singing,speech,contentOnly,labels[0]];
+const enriched=unpack(await pack({tracks:[{annotations:newLabels}]},records).arrayBuffer());
+assert.deepEqual(enriched.meta.tracks[0].annotations,newLabels);
+assert.deepEqual(evaluate(map,newLabels),evaluate(map,newLabels.map(({danceStyle,audibleContent,...l})=>l)));
+assert.equal(evaluate(map,[contentOnly]).labelled,0);
+console.log('PASS: independent content/movement labels, legacy preservation, invalid combinations, notebook round trip and unchanged detection scoring');

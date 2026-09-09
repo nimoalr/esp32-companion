@@ -49,11 +49,16 @@ export function intervals(map,flag=64){
   if(prev&&Math.abs(prev.end-e.start)<.00001)prev.end=e.end;else out.push({start:e.start,end:e.end});
  }return out;
 }
-export function annotation(start,end,expected,label,duration){
+export const DANCE_STYLES=Object.freeze({none:'No dance',slow:'Slow sway',groove:'Groove',energetic:'Energetic'});
+export const AUDIBLE_CONTENT=Object.freeze({speech:'Speech only',speech_music:'Speech + background music',music:'Music (including singing)',other:'Other sound'});
+export function annotation(start,end,expected,label,duration,{danceStyle='',audibleContent=''}={}){
  if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end<=start||end>duration+.001)throw new Error('Choose a valid start/end range within the recording.');
  if(!['dance','no_dance','unsure'].includes(expected))throw new Error('Invalid expected response');
- if(!label.trim()&&expected==='unsure')throw new Error('Add a comment or an expected response.');
- return {start,end:Math.min(end,duration),expected,label:label.trim(),source:'human'};
+ if(danceStyle&&!Object.hasOwn(DANCE_STYLES,danceStyle))throw new Error('Choose a valid dance movement.');
+ if(audibleContent&&!Object.hasOwn(AUDIBLE_CONTENT,audibleContent))throw new Error('Choose a valid audible content label.');
+ if(danceStyle&&expected!==(danceStyle==='none'?'no_dance':'dance'))throw new Error('Dance movement must agree with the expected response.');
+ if(!label.trim()&&expected==='unsure'&&!audibleContent)throw new Error('Add a comment, audible content or an expected response.');
+ return {start,end:Math.min(end,duration),expected,label:label.trim(),source:'human',...(danceStyle?{danceStyle}:{}),...(audibleContent?{audibleContent}:{})};
 }
 /* Only explicit, non-conflicting human labels are ground truth. Split frame
  * intersections at label edges; unlabelled/missing audio is not a negative. */
