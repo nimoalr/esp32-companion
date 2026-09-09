@@ -69,7 +69,7 @@ all old data but cannot supply a reliable raw frequency split retroactively.
 
 `.mcal`: `MCALv002`, 32-bit JSON length, JSON metadata, then 64-byte records.
 Readers still accept `MCALv001` / 24-byte records; mixed exports promote legacy records with missing-spectrum/audio markers. Storage is ~14.4 MB/hour plus metadata.
-The page caps sessions at 500,000 frames or 128 MB of record data (whichever comes first), and imports at 256 MB. Stereo runs reach the byte cap after roughly 31 minutes; download and start a new notebook for another batch. No automatic
+The page caps capture sessions at 500,000 frames or 128 MB of record data (whichever comes first). Portable notebook import/export is capped at 1 GB, including embedded stems. Stereo runs reach the capture byte cap after roughly 31 minutes; download and start a new notebook for another batch. No automatic
 sensitivity retuning is performed; retain speech/noise negatives and held-out tracks.
 
 ## Offline tools and checks
@@ -178,17 +178,25 @@ beat timestamps or calibrated instrument-presence probabilities**. Vocals can
 contain speech; listen to the original mixture before deciding how the companion
 should react. This is an inspection aid, not an automatic detector retuning step.
 
-Compact level curves and source/model provenance travel in `.mcal` metadata
-(roughly 15–20 KB per minute). Four 16 kHz stereo PCM stem files stay in a local
-cache (~15.4 MB/minute), outside the notebook. **Free cached audio** removes them
-while retaining saved curves and labels; **Restore stem audio** regenerates them.
-Reopening a notebook validates that its reference belongs to the original PCM.
-It can still display saved curves when the optional analysis server is unavailable.
+**Save session includes everything in one `.mcal`: original stereo microphones,
+annotations, detector trace, level curves and all generated stem audio.** The four
+stems use lossless 16 kHz stereo PCM16 FLAC, with no base64 expansion. Reopening
+validates source identity, sample counts, attachment boundaries and CRC32 checksums.
+Stem playback comes from the notebook and needs no analysis API or audio cache.
+Older notebooks still open; if they only contain curves, **Generate stem audio**
+adds the missing audio to the session before saving again.
 
-Defaults live in `~/.cache/companion-music-lab/`: `venv/`, `models/` and `stems/`.
-Generated stem jobs use an approximately 1 GB cache with oldest-job eviction;
-model weights and temporary processing files are additional. Original notebooks
-are never evicted. Use `serve.sh --port 8766 --cache /path/to/stems` or
+The worker writes temporary handoff files in an OS temporary directory. Once the
+browser has received and validated all four stems, it immediately requests deletion
+of the server files. Cancelled jobs are removed after the process stops. Abandoned
+handoffs expire after ten minutes without access (checked every 30 seconds); normal
+server shutdown removes its temporary directory. There is **no persistent recording
+or stem cache**. Save the notebook before closing the tab: downloaded-to-browser
+stems become durable only in the exported file.
+
+Only installed dependencies remain in `~/.cache/companion-music-lab/venv/` and
+`models/`; these contain software and model weights, not recordings. Use
+`serve.sh --port 8766` or
 `MUSIC_LAB_PYTHON=/path/to/venv/bin/python tools/music-lab/serve.sh` to override the
 server settings. A custom `MUSIC_LAB_ENV` during setup needs the matching worker
 Python override. The server binds only to loopback and requires same-origin API
@@ -199,14 +207,50 @@ Checks:
 
 ```sh
 node tools/music-lab/stem-reference.test.mjs
+node tools/music-lab/stem-audio.test.mjs
 node tools/music-lab/stem-ui.test.mjs
 python3 tools/music-lab/server_test.py
 ~/.cache/companion-music-lab/venv/bin/python tools/music-lab/stem_worker_test.py
 ```
 
-These cover notebook persistence, exact alignment, cached audio seeking, request
-validation, cancellation/failure cleanup and chunk assembly. The chunk test uses
+These cover notebook persistence, exact alignment, embedded audio, request
+validation, temporary-file expiry/deletion, cancellation and chunk assembly. The chunk test uses
 a deterministic separator double; it does not download weights or run inference.
+
+For a saved corpus, `stem-corpus.py export-directory reference-directory` submits
+numbered stereo WAV exports through the same local queue. `stem-report.py` compares
+those references with aligned `NNN-candidate.csv` firmware replays and human ranges.
+`attach-stem-references.mjs original.mcal reference-directory new.mcal reference-directory`
+writes a new portable notebook using the numbered references and FLACs, preserving
+original records and labels. Use an OS temporary directory for these intermediate
+analysis exports and remove it after verifying the final file. `export.mjs` extracts
+embedded FLACs alongside WAV/JSON for offline tools without putting binary data into
+JSON. See the
+[full first-corpus stem analysis](../../docs/dance/STEM_PASS_2.md) for measurements,
+limitations and reproducible commands.
+
+## Version 4: one portable file
+
+Files with stem audio use `MCALv004`; files without attachments retain v1–v3.
+All integers below are little-endian unsigned 32-bit values:
+
+| Header bytes | Meaning |
+|---|---|
+| 0–7 | ASCII `MCALv004` |
+| 8–11 | JSON metadata byte count (maximum 16 MB) |
+| 12–15 | Record bytes: 24, 64 or 1092 |
+| 16–19 | Record count |
+| 20–23 | Total attachment bytes |
+
+The header is followed by JSON, the exact count of original records, then binary
+FLAC attachments. Each track's `stemAudio` metadata identifies the source WAV SHA256
+and four ordered stems (Drums, Bass, Vocals, Other), each with offset from the
+attachment section, length and CRC32. Offsets must be contiguous in track/stem
+order with no unreferenced trailing data. FLAC STREAMINFO must match 16 kHz,
+two channels, 16 bits and the reference's exact sample count. CRC protects against
+accidental corruption; it is not authentication. The C `music_report` exporter
+checks the total framing, reads only the original records and preserves attachment
+descriptors in JSON; it does not interpret FLAC payloads as detector frames.
 
 ## Other laptop model comparisons
 

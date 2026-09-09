@@ -41,9 +41,10 @@ class WorkerTest(unittest.TestCase):
             self.assertEqual(result['source']['wavSHA256'],hashlib.sha256(original).hexdigest())
             self.assertEqual(source.read_bytes(),original)
             self.assertEqual(len(result['levels']['Drums']),(frames+1599)//1600)
-            with wave.open(str(out/'drums.wav'),'rb') as w:
-                self.assertEqual(w.getnframes(),frames)
-                self.assertEqual(w.readframes(frames),pcm.tobytes())
+            decoded,rate=sf.read(out/'drums.flac',dtype='int16',always_2d=True)
+            self.assertEqual(rate,16000)
+            self.assertEqual(decoded.shape,(frames,2))
+            self.assertEqual(decoded.astype('<i2').tobytes(),pcm.tobytes())
             self.assertEqual(json.loads((out/'progress.json').read_text())['progress'],1)
             self.assertLess((out/'reference.json').stat().st_size,25000)
 

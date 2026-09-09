@@ -1,3 +1,4 @@
+import {AUDIO_STEMS,assetCRC,validateStemAudio} from './stem-audio.mjs';
 export const RECORD_BYTES=64;
 export const PCM_RECORD_BYTES=1092;
 export const BAND_EDGES_HZ=[1,2,3,4,5,6,7,9,12,16,21,28,38,51,68,91,128].map(x=>x*62.5);
@@ -25,20 +26,47 @@ export function parseLine(line){
 }
 export function pack(meta,records){
  const bytes=records.some(p=>p.length===PCM_RECORD_BYTES)?PCM_RECORD_BYTES:records.some(p=>p.length===64)?64:24;
- const format=bytes===PCM_RECORD_BYTES?3:bytes===64?2:1;
- const json=new TextEncoder().encode(JSON.stringify({...meta,format,recordBytes:bytes}));
- const header=new Uint8Array(12);header.set(new TextEncoder().encode(`MCALv00${format}`));
- new DataView(header.buffer).setUint32(8,json.length,true);
+ const assets=[];let assetBytes=0;
+ const tracks=meta.tracks?.map(t=>{
+  if(!t.stemAudio)return t;
+  validateStemAudio(t.stemAudio,t.stemReference);
+  const stems={};for(const name of AUDIO_STEMS){const data=t.stemAudio.stems[name];stems[name]={offset:assetBytes,length:data.length,crc32:assetCRC(data)};assets.push(data);assetBytes+=data.length;}
+  return {...t,stemAudio:{sourceSHA256:t.stemAudio.sourceSHA256,stems}};
+ });
+ const format=assets.length?4:bytes===PCM_RECORD_BYTES?3:bytes===64?2:1;
+ const json=new TextEncoder().encode(JSON.stringify({...meta,...(tracks?{tracks}:{}),format,recordBytes:bytes}));
+ const header=new Uint8Array(format===4?24:12);header.set(new TextEncoder().encode(`MCALv00${format}`));
+ const hv=new DataView(header.buffer);hv.setUint32(8,json.length,true);
+ if(records.length>500000||json.length>16000000||header.length+json.length+records.length*bytes+assetBytes>1000000000)throw new Error('Session exceeds portable notebook limits (1 GB / 500,000 frames)');
+ if(format===4){hv.setUint32(12,bytes,true);hv.setUint32(16,records.length,true);hv.setUint32(20,assetBytes,true);}
  const normalized=records.map(p=>{if(p.length===bytes)return p;if(![24,64].includes(p.length))throw new Error('Invalid record');const q=new Uint8Array(bytes);q.set(p);if(p.length===24)q.fill(255,24,32);return q;});
- return new Blob([header,json,...normalized],{type:'application/octet-stream'});
+ return new Blob([header,json,...normalized,...assets],{type:'application/octet-stream'});
 }
 export function unpack(buffer){
  const p=new Uint8Array(buffer),v=new DataView(buffer),magic=new TextDecoder().decode(p.slice(0,8));
- if(p.length<12||!['MCALv001','MCALv002','MCALv003'].includes(magic))throw new Error('Not a Music Lab session');
- const bytes=magic==='MCALv003'?PCM_RECORD_BYTES:magic==='MCALv002'?64:24,n=v.getUint32(8,true);
- if(n>p.length-12||(p.length-12-n)%bytes)throw new Error('Incomplete session');
- const meta=JSON.parse(new TextDecoder().decode(p.slice(12,12+n)));
- const records=[];for(let i=12+n;i<p.length;i+=bytes)records.push(p.slice(i,i+bytes));return {meta,records};
+ if(p.length<12||!['MCALv001','MCALv002','MCALv003','MCALv004'].includes(magic))throw new Error('Not a Music Lab session');
+ const portable=magic==='MCALv004',header=portable?24:12;
+ if(p.length<header)throw new Error('Incomplete session header');
+ const bytes=portable?v.getUint32(12,true):magic==='MCALv003'?PCM_RECORD_BYTES:magic==='MCALv002'?64:24,n=v.getUint32(8,true);
+ if(![24,64,PCM_RECORD_BYTES].includes(bytes)||n>16000000||n>p.length-header||p.length>1000000000)throw new Error('Invalid session size');
+ const count=portable?v.getUint32(16,true):(p.length-header-n)/bytes,assetBytes=portable?v.getUint32(20,true):0;
+ const recordEnd=header+n+count*bytes;
+ if(!Number.isInteger(count)||count>500000||recordEnd+assetBytes!==p.length)throw new Error('Incomplete session or size limit exceeded');
+ const meta=JSON.parse(new TextDecoder().decode(p.subarray(header,header+n)));
+ let consumed=0;
+ for(const track of meta.tracks||[]){
+  if(!track.stemAudio)continue;
+  if(!portable)throw new Error('Embedded audio requires a version 4 notebook');
+  const stems={};for(const name of AUDIO_STEMS){const d=track.stemAudio.stems?.[name];
+   if(!d||!Number.isInteger(d.offset)||!Number.isInteger(d.length)||d.offset!==consumed||d.length<42||d.length>assetBytes-consumed||!Number.isInteger(d.crc32))throw new Error('Invalid stem attachment bounds');
+   const data=p.subarray(recordEnd+d.offset,recordEnd+d.offset+d.length);
+   if(assetCRC(data)!==d.crc32)throw new Error('Damaged stem audio attachment');
+   stems[name]=data;consumed+=d.length;
+  }
+  track.stemAudio=validateStemAudio({sourceSHA256:track.stemAudio.sourceSHA256,stems},track.stemReference);
+ }
+ if(consumed!==assetBytes)throw new Error('Unreferenced stem attachment data');
+ const records=[];for(let i=header+n;i<recordEnd;i+=bytes)records.push(p.subarray(i,i+bytes));return {meta,records};
 }
 export function summarize(records){
  let danced=0,listened=0,beats=0,candidates=0,clipped=0,eligible=0,rush=0,missingMs=0,segments=0,prev=null,droppedFrames=0,sequenceFrames=0;

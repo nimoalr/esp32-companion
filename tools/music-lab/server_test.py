@@ -1,4 +1,5 @@
 import hashlib
+import os
 import http.client
 import io
 import json
@@ -13,14 +14,14 @@ from server import ThreadingHTTPServer,Handler,Jobs
 
 class ServerTest(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.cache=Path(self.temp.name)
-        self.jobs=Jobs(self.cache,'/no-python');self.jobs.available=True
+        self.temp=tempfile.TemporaryDirectory();self.work=Path(self.temp.name)
+        self.jobs=Jobs(self.work,'/no-python');self.jobs.available=True
         self.server=ThreadingHTTPServer(('127.0.0.1',0),Handler);self.server.jobs=self.jobs
         self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
         b=io.BytesIO()
         with wave.open(b,'wb') as w:w.setparams((2,2,16000,0,'NONE','not compressed'));w.writeframes(bytes(1024))
         self.wav=b.getvalue();self.key=hashlib.sha256(self.wav).hexdigest()
-        p=self.cache/self.key;p.mkdir();(p/'reference.json').write_text(json.dumps({'test':True}));(p/'drums.wav').write_bytes(self.wav)
+        p=self.work/self.key;p.mkdir();(p/'reference.json').write_text(json.dumps({'test':True}));(p/'drums.flac').write_bytes(self.wav)
     def tearDown(self):
         self.server.shutdown();self.server.server_close();self.temp.cleanup()
     def call(self,method,path,body=None,headers=None):
@@ -29,9 +30,10 @@ class ServerTest(unittest.TestCase):
     def test_ready_reuse_and_range(self):
         status,_,body=self.call('POST','/api/stems',self.wav,{'Content-Type':'audio/wav'})
         self.assertEqual(status,202);self.assertEqual(json.loads(body)['id'],self.key);self.assertIsNone(self.jobs.active)
-        status,headers,body=self.call('GET',f'/api/stems/{self.key}/drums.wav',headers={'Range':'bytes=44-59'})
+        status,headers,body=self.call('GET',f'/api/stems/{self.key}/drums.flac',headers={'Range':'bytes=44-59'})
         self.assertEqual(status,206);self.assertEqual(body,self.wav[44:60]);self.assertEqual(headers['Content-Range'],f'bytes 44-59/{len(self.wav)}')
-        self.assertEqual(self.call('GET',f'/api/stems/{self.key}/drums.wav',headers={'Range':'bytes=999999-'})[0],416)
+        self.assertEqual(headers['Cache-Control'],'no-store')
+        self.assertEqual(self.call('GET',f'/api/stems/{self.key}/drums.flac',headers={'Range':'bytes=999999-'})[0],416)
         self.assertEqual(self.call('DELETE',f'/api/stems/{self.key}')[0],200)
         self.assertEqual(json.loads(self.call('GET',f'/api/stems/{self.key}')[2])['state'],'missing')
     def test_origin_and_invalid_input(self):
@@ -39,7 +41,7 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.call('GET','/api/stems',headers={'Host':'unrelated.example'})[0],403)
         self.assertEqual(self.call('POST','/api/stems',b'x'*100)[0],400)
         self.assertEqual(self.call('GET','/api/stems/../source.wav')[0],404)
-        self.assertEqual(list(self.cache.glob('*.upload')),[])
+        self.assertEqual(list(self.work.glob('*.upload')),[])
     def test_worker_failure_and_recovery(self):
         self.jobs.python='/usr/bin/false'
         raw=self.wav[:-1]+b'1';key=hashlib.sha256(raw).hexdigest()
@@ -48,10 +50,16 @@ class ServerTest(unittest.TestCase):
         while self.jobs.active and time.monotonic()<until:time.sleep(.01)
         self.assertIsNone(self.jobs.active)
         self.assertEqual(self.jobs.status(key)['state'],'failed')
-        self.assertFalse((self.cache/key/'source.wav').exists())
+        self.assertFalse((self.work/key/'source.wav').exists())
+
+    def test_abandoned_handoff_expiry(self):
+        folder=self.work/self.key
+        os.utime(folder,(time.time()-601,time.time()-601))
+        self.jobs.expire()
+        self.assertFalse(folder.exists())
 
     def test_cancel_state(self):
-        other='b'*64;(self.cache/other).mkdir();self.jobs.active=other
+        other='b'*64;(self.work/other).mkdir();self.jobs.active=other
         self.assertEqual(self.call('DELETE',f'/api/stems/{other}')[0],200)
         self.assertIn(other,self.jobs.cancelled)
 

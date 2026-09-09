@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
 import {createStems} from './stem-ui.mjs';
+import {silenceFLAC} from './stem-audio.test.mjs';
 
 // Exercise asynchronous job ownership without a browser or an inference model.
 const elements=new Map();
@@ -13,6 +14,7 @@ const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {
 let pending,posts=0,deletes=0,edits=0,auditions=[],messages=[];
 const response=value=>({ok:true,headers:{get:()=> 'application/json'},json:async()=>value});
 globalThis.fetch=async(path,options={})=>{
+ if(path.endsWith('.flac'))return {ok:true,headers:{get:()=>String(silenceFLAC.length)},arrayBuffer:async()=>silenceFLAC.slice().buffer};
  if(options.method==='POST'){posts++;return response({id:hash,state:'running'});}
  if(options.method==='DELETE'){deletes++;return response({ok:true});}
  if(path==='/api/stems')return response({available:true});
@@ -33,15 +35,15 @@ assert.deepEqual(first.annotations,[{start:0,end:.016,expected:'dance'}]);assert
 
 pending=deferred();const cancelling=element('stem-analyze').onclick();
 await new Promise(r=>setImmediate(r));await element('stem-cancel').onclick();
-assert.equal(deletes,1);assert.equal(ui.busy,true,'Cancellation waits for the worker to stop');
+assert.equal(deletes,2);assert.equal(ui.busy,true,'Cancellation waits for the worker to stop');
 pending.resolve({id:hash,state:'failed'});await cancelling;
 assert.equal(ui.busy,false);assert.equal(second.stemReference,undefined);assert.match(messages.at(-1),/cancelled/);
 
 pending=deferred();pending.resolve({id:hash,state:'ready',reference});
 await ui.open(first,map);
-element('stem-solo').onclick({target:buttons[1]});assert.match(auditions.at(-1)[0],/drums.wav$/);
-await element('stem-forget').onclick();
-assert.equal(auditions.at(-1)[0],null);assert.equal(element('stem-lanes').hidden,false);
-assert.equal(first.stemReference,reference);assert.equal(edits,1);assert.equal(buttons[1].disabled,true);
-assert.equal(element('stem-analyze').textContent,'Restore stem audio');
-console.log('PASS capture guard, job ownership across navigation, cancellation teardown, cached audition and curve retention');
+element('stem-solo').onclick({target:buttons[1]});assert.match(auditions.at(-1)[0],/^blob:/);
+assert.equal(element('stem-lanes').hidden,false);assert.equal(first.stemReference,reference);
+assert.deepEqual(first.stemAudio.stems.Drums,silenceFLAC);assert.equal(edits,1);assert.equal(buttons[1].disabled,false);
+ui.clear();globalThis.fetch=async()=>{throw new Error('Offline');};await ui.open(first,map);
+assert.equal(buttons[1].disabled,false,'Embedded audio works without a server');
+console.log('PASS capture guard, job ownership, temporary-file deletion, cancellation and offline embedded audition');

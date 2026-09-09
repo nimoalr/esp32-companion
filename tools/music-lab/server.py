@@ -8,23 +8,25 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
+import tempfile
+import time
 from urllib.parse import urlparse
 import uuid
 import wave
 
 ROOT = Path(__file__).resolve().parent
 MAX_UPLOAD = 128_000_000
-CACHE_LIMIT = 1_000_000_000
 STEMS = {'drums', 'bass', 'vocals', 'other'}
 
 
 class Jobs:
-    def __init__(self, cache, python):
-        self.cache, self.python = cache, python
-        cache.mkdir(parents=True, exist_ok=True)
+    def __init__(self, work, python):
+        self.work, self.python = work, python
+        work.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
         self.active = None
         self.process = None
@@ -35,7 +37,7 @@ class Jobs:
             self.available = check.returncode == 0
 
     def status(self, key):
-        folder = self.cache/key
+        folder = self.work/key
         if key == self.active:
             p = folder/'progress.json'
             state = json.loads(p.read_text()) if p.exists() else {'stage': 'Starting local analysis', 'progress': 0}
@@ -56,7 +58,7 @@ class Jobs:
             if not self.available:
                 raise ValueError('Install local analysis first: run tools/music-lab/setup-ml.sh, then restart Music Lab.')
             if self.status(key)['state'] == 'ready' or self.active == key:
-                os.utime(self.cache/key, None)
+                os.utime(self.work/key, None)
                 source.unlink()
                 return self.status(key)
             if self.active:
@@ -66,41 +68,34 @@ class Jobs:
                     raise ValueError('Expected a non-empty 16 kHz stereo PCM16 recording, up to one hour')
                 if w.getnframes()*4 > source.stat().st_size:
                     raise ValueError('Incomplete microphone WAV')
-            # Bound only generated cache files, never notebooks or user recordings.
-            size = lambda p: sum(f.stat().st_size for f in p.rglob('*') if f.is_file())
-            folders = sorted((p for p in self.cache.iterdir() if p.is_dir() and re.fullmatch('[a-f0-9]{64}', p.name)), key=lambda p:p.stat().st_mtime)
-            total = sum(size(p) for p in folders)
-            reserve = source.stat().st_size*5
-            for old in folders:
-                if total+reserve <= CACHE_LIMIT:
-                    break
-                total -= size(old)
-                shutil.rmtree(old)
-            folder = self.cache/key
+            # These are temporary handoff files, never a persistent audio cache.
+            self.expire()
+            folder = self.work/key
             if folder.exists():
                 shutil.rmtree(folder)
             folder.mkdir()
             source.replace(folder/'source.wav')
             self.active = key
             self.cancelled.discard(key)
-            threading.Thread(target=self.run, args=(key,), daemon=True).start()
+            self.runner = threading.Thread(target=self.run, args=(key,), daemon=True)
+            self.runner.start()
             return self.status(key)
 
     def run(self, key):
-        folder = self.cache/key
+        folder = self.work/key
         with (folder/'worker.log').open('w') as log:
             try:
                 with self.lock:
                     if key in self.cancelled:
                         raise RuntimeError('Analysis cancelled')
-                    self.process = subprocess.Popen([self.python, str(ROOT/'stem_worker.py'), str(folder/'source.wav'), str(folder), '--model-dir', str(self.cache.parent/'models')], stdout=log, stderr=log)
+                    self.process = subprocess.Popen([self.python, str(ROOT/'stem_worker.py'), str(folder/'source.wav'), str(folder), '--model-dir', str(Path.home()/'.cache/companion-music-lab/models')], stdout=log, stderr=log)
                 code = self.process.wait()
                 if code or key in self.cancelled or not (folder/'reference.json').exists():
-                    raise RuntimeError('Analysis cancelled' if key in self.cancelled else 'Local separation failed. Check the Music Lab server log or worker.log in its cache; your recording is unchanged.')
+                    raise RuntimeError('Analysis cancelled' if key in self.cancelled else 'Local separation failed. Check the Music Lab server log; your recording is unchanged.')
             except Exception as e:
                 (folder/'error.txt').write_text(str(e))
                 for name in STEMS:
-                    (folder/(name+'.wav')).unlink(missing_ok=True)
+                    (folder/(name+'.flac')).unlink(missing_ok=True)
                 (folder/'reference.json').unlink(missing_ok=True)
                 print(f'Stem analysis {key[:8]}: {e}; details: {folder}/worker.log', file=sys.stderr)
             finally:
@@ -108,6 +103,20 @@ class Jobs:
                 with self.lock:
                     self.process = None
                     self.active = None
+                    if key in self.cancelled:
+                        shutil.rmtree(folder, ignore_errors=True)
+                    else:
+                        os.utime(folder, None)
+                    self.cancelled.discard(key)
+
+    def expire(self):
+        with self.lock:
+            for folder in self.work.iterdir():
+                if folder.name != '.owner' and folder.name != self.active and time.time()-folder.stat().st_mtime > 600:
+                    if folder.is_dir():
+                        shutil.rmtree(folder)
+                    else:
+                        folder.unlink()
 
     def cancel(self, key):
         with self.lock:
@@ -123,7 +132,7 @@ class Jobs:
                     timer.daemon = True
                     timer.start()
                 return
-            folder = self.cache/key
+            folder = self.work/key
             if folder.exists():
                 shutil.rmtree(folder)
 
@@ -155,16 +164,16 @@ class Handler(SimpleHTTPRequestHandler):
             return self.reply({'error': 'Local same-origin requests only'}, 403)
         if route == '/api/stems':
             return self.reply({'available': self.server.jobs.available, 'active': self.server.jobs.active})
-        m = re.fullmatch(r'/api/stems/([a-f0-9]{64})(?:/(drums|bass|vocals|other)\.wav)?', route)
+        m = re.fullmatch(r'/api/stems/([a-f0-9]{64})(?:/(drums|bass|vocals|other)\.flac)?', route)
         if not m:
             return self.reply({'error': 'Unknown analysis'}, 404)
         key, stem = m.groups()
         if stem:
             if self.server.jobs.status(key)['state'] != 'ready':
-                return self.reply({'error': 'Stem audio is not cached; analyze this track again'}, 404)
-            file = self.server.jobs.cache/key/(stem+'.wav')
+                return self.reply({'error': 'Temporary analysis result is no longer available; analyze again'}, 404)
+            file = self.server.jobs.work/key/(stem+'.flac')
             if not file.exists():
-                return self.reply({'error': 'Stem audio is not cached'}, 404)
+                return self.reply({'error': 'Temporary stem audio is missing'}, 404)
             os.utime(file.parent, None)
             total = file.stat().st_size
             start, end, code = 0, total-1, 200
@@ -178,7 +187,8 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.reply({'error': 'Invalid audio range'}, 416)
                 code = 206
             self.send_response(code)
-            self.send_header('Content-Type', 'audio/wav')
+            self.send_header('Content-Type', 'audio/flac')
+            self.send_header('Cache-Control', 'no-store')
             self.send_header('Accept-Ranges', 'bytes')
             self.send_header('Content-Length', str(end-start+1))
             if code == 206:
@@ -195,6 +205,9 @@ class Handler(SimpleHTTPRequestHandler):
                     remaining -= len(block)
             return
         with self.server.jobs.lock:
+            folder = self.server.jobs.work/key
+            if folder.exists():
+                os.utime(folder, None)
             return self.reply(self.server.jobs.status(key))
 
     def do_POST(self):
@@ -202,7 +215,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self.reply({'error': 'Local same-origin requests only'}, 403)
         if self.path != '/api/stems':
             return self.reply({'error': 'Unknown action'}, 404)
-        source = self.server.jobs.cache/(uuid.uuid4().hex+'.upload')
+        source = self.server.jobs.work/(uuid.uuid4().hex+'.upload')
         try:
             length = int(self.headers.get('Content-Length', '0'))
             if not 44 < length <= MAX_UPLOAD:
@@ -234,13 +247,34 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 def main():
+    def stop(signum, frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, stop)
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--port', type=int, default=8765)
-    ap.add_argument('--cache', type=Path, default=Path.home()/'.cache/companion-music-lab/stems')
     ap.add_argument('--worker-python', default=os.environ.get('MUSIC_LAB_PYTHON', str(Path.home()/'.cache/companion-music-lab/venv/bin/python')))
     args = ap.parse_args()
     httpd = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
-    httpd.jobs = Jobs(args.cache, args.worker_python)
+    # Reclaim handoff directories abandoned by a crashed server, without
+    # disturbing another running local server (for example a test instance).
+    for stale in Path(tempfile.gettempdir()).glob('companion-music-lab-jobs-*'):
+        try:
+            pid = int((stale/'.owner').read_text())
+            if pid <= 0:
+                continue
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            shutil.rmtree(stale, ignore_errors=True)
+        except (OSError, ValueError):
+            pass
+    temporary = tempfile.TemporaryDirectory(prefix='companion-music-lab-jobs-')
+    (Path(temporary.name)/'.owner').write_text(str(os.getpid()))
+    httpd.jobs = Jobs(Path(temporary.name), args.worker_python)
+    stopping = threading.Event()
+    def housekeeping():
+        while not stopping.wait(30):
+            httpd.jobs.expire()
+    threading.Thread(target=housekeeping, daemon=True).start()
     print(f'Music Lab: http://127.0.0.1:{args.port} · local stem analysis {"ready" if httpd.jobs.available else "not installed (setup-ml.sh)"}', flush=True)
     try:
         httpd.serve_forever()
@@ -248,7 +282,20 @@ def main():
         if httpd.jobs.active:
             httpd.jobs.cancel(httpd.jobs.active)
     finally:
+        stopping.set()
+        process = httpd.jobs.process
+        if process:
+            httpd.jobs.cancel(httpd.jobs.active)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        runner = getattr(httpd.jobs, 'runner', None)
+        if runner:
+            runner.join(timeout=5)
         httpd.server_close()
+        temporary.cleanup()
 
 
 if __name__ == '__main__':

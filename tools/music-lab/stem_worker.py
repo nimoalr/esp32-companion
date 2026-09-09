@@ -5,6 +5,7 @@ import importlib.metadata
 import json
 import math
 import os
+import sys
 from pathlib import Path
 import tempfile
 import wave
@@ -57,10 +58,10 @@ def analyze(source, output, model_dir):
     writers = {}
     try:
         for name in STEMS:
-            w = wave.open(str(output/(name.lower()+'.wav')), 'wb')
-            w.setparams((2, 2, RATE, 0, 'NONE', 'not compressed'))
+            w = sf.SoundFile(str(output/(name.lower()+'.flac')), 'w', samplerate=RATE,
+                             channels=2, subtype='PCM_16', format='FLAC')
             writers[name] = w
-        with tempfile.TemporaryDirectory(prefix='music-stems-') as temp:
+        with tempfile.TemporaryDirectory(prefix='scratch-', dir=output) as temp:
             scratch = Path(temp)
             separator = Separator(output_dir=temp, model_file_dir=str(model_dir), use_soundfile=True,
                                   normalization_threshold=1., amplification_threshold=0.,
@@ -93,7 +94,7 @@ def analyze(source, output, model_dir):
                         raise ValueError('Separation did not cover the requested microphone samples')
                     # Quantize once; levels describe exactly the auditioned PCM.
                     pcm = np.clip(np.rint(core*32768), -32768, 32767).astype('<i2')
-                    writers[stem].writeframesraw(pcm.tobytes())
+                    writers[stem].write(pcm)
                     found[stem] = db_curve(pcm.astype(np.float32)/32768)
                     (scratch/name).unlink()
                 if set(found) != set(STEMS):
@@ -126,3 +127,10 @@ if __name__ == '__main__':
     if hasattr(os, 'nice'):
         os.nice(10)
     analyze(args.source, args.output, args.model_dir)
+    # All WAVs and atomic JSON outputs are closed by analyze(). On macOS the
+    # optional ML runtime can abort in C++ global destructors after successful
+    # inference (recursive_mutex lock failed). This one-job subprocess has no
+    # remaining Python cleanup to perform. Failures above still exit nonzero.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)

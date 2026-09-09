@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import {pack,unpack} from './trace.mjs';
+import {AUDIO_STEMS,validateFLAC,validateStemAudio,assetCRC} from './stem-audio.mjs';
+// Actual libFLAC-encoded 256-frame stereo silence, no external fixture needed.
+export const silenceFLAC=new Uint8Array(Buffer.from('ZkxhQwAAACIQABAAAAAOAAAOA+gC8AAAAQAPNDsJMRJqIPEz1nwrAYo7hAAAKCAAAAByZWZlcmVuY2UgbGliRkxBQyAxLjQuMyAyMDIzMDYyMwAAAAD/+IUYAL4AAAAAAADGgQ==','base64'));
+const reference={format:'music-lab-stems-v1',source:{wavSHA256:'a'.repeat(64),sampleRate:16000,channels:2,frames:256},hopSamples:1600,unit:'0.1 dBFS',model:'test',levels:Object.fromEntries(['Mixture',...AUDIO_STEMS].map(n=>[n,[-1200]]))};
+const audio={sourceSHA256:reference.source.wavSHA256,stems:Object.fromEntries(AUDIO_STEMS.map(n=>[n,silenceFLAC]))};
+assert.equal(validateStemAudio(audio,reference),audio);assert.throws(()=>validateFLAC(silenceFLAC,512));
+assert.throws(()=>validateStemAudio({...audio,sourceSHA256:'b'.repeat(64)},reference));
+assert.equal(assetCRC(new TextEncoder().encode('123456789')),0xcbf43926);
+const record=new Uint8Array(1092);record.set([80,67,77,49],64);const annotations=[{start:0,end:.016,expected:'dance',label:'keep me'}];
+const blob=pack({tracks:[{startFrame:0,endFrame:1,annotations,stemReference:reference,stemAudio:audio}]},[record]);
+const bytes=new Uint8Array(await blob.arrayBuffer());assert.equal(new TextDecoder().decode(bytes.subarray(0,8)),'MCALv004');
+const restored=unpack(bytes.buffer);assert.deepEqual(restored.records[0],record);assert.deepEqual(restored.meta.tracks[0].annotations,annotations);
+for(const name of AUDIO_STEMS)assert.deepEqual(restored.meta.tracks[0].stemAudio.stems[name],silenceFLAC);
+assert.deepEqual(new Uint8Array(await pack(restored.meta,restored.records).arrayBuffer()),bytes);
+const corrupt=bytes.slice();corrupt[corrupt.length-1]^=1;assert.throws(()=>unpack(corrupt.buffer),/Damaged stem/);
+assert.throws(()=>unpack(bytes.slice(0,-1).buffer),/Incomplete session/);
+const bad=bytes.slice();new DataView(bad.buffer).setUint32(16,2,true);assert.throws(()=>unpack(bad.buffer),/Incomplete session/);
+console.log('PASS portable FLAC attachments, sample identity, CRC corruption, exact record bounds and byte-identical round trip');

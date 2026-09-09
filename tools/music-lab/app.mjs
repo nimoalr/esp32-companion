@@ -112,14 +112,16 @@ $('new').onclick=()=>{
  notice('');status(port?'USB connected':'No device connected');controls();
 };
 $('download').onclick=()=>{
- $('replay-save-hint').textContent='Session downloaded · includes current annotations';
+ try{
  meta.spectrumSummary=summarizeCorpus(meta.demo?[]:meta.tracks);meta.totalFrames=records.length;meta.exported=new Date().toISOString();
  const url=URL.createObjectURL(pack(meta,records)),a=document.createElement('a');a.href=url;
  a.download=`${meta.demo?'DEMO-':''}companion-music-${meta.created.slice(0,19).replaceAll(':','-')}.mcal`;a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);unsaved=false;
+ $('replay-save-hint').textContent='Session downloaded · includes annotations and all generated stem audio';
+ }catch(e){notice(e.message);}
 };
 $('import').onclick=()=>{if(records.length&&unsaved){notice('Download your current session before opening another.');return;}$('file').click();};
 $('file').onchange=async()=>{
- try{const f=$('file').files[0];if(!f)return;if(f.size>256000000)throw new Error('Session exceeds 256 MB limit.');
+ try{const f=$('file').files[0];if(!f)return;if(f.size>1000000000)throw new Error('Session exceeds the 1 GB portable notebook limit.');
  const data=unpack(await f.arrayBuffer());
  if(!Array.isArray(data.meta.tracks))throw new Error('Missing session notebook');
  for(const t of data.meta.tracks){if(!Number.isInteger(t.startFrame)||!Number.isInteger(t.endFrame)||t.startFrame<0||t.endFrame<t.startFrame||t.endFrame>data.records.length)throw new Error('Invalid run boundaries');t.summary=summarize(data.records.slice(t.startFrame,t.endFrame));t.markers=t.markers||[];}
