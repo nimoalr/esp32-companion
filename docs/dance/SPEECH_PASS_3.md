@@ -11,11 +11,18 @@ embedded stems. Both were recorded at usual volume from laptop speakers,
 with the companion behind the screen on a sofa. All 37,826 stereo frames
 are present; neither channel clips and there are no sequence gaps.
 
+The owner subsequently confirmed that video 2 has **no background music**,
+while video 1 has background music toward the end. The owner also judges the
+separation more accurate on video 1. These human observations take precedence
+over any stem estimate suggesting accompaniment in video 2.
+
 The second run's 326.066–329.981 s annotation requests that an accidental
-music passage be ignored. It is not a negative training example. There are
-no other precise range labels; speech run tags are useful context but do
-not establish the absence of background music at every instant. No formal
-range-label accuracy score is reported.
+music passage be ignored. Preserve that explicit exclusion even though the
+video itself has no background music. The start of background music in video 1
+has not been precisely labelled; do not invent a boundary from the stems.
+Consequently video 2 is a speech-only negative outside the exclusion, whereas
+video 1 contains a mixed speech/music passage and is not a whole-run negative.
+No formal range-label accuracy score is reported.
 
 The exact C analyser and behavior engine were replayed on original 16 kHz
 stereo PCM, target RMS 0 (no level normalization), starting fresh for each
@@ -39,7 +46,7 @@ These are different from fresh-state replays: the capture identifies firmware
 `71ed083-dirty`, and carries live state from before recording. Those numbers
 must not be presented as a controlled before/after improvement.
 
-## Concrete suspected speech-trigger failure
+## Confirmed speech-trigger failure
 
 Video 2 enters music at **40.400 s**, leaving at **85.760 s**. This is separate
 from the accidental music passage marked for exclusion later in the recording.
@@ -54,8 +61,10 @@ regular sequence is enough for immediate admission; the 45-second breakdown
 allowance then keeps the music state alive long after that support disappears.
 Over a four-second window around entry, estimated vocals are −0.03 dB relative
 to the mixture, while estimated drums and accompaniment are −34.87 and
-−33.64 dB. This strongly supports a speech-trigger interpretation, but model
-separation is not human listening verification.
+−33.64 dB. The owner's confirmation that this video has no background music
+establishes this as a false music admission. The stems are supporting diagnostics,
+not the ground truth; their accompaniment estimate elsewhere in this video
+illustrates separation leakage or error.
 
 This suggests testing **persistent initial confirmation**, or a short provisional
 music state, before granting a full breakdown allowance. It does not justify
@@ -70,14 +79,40 @@ blanket duration threshold on this evidence alone.
 
 ## What the stems add to intensity work
 
-These negatives help test whether bass in a speaking voice is being mistaken
+The speech-only passages help test whether bass in a speaking voice is being mistaken
 for musical percussion. Mean `dance_drive` is 0.167 and 0.229 over these runs;
 it averages 0.245 during the second run's music interval. Thus drive can be
 nonzero on speech: it is an animation control signal, not proof of music.
 
-The first music corpus remains essential. Its beatless vocal/chord passages
-should retain gentle motion, whereas speech should follow the owner's chosen
-speech/background-music policy. Keep three distinct decisions:
+The owner's target is **content-aware movement, not speech priority**:
+
+| Audible content | Intended response |
+|---|---|
+| Speech-led video / conversation, no music | Normal personality/listening motion; no music-driven dance |
+| Speech-led video with background music | Gentle musical movement is welcome; avoid escalating to a full dance show just because the background has a beat |
+| Music-led passage, including singing | Dance intensity follows the passage: gentle for sparse parts, stronger for energetic parts |
+| Uncertain mixture or transition | Blend conservatively and smoothly; avoid frame-to-frame state changes |
+
+The first video's zero music-mode coverage is therefore **not an unqualified
+success**: its background-music ending is a candidate missed gentle-response
+case. Its precise onset and desired movement strength still need range labels.
+Video 2's false entry is an established speech-rejection case.
+
+Distinguish speech-led from music-led acoustic context over time. Literal source
+identity (TV versus a music player) cannot always be inferred from the same
+sound; a song played inside a show can be acoustically indistinguishable from
+that song played separately. Spoken narration, musical accompaniment, singing,
+continuity and pulse are relevant evidence; device/app identity is not the target.
+A vocal stem includes both singing and speaking and cannot supply that distinction.
+
+Keep acoustic content labels separate from desired movement labels in subsequent
+calibration: speech / speech with background music / music / uncertain describes
+what is audible, while none / gentle / groove / energetic describes the wanted
+musical movement. Existing binary labels remain valid, but do not capture this
+entire target. Do not rewrite them using separator output.
+
+The first music corpus remains essential: its beatless vocal/chord passages
+should retain gentle motion. Keep three distinct decisions:
 
 1. **Music evidence:** whether a musical passage is established; speech dominance
    and prior song context matter, and a vocal stem alone cannot resolve it.
