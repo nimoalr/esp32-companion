@@ -163,3 +163,46 @@ frequencies but not improve timing or low-frequency resolution by itself. A usef
 first offline experiment is overlapping longer FFT windows and temporal models
 on these lossless samples, with labelled hold-out evaluation before changing the
 shared I2S clock or on-device detector.
+
+## Comparing an annotated corpus
+
+Build `audio_replay` at the baseline revision in a separate checkout and at the
+candidate revision. Export the notebook once with `export.mjs`, then replay each
+numbered WAV with **target RMS 0**, preserving the actual microphone level. Save
+CSV outputs in the export directory as `001-baseline.csv`, `001-candidate.csv`, etc.
+
+```sh
+node tools/music-lab/compare-corpus.mjs session.mcal export-directory > comparison.json
+node tools/music-lab/compare-corpus.test.mjs
+```
+
+The report includes original device decisions, fresh-state before/after replays,
+exact human-range scores, per-annotation mean dance drive, and frequency summaries
+by recording kind. CSVs must cover the entire sample-clock timeline, including gaps.
+Unlabelled/unsure regions are excluded from label scores; whole-track dance coverage
+is descriptive, not accuracy. Keep the resulting report private if comments contain
+personal information. See [the first annotated pass](../../docs/dance/CALIBRATION_PASS_1.md).
+
+## Optional local stem experiments
+
+The capture page and C replay still need no ML packages. For short, local experiments,
+use an isolated Python 3.12 environment:
+
+```sh
+python3.12 -m venv /tmp/companion-separator
+/tmp/companion-separator/bin/pip install 'audio-separator[cpu]==0.47.0' 'audioread==3.1.0'
+/tmp/companion-separator/bin/python tools/music-lab/separate-excerpt.py \
+  export-directory/005.wav /tmp/ehla-stems --start 45 --seconds 12
+```
+
+The output directory must be new. The script limits excerpts to 60 seconds, keeps
+stereo microphone levels, validates the stem durations, and saves a manifest with
+model/package versions, excerpt hash, timings and relative stem energies. Models
+are downloaded on first use; the audio is processed locally. The model runs at
+its required rate (usually 44.1 kHz); this adds no information to the 16 kHz capture.
+
+Default `htdemucs.yaml` supplies four stems. To compare a drum/bass-versus-remainder
+RoFormer model, use `--model model_bs_roformer_ep_937_sdr_10.5309.ckpt` and a different
+output directory. Other checkpoints have different outputs; model estimates must
+not silently become human labels. Neither this tool nor its model weights are
+included in the ESP32 firmware.

@@ -91,9 +91,11 @@ typedef struct {
     /* music sniffing */
     uint32_t next_sniff_ms;
     uint32_t sniff_start_ms;
+    bool sniff_audible;     /* extend a battery-powered listen only when sound is present */
     bool sniffing;
     uint32_t music_quiet_since_ms; /* last confirmed rhythm; breakdown grace */
-    uint32_t music_silence_since_ms;
+    uint32_t music_sample_ms;
+    float music_silence_ms; /* leaky quiet-time accumulator; tolerates isolated noise */
     uint32_t speech_last_ms;    /* last frame with speech */
     uint32_t next_listen_ms, anger_until_ms;
     float voice_dir;            /* smoothed direction of the voice along the mic axis */

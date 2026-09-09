@@ -29,6 +29,8 @@ typedef struct {
     uint32_t last_beat_ms;
     uint32_t rush_count, rush_ms; /* confirmed faster subdivision; does not admit music */
     float rush_bpm;         /* short-loop pulse rate, not necessarily the musical tempo */
+    float music_conf, music_bpm, music_evidence; /* envelope repetition, period and accumulated support; not probabilities */
+    float dance_drive;      /* 0..1 smoothed percussive intensity; separate from music admission */
     float bpm;              /* 0 until enough beats have been seen */
     bool speech;            /* someone is talking (syllable-rate modulation of the mid band) */
     float speech_depth;     /* the modulation depth behind it, for tuning */

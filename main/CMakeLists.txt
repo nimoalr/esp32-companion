@@ -25,7 +25,7 @@ idf_component_register(
         "imu_cal.c"
         "ui.c"
         "audio.c"
-        "rhythm_rush.c"
+        "rhythm_rush.c" "music_evidence.c"
         "music_trace.c"
         "micdir.c"
         "voice.c"

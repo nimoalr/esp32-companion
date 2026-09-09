@@ -81,7 +81,9 @@ menu "Eyes"
             range 0 600
             default 20
             help
-                A 3 s microphone sample every N seconds. Regular beats start a
+                A 5.2 s microphone sample every N seconds on battery, extending
+                to 11 s when audible sound needs more rhythm context. On USB
+                power the microphones stay on while idle. Regular beats start a
                 reaction (dance, sometimes with headphones, sometimes an
                 unimpressed look) depending on his mood.
 

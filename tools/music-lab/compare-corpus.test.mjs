@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import {replayRows,compareTrack} from './compare-corpus.mjs';
+const csv='time_ms,would_dance,dance_drive\n0,1,0.2\n16,0,0.4\n';
+assert.equal(replayRows(csv,2)[1].drive,.4);
+assert.throws(()=>replayRows(csv,3));
+assert.throws(()=>replayRows(csv.replace('16,0,','16,,'),2));
+assert.throws(()=>replayRows(csv.replace('16,0','32,0'),2));
+assert.throws(()=>replayRows(csv.replace('0,1','0,2'),2));
+assert.throws(()=>replayRows(csv.replace('0.4','NaN'),2));
+const records=[0,1].map(i=>{const p=new Uint8Array(1092),v=new DataView(p.buffer);v.setUint32(24,i,true);p.set([80,67,77,49],64);return p;});
+const labels=[{start:.004,end:.024,expected:'dance'},{start:.016,end:.024,expected:'no_dance'},{start:.024,end:.032,expected:'unsure'}];
+const report=compareTrack(records,labels,csv,csv);
+assert.ok(Math.abs(report.after.tp-.012)<1e-9);
+assert.ok(Math.abs(report.after.conflict-.008)<1e-9);
+assert.equal(report.after.fn,0);assert.equal(report.after.tn,0);
+assert.equal(report.annotations[2].after.labelled,0);
+console.log('PASS corpus comparison validates frame alignment and preserves partial, conflicting and unsure labels');

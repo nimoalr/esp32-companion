@@ -2,6 +2,7 @@
 #include "micdir.h"
 #include "audio_features.h"
 #include "rhythm_rush.h"
+#include "music_evidence.h"
 #ifndef AUDIO_ANALYSIS_HOST
 #include "music_trace.h"
 #endif
@@ -70,6 +71,7 @@ static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 #endif
 static volatile bool s_muted;
 static audio_features_t s_feat;
+static music_evidence_t s_music;
 
 /* analysis state */
 static float s_win[FRAME];
@@ -340,6 +342,8 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
         s_dir *= 0.995f;                 /* fade back to centre in silence, slowly */
     }
 
+    music_evidence_update(&s_music,bass,high,raw_lsb,own_voice);
+
     /* sub-bass share of the sound: music with a kick has plenty, conversation almost none */
     const float ratio = loud > 1e-5f ? kick_e / loud : 0.f;
     s_bass_ratio += (ratio - s_bass_ratio) * (1.f / 60.f);
@@ -398,7 +402,8 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     const float sp_depth = s_sp_slow > 1e-4f ? s_sp_mod / s_sp_slow : 0.f;
     /* a voice close to the mics carries plenty of sub-bass (plosives, proximity), so the
      * bass share only rules out real music: a locked dance tempo with a kick under it */
-    const bool musical = tempo_conf >= 0.75f && bpm >= 85.f && bpm <= 185.f && s_bass_ratio >= 0.08f;
+    const bool musical = s_music.evidence >= 1.5f ||
+        (tempo_conf >= 0.75f && bpm >= 85.f && bpm <= 185.f && s_bass_ratio >= 0.08f);
     /* knocks and claps modulate the mid band too: a timed transient in the last 400 ms is not a syllable */
     if (s_micdir.n != s_dir_seen_n) { s_dir_seen_n = s_micdir.n; s_transient_ms = now_ms; }
     const bool knocking = s_transient_ms && (int32_t)(now_ms - s_transient_ms) < 400;
@@ -421,6 +426,14 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     if (beat) s_feat.beat_count++;
     s_feat.last_beat_ms = s_last_beat_ms;
     s_feat.rush_count=s_rush.count;s_feat.rush_ms=s_rush.event_ms;s_feat.rush_bpm=s_rush.bpm;
+    s_feat.music_conf=s_music.confidence;s_feat.music_bpm=s_music.bpm;s_feat.music_evidence=s_music.evidence;
+    /* A singer or sustained chord can keep the music audible without calling
+     * for a full jump. Tempo confidence and sub-bass weight set percussion
+     * intensity; this value never admits music on its own. */
+    const float recent = s_last_beat_ms && now_ms-s_last_beat_ms < 1200 ? 1.f : 0.f;
+    const float weight = fmaxf(0.f, fminf(1.f, (s_bass_ratio-.06f)*4.f));
+    const float drive = own_voice ? 0.f : recent * s_presence * weight * (.2f+.8f*tempo_conf);
+    s_feat.dance_drive += (drive-s_feat.dance_drive) * .025f;
     s_feat.bpm = bpm;
     s_feat.regularity = regularity;
     s_feat.tempo_conf = tempo_conf;
@@ -450,6 +463,7 @@ static void analysis_reset(void)
     portENTER_CRITICAL(&s_lock);
     memset(&s_feat, 0, sizeof(s_feat));
     portEXIT_CRITICAL(&s_lock);
+    music_evidence_reset(&s_music);
     s_bass_mean = 0.f;
     s_bass_prev = 0.f;
     s_kick_mean = s_kick_prev = 0.f;

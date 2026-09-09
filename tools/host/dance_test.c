@@ -87,7 +87,7 @@ static void independent_timer(void)
     anim_set(&a,&eyes,ANIM_DANCE,1000);anim_set(&b,&other,ANIM_DANCE,1000);
     bool seen=false,ended=false;unsigned overlap=0;uint32_t started=0;
     for(uint32_t t=1000;t<101000;t+=32) {
-        audio_features_t af={.active=true,.loud=.8f,.bass=.7f,.kick=.8f,.bpm=150,
+        audio_features_t af={.dance_drive=1.f,.active=true,.loud=.8f,.bass=.7f,.kick=.8f,.bpm=150,
             .beat_count=t/400,.last_beat_ms=t-t%400};
         /* One character uses its normal fill schedule; the other changes fills
          * every 4 s. Their background schedules must remain identical. */
@@ -114,7 +114,7 @@ static void schedule_occupancy(void)
         anim_sm_t sm;eyes_init(&eyes,1000);anim_init(&sm,&eyes,1000);sm.rng=seed*7919;
         anim_set(&sm,&eyes,ANIM_DANCE,1000);unsigned seen=0;
         for(unsigned t=1000;t<601000;t+=32) {
-            audio_features_t a={.active=true,.loud=.8f,.bass=.7f,.kick=.8f,.bpm=150,.beat_count=t/400,.last_beat_ms=t-t%400};
+            audio_features_t a={.dance_drive=1.f,.active=true,.loud=.8f,.bass=.7f,.kick=.8f,.bpm=150,.beat_count=t/400,.last_beat_ms=t-t%400};
             anim_set_audio(&sm,&a);anim_update(&sm,&eyes,t);
             unsigned mode=(eyes.laser_mix>.15f?1:0)|(eyes.spot_mix>.15f?2:0);slots[mode]++;seen|=1u<<mode;
         }
@@ -178,7 +178,7 @@ static void lighting_variation(void)
     eye_pose_t moves[6][2];
     for(int move=0;move<6;move++){
         anim_sm_t sm;eyes_init(&eyes,1000);anim_init(&sm,&eyes,1000);anim_set(&sm,&eyes,ANIM_DANCE,1000);
-        sm.dance_move=move;audio_features_t a={.active=true,.loud=.8,.bass=.6,.kick=1,.beat_count=1,.last_beat_ms=1016,.bpm=150};
+        sm.dance_move=move;audio_features_t a={.dance_drive=1.f,.active=true,.loud=.8,.bass=.6,.kick=1,.beat_count=1,.last_beat_ms=1016,.bpm=150};
         anim_set_audio(&sm,&a);anim_update(&sm,&eyes,1016);memcpy(moves[move],eyes.mod,sizeof moves[move]);
         for(int previous=0;previous<move;previous++)assert(memcmp(moves[move],moves[previous],sizeof moves[move]));
     }
@@ -236,9 +236,26 @@ static void transitions(void)
     }
     puts("PASS zero-mix hotspot continuity and smooth bounded dance exits to every animation");
 }
+static void gentle_motion(void)
+{
+    anim_sm_t sm;eyes_init(&eyes,1000);anim_init(&sm,&eyes,1000);anim_set(&sm,&eyes,ANIM_DANCE,1000);
+    audio_features_t a={.active=true,.raw_loud=200,.loud=.5f,.bass=.2f,.music_bpm=90,.music_evidence=2};
+    sm.dance_lasers_on=sm.dance_spots_on=true;sm.dance_laser_len=sm.dance_spot_len=100000;
+    int32_t minx=INT32_MAX,maxx=INT32_MIN,last=0;
+    for(unsigned t=1016;t<14000;t+=16) {
+        if(t>8000)a.music_bpm=130; /* tempo change cannot teleport the sway */
+        anim_set_audio(&sm,&a);anim_update(&sm,&eyes,t);
+        int32_t x=eyes.mod[0].dx;
+        if(t>2000){if(x<minx)minx=x;if(x>maxx)maxx=x;assert(abs(x-last)<Q16_ONE);}
+        last=x;assert(eyes.mod[0].dy==0); /* no invented kick/hop */
+    }
+    assert(maxx-minx>15*Q16_ONE && sm.dance_beats_seen==0);
+    assert(eyes.laser_mix<=.201f && eyes.spot_mix<=.351f);
+    puts("PASS beatless audible music sways continuously, changes tempo smoothly and softens lighting without fake beats");
+}
 int main(void)
 {
-    schedule_occupancy();
+    gentle_motion();schedule_occupancy();
     dance_fill_t a,b;dance_fill_disco(&a,0);dance_fill_disco(&b,1);assert(!memcmp(&a,&b,sizeof a));
     dance_fill_disco(&b,.13f);assert(memcmp(&a,&b,sizeof a));
     for(int i=0;i<4096;i++)assert(a.tex[i]<=31&&b.tex[i]<=31);

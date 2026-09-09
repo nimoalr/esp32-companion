@@ -611,6 +611,7 @@ static void anim_enter(anim_sm_t *sm, eyes_t *eyes, anim_id_t id, uint32_t now_m
     sm->dance_spot_len=28000+sm->dance_spot_rng%12000;sm->dance_spot_mix=0;
     sm->dance_beats_seen = sm->audio.beat_count;
     sm->dance_bass = sm->dance_loud = sm->dance_bal = 0.f;
+    sm->dance_drive = sm->dance_sway_phase = 0.f; sm->dance_sway_bpm = 90.f;
     sm->dance_side = 1;
     sm->dance_last_sound_ms = now_ms;
     memset(sm->dance_bars, 0, sizeof sm->dance_bars);
@@ -739,6 +740,17 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
     sm->dance_bass += (a->bass - sm->dance_bass) * alpha;
     sm->dance_loud += (a->loud - sm->dance_loud) * alpha;
     sm->dance_bal += (a->balance - sm->dance_bal) * dt/(144.f+dt);
+    sm->dance_drive += (a->dance_drive-sm->dance_drive) * dt/(350.f+dt);
+    float tempo = sm->dance_sway_bpm;
+    if (a->tempo_conf >= .75f && a->bpm >= 60.f && a->bpm <= 185.f) tempo = a->bpm;
+    else if (a->music_evidence >= 1.5f && a->music_bpm >= 40.f) {
+        tempo = a->music_bpm < 70.f ? 2.f*a->music_bpm : a->music_bpm;
+    }
+    sm->dance_sway_bpm += (tempo-sm->dance_sway_bpm) * dt/(2000.f+dt);
+    /* One relaxed left/right cycle per four beats. Integrating the phase
+     * keeps movement continuous when the tempo estimate changes. */
+    sm->dance_sway_phase += dt * sm->dance_sway_bpm * (6.2831853f/240000.f);
+    if (sm->dance_sway_phase >= 6.2831853f) sm->dance_sway_phase -= 6.2831853f;
 
     if (a->beat_count != sm->dance_beats_seen) {
         sm->dance_beats_seen = a->beat_count;
@@ -768,11 +780,13 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
         if (music < 0.f) music = 0.f;
     }
 
-    const bool coasting=sm->dance_beat_ms && now_ms-sm->dance_beat_ms>1200;
-    const float bass = sm->dance_bass * music * (coasting?.2f:1.f);
+    const float drive = sm->dance_drive;
+    const float bass = sm->dance_bass * music * (.15f+.85f*drive);
     const float loud = sm->dance_loud * music;
     /* The measured kick strength controls impact; confidence controls admission. */
-    const float kick = env * music * (0.35f + 0.65f * sm->dance_hit_level);
+    const float kick = env * music * drive * (0.35f + 0.65f * sm->dance_hit_level);
+    const float sway = sinf(sm->dance_sway_phase) * music * (1.f-drive) *
+                       fminf(1.f, sm->dance_loud*3.f);
     const float side = (float)sm->dance_side;
 
     /* a flourish: a move layered on the beat for a moment, from a poke or a stroke */
@@ -802,6 +816,8 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
         case 5: m->sy-=(int32_t)(.28f*kick*Q16_ONE);m->sx+=(int32_t)(.15f*kick*Q16_ONE);m->dy=-m->dy/2;break; /* stomp */
         default: break;
         }
+        m->dx += (int32_t)(10.f*sway*Q16_ONE);
+        m->angle += (int32_t)(3.f*sway*Q16_ONE);
         m->curve = (int32_t)((0.55f * loud) * 65536.f);
         m->lid_bottom = (int32_t)((0.05f * loud) * 65536.f);
         /* quiet for a long time: lids sag */
@@ -884,7 +900,7 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
     const float laser_want = sm->dance_lasers_on ? 1.f : 0.f;
     sm->dance_laser_mix += (laser_want - sm->dance_laser_mix) * dt / (400.f + dt);
     if (sm->dance_laser_mix < .01f) sm->dance_laser_mix = 0.f;
-    eyes->laser_mix = sm->dance_laser_mix * music;
+    eyes->laser_mix = sm->dance_laser_mix * music * (.2f+.8f*drive);
     uint32_t spot_for=now_ms-sm->dance_spot_ms;
     if(spot_for>=sm->dance_spot_len && (beat_now||spot_for>=sm->dance_spot_len+1500)) {
         sm->dance_spots_on=!sm->dance_spots_on;sm->dance_spot_ms=now_ms;
@@ -893,13 +909,12 @@ static void apply_dance(anim_sm_t *sm, eyes_t *eyes, uint32_t now_ms)
     }
     sm->dance_spot_mix+=((sm->dance_spots_on?1.f:0.f)-sm->dance_spot_mix)*dt/(600+dt);
     if(sm->dance_spot_mix<.01f)sm->dance_spot_mix=0;
-    eyes->spot_mix=sm->dance_spot_mix*music;
+    eyes->spot_mix=sm->dance_spot_mix*music*(.35f+.65f*drive);
     /* Let the whole ball and the beams read through the resting dance face. */
     if(fx_shown==2 || fx_shown==3) for(int e=0;e<2;e++) {
         eyes->mod[e].curve=(int32_t)(eyes->mod[e].curve*(1.f-visual));
         eyes->mod[e].lid_bottom=(int32_t)(eyes->mod[e].lid_bottom*(1.f-visual));
     }
-    if(coasting) for(int e=0;e<2;e++) eyes->mod[e].angle+=(int32_t)(3.f*sinf(now_ms*.0012f)*music*Q16_ONE);
     /* the whole face pulses with the bass */
     eyes->face_mod_scale = (int32_t)((0.06f * bass) * 65536.f);
     /* the colour flashes a little brighter on the hit and shimmers with the bass */

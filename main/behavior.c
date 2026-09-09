@@ -29,7 +29,8 @@
 #define GROGGY_MS           3000
 #define FACE_DOWN_MS        1500
 #define WAKING_MS           500
-#define SNIFF_MS            5200     /* long enough for eight beats at 100 bpm */
+#define SNIFF_MS            5200     /* quiet-room battery listen */
+#define SNIFF_AUDIBLE_MS   11000     /* enough context for the second rhythm cue */
 #define MUSIC_MIN_BEATS     8
 #define MUSIC_QUIET_MS      45000     /* maximum audible breakdown without confirmed rhythm */
 #define MUSIC_SILENCE_MS    2200    /* genuinely quiet: leave promptly, not after the breakdown grace */
@@ -383,9 +384,12 @@ static void roll_listen_face(behavior_t *b, uint32_t now_ms)
 
 static bool music_detected(const audio_features_t *a)
 {
-    /* a steady tempo in the dance range, carried by a kick drum: conversation has neither */
-    return a->active && a->beat_count >= MUSIC_MIN_BEATS && a->bpm >= 85.f && a->bpm <= 185.f &&
-           a->tempo_conf >= MUSIC_TEMPO_CONF && a->bass_ratio >= MUSIC_BASS_RATIO;
+    /* Keep the established kick route; repeated upper-band percussion can
+     * also qualify after sustained, independently corroborated evidence. */
+    return a->active && a->raw_loud > 60.f &&
+           ((a->beat_count >= MUSIC_MIN_BEATS && a->bpm >= 85.f && a->bpm <= 185.f &&
+             a->tempo_conf >= MUSIC_TEMPO_CONF && a->bass_ratio >= MUSIC_BASS_RATIO) ||
+            a->music_evidence >= 1.5f);
 }
 
 void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, behavior_out_t *out)
@@ -489,16 +493,26 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
             if (shaking_hard) { start_wobble(b, now_ms); break; }
             if (face_down) { enter(b, BEH_FACE_DOWN, now_ms); break; }
             /* still music while the beats keep coming with a kick under them */
-            if (in->audio.active && in->audio.last_beat_ms && now_ms - in->audio.last_beat_ms < 2500 &&
-                in->audio.bass_ratio >= MUSIC_BASS_RATIO * 0.6f && in->audio.tempo_conf >= MUSIC_TEMPO_CONF) {
+            if (in->audio.active && in->audio.raw_loud > 60.f &&
+                (in->audio.music_evidence >= 1.5f ||
+                 (in->audio.last_beat_ms && now_ms - in->audio.last_beat_ms < 2500 &&
+                  in->audio.bass_ratio >= MUSIC_BASS_RATIO * 0.6f && in->audio.tempo_conf >= MUSIC_TEMPO_CONF))) {
                 b->music_quiet_since_ms = now_ms;
             }
-            if (in->audio.raw_loud >= 45.f) b->music_silence_since_ms = 0;
-            else if (!b->music_silence_since_ms) b->music_silence_since_ms = now_ms;
+            /* Integrate quiet time instead of resetting it on every noise peak.
+             * A short rustle after the song ends must not buy another 2.2 s. */
+            {
+                uint32_t dt = b->music_sample_ms ? now_ms-b->music_sample_ms : 0;
+                if (dt > 100) dt = 100;
+                b->music_sample_ms = now_ms;
+                float step = in->audio.raw_loud < 45.f ? (float)dt :
+                             in->audio.raw_loud > 60.f ? -3.f*dt : 0.f;
+                b->music_silence_ms = fmaxf(0.f, b->music_silence_ms + step);
+            }
             /* touch never stops the dance and never changes the face: a stroke adds a slow sway, that is all */
             if (stroked) out->dance_flourish = 2;
             if (!in->audio.active || now_ms - b->music_quiet_since_ms >= MUSIC_QUIET_MS ||
-                (b->music_silence_since_ms && now_ms-b->music_silence_since_ms >= MUSIC_SILENCE_MS)) {
+                (b->music_silence_ms >= MUSIC_SILENCE_MS)) {
                 enter(b, BEH_IDLE, now_ms);
                 b->next_sniff_ms = now_ms + CONFIG_EYES_SNIFF_INTERVAL_S * 1000u;
             }
@@ -507,6 +521,12 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
             if (shaking_hard) { start_wobble(b, now_ms); break; }
             if (face_down) { enter(b, BEH_FACE_DOWN, now_ms); break; }
             if (out->event == BEH_EV_BODY_TAP) { enter(b, BEH_STARTLED, now_ms); break; }
+            if (music_detected(&in->audio)) {
+                b->sniffing = false;
+                b->music_quiet_since_ms = b->music_sample_ms = now_ms;
+                b->music_silence_ms = 0.f;
+                enter(b, BEH_MUSIC, now_ms); break;
+            }
             if (in->audio.active && in->audio.speech) b->speech_last_ms = now_ms;
             if (in->dozing || !in->audio.active || now_ms - b->speech_last_ms > 2000 || in_state>=6500 || tapped) {
                 b->next_listen_ms=now_ms+18000+(uint32_t)(frand(b)*17000);enter(b, BEH_IDLE, now_ms);break;
@@ -561,7 +581,7 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
                 if (in->poke_eye) b->valence -= 0.03f;
                 enter(b, BEH_POKED, now_ms);
             }
-            else if (!in->dozing && in->audio.active && in->audio.speech && !in->user_interacting &&
+            else if (!music_detected(&in->audio) && !in->dozing && in->audio.active && in->audio.speech && !in->user_interacting &&
                      (!b->anger_until_ms || (int32_t)(now_ms-b->anger_until_ms)>=0) &&
                      (!b->next_listen_ms || (int32_t)(now_ms-b->next_listen_ms)>=0)) {
                 b->speech_last_ms = now_ms;
@@ -571,7 +591,8 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
             else if (in->audio.active && music_detected(&in->audio)) {
                 b->sniffing = false;
                 b->music_quiet_since_ms = now_ms;
-                b->music_silence_since_ms = 0;
+                b->music_silence_ms = 0.f;
+                b->music_sample_ms = now_ms;
                 /* roll the reaction against his mood */
                 const float r = frand(b);
                 if (r < 0.12f + 0.25f * (1.f - b->energy)) {
@@ -589,8 +610,10 @@ void behavior_update(behavior_t *b, const behavior_in_t *in, uint32_t now_ms, be
         if (!b->sniffing && (int32_t)(now_ms - b->next_sniff_ms) >= 0) {
             b->sniffing = true;
             b->sniff_start_ms = now_ms;
+            b->sniff_audible = false;
         }
-        if (b->sniffing && now_ms - b->sniff_start_ms >= SNIFF_MS) {
+        if (b->sniffing && in->audio.active && in->audio.raw_loud > 80.f) b->sniff_audible = true;
+        if (b->sniffing && now_ms - b->sniff_start_ms >= (b->sniff_audible ? SNIFF_AUDIBLE_MS : SNIFF_MS)) {
             b->sniffing = false;
             b->next_sniff_ms = now_ms + CONFIG_EYES_SNIFF_INTERVAL_S * 1000u;
         }

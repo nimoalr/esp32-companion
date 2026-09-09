@@ -101,6 +101,7 @@ typedef struct {
     float dance_hit_level;
     int dance_side;         /* +1 / -1, alternates on beats */
     float dance_bass, dance_loud, dance_bal;   /* smoothed */
+    float dance_drive, dance_sway_phase, dance_sway_bpm;
     uint32_t dance_last_sound_ms;
     int dance_flourish;         /* 0 none, 2 a slow sway (a stroke) */
     uint32_t dance_bar_ms;
