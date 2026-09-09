@@ -1,3 +1,4 @@
+import {MAX_SESSION_BYTES,MAX_METADATA_BYTES,MAX_SESSION_FRAMES} from './session-limits.mjs?v=portable4';
 import {AUDIO_STEMS,assetCRC,validateStemAudio} from './stem-audio.mjs?v=portable4';
 export const RECORD_BYTES=64;
 export const PCM_RECORD_BYTES=1092;
@@ -37,7 +38,7 @@ export function pack(meta,records){
  const json=new TextEncoder().encode(JSON.stringify({...meta,...(tracks?{tracks}:{}),format,recordBytes:bytes}));
  const header=new Uint8Array(format===4?24:12);header.set(new TextEncoder().encode(`MCALv00${format}`));
  const hv=new DataView(header.buffer);hv.setUint32(8,json.length,true);
- if(records.length>500000||json.length>16000000||header.length+json.length+records.length*bytes+assetBytes>1000000000)throw new Error('Session exceeds portable notebook limits (1 GB / 500,000 frames)');
+ if(records.length>MAX_SESSION_FRAMES||json.length>MAX_METADATA_BYTES||header.length+json.length+records.length*bytes+assetBytes>MAX_SESSION_BYTES)throw new Error('Session exceeds portable notebook limits (1 GB / 500,000 frames)');
  if(format===4){hv.setUint32(12,bytes,true);hv.setUint32(16,records.length,true);hv.setUint32(20,assetBytes,true);}
  const normalized=records.map(p=>{if(p.length===bytes)return p;if(![24,64].includes(p.length))throw new Error('Invalid record');const q=new Uint8Array(bytes);q.set(p);if(p.length===24)q.fill(255,24,32);return q;});
  return new Blob([header,json,...normalized,...assets],{type:'application/octet-stream'});
@@ -48,10 +49,10 @@ export function unpack(buffer){
  const portable=magic==='MCALv004',header=portable?24:12;
  if(p.length<header)throw new Error('Incomplete session header');
  const bytes=portable?v.getUint32(12,true):magic==='MCALv003'?PCM_RECORD_BYTES:magic==='MCALv002'?64:24,n=v.getUint32(8,true);
- if(![24,64,PCM_RECORD_BYTES].includes(bytes)||n>16000000||n>p.length-header||p.length>1000000000)throw new Error('Invalid session size');
+ if(![24,64,PCM_RECORD_BYTES].includes(bytes)||n>MAX_METADATA_BYTES||n>p.length-header||p.length>MAX_SESSION_BYTES)throw new Error('Invalid session size');
  const count=portable?v.getUint32(16,true):(p.length-header-n)/bytes,assetBytes=portable?v.getUint32(20,true):0;
  const recordEnd=header+n+count*bytes;
- if(!Number.isInteger(count)||count>500000||recordEnd+assetBytes!==p.length)throw new Error('Incomplete session or size limit exceeded');
+ if(!Number.isInteger(count)||count>MAX_SESSION_FRAMES||recordEnd+assetBytes!==p.length)throw new Error('Incomplete session or size limit exceeded');
  const meta=JSON.parse(new TextDecoder().decode(p.subarray(header,header+n)));
  let consumed=0;
  for(const track of meta.tracks||[]){

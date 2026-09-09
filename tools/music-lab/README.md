@@ -103,6 +103,32 @@ Converted v1/v2 records have no `PCM1` tag and must not be treated as recorded
 silence. CRC covers PCM and features together; their sequence/timestamp association
 cannot drift through separate stream losses.
 
+## Recording space and resuming a notebook
+
+Imported notebooks can accept more runs after reconnecting USB. Downloading saves
+an export; it does not remove earlier recordings or free space inside that notebook.
+The former 128 MB whole-session capture cap is now a **per-run** limit (about
+31.3 minutes of stereo capture), keeping individual replay exports manageable.
+At that limit the current run ends and remains in the notebook; another run can
+start immediately. The next frame is checked before append, preventing overshoot.
+
+The whole notebook keeps its existing 500,000-frame / 1 GB portable limits.
+Capture budgets include embedded stems, any promotion of older feature frames to
+stereo record width, and the full 16 MB metadata allowance. Remaining time appears
+beside the recording controls. A full notebook disables Start run and directs you
+to **Download session → New session**; reimporting the same full notebook does not
+make room. Per-frame capacity checks use cached byte counts, without rescanning
+existing recordings or stem audio.
+
+Laptop sleep can interrupt acquisition; it does not by itself establish file
+corruption. Import validates notebook framing and embedded stem checksums; replay
+marks sequence gaps in saved runs. These checks cannot recover audio that was
+never recorded. A stopped run remains available for export.
+
+```sh
+node tools/music-lab/session-limits.test.mjs
+```
+
 ## Listen and label afterward
 
 Expand an ended run and choose **Replay & label**. The two waveform rows are

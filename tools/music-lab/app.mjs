@@ -1,7 +1,8 @@
+import {captureCapacity,MAX_SESSION_BYTES} from './session-limits.mjs?v=portable4';
 import {parseLine,decode,pack,unpack,summarize,summarizeCorpus,BAND_EDGES_HZ} from './trace.mjs?v=portable4';
 import {createReplay} from './replay-ui.mjs?v=portable4';
 const $=id=>document.getElementById(id);
-let lastPerf=null,collectedBytes=0;
+let lastPerf=null,collectedBytes=0,recordBytes=24,attachedBytes=0;
 let deviceConfig=null,stopAck=null,connecting=false,editing=null,importing=false;
 let heartbeat=null,writeChain=Promise.resolve(),deviceLost=0;
 function send(command){const target=port;writeChain=writeChain.catch(()=>{}).then(async()=>{if(!target?.writable)throw new Error("USB is disconnected");const w=target.writable.getWriter();try{await w.write(new TextEncoder().encode(command+"\n"));}finally{w.releaseLock();}});return writeChain;}
@@ -11,12 +12,21 @@ const fields=['track','kind','style','volume','setup','notes'];
 function importStatus(s,error=false){const el=$('import-status');el.textContent=s;el.style.color=error?'#ffb4aa':'';}
 const paintImport=()=>new Promise(resolve=>setTimeout(resolve,25));
 function notice(s){$('notice').textContent=s;}
-const replay=createReplay(()=>{unsaved=true;},notice);
+const replay=createReplay(()=>{unsaved=true;countAttachments();},notice);
 function status(s){$('status').textContent=s;}
+function countAttachments(){attachedBytes=meta.tracks.reduce((sum,t)=>sum+Object.values(t.stemAudio?.stems||{}).reduce((n,p)=>n+p.length,0),0);}
+function capacity(nextBytes=latest?(latest.hasAudio?1092:latest.sequence!==null?64:24):1092){
+ return captureCapacity({frames:records.length,recordBytes,nextBytes,stemBytes:attachedBytes,runFrames:run?records.length-run.startFrame:0});
+}
+function limitMessage(reason){return reason==='run'?
+ 'This run reached its 128 MB limit and is retained in this session. Start another run to keep recording.':
+ 'This notebook is full. Download session, then choose New session to record more. Reopening the same file keeps it full.';}
 function controls(){
  const fresh=performance.now()-lastReceived<1500,analysing=replay.isAnalyzing();
  replay.setCaptureBusy(!!port||!!run||connecting||importing);
- $('start').disabled=importing||!!run||!!editing||!latest||!fresh;$('save-labels').hidden=!editing;
+ const room=capacity();
+ $('recording-capacity').textContent=room.reason?limitMessage(room.reason):`${(room.remaining*.016/60).toFixed(1)} min of capture space ${run?'left in this run':'available for a new run'} · up to 128 MB per run; 1 GB / 500,000 frames per notebook.`;
+ $('start').disabled=importing||!!run||!!editing||!latest||!fresh||room.sessionFrames<=0;$('save-labels').hidden=!editing;
  $('stop').disabled=!run;$('download').disabled=importing||!!run||!records.length;
  $('capture-stereo').disabled=connecting||!!port;
  $('connect').disabled=importing||analysing||connecting||!!port||!!demoTimer;$('disconnect').disabled=!port;
@@ -28,7 +38,12 @@ function controls(){
 }
 function receive(p){
  latest=decode(p);lastReceived=performance.now();history.push(latest);historyPackets.push(p);if(history.length>256){history.shift();historyPackets.shift();}
- if(run){records.push(p);collectedBytes+=p.length;unsaved=true;if((records.length>=500000||collectedBytes>=128000000)){endRun();notice('Session size limit reached. Download before starting a new session.');}}
+ if(run){
+  const room=capacity(p.length);
+  if(!room.remaining){endRun();notice(limitMessage(room.reason));return;}
+  records.push(p);collectedBytes+=p.length;recordBytes=Math.max(recordBytes,p.length);unsaved=true;
+  if(room.remaining===1){const reason=room.sessionFrames===1?'session':'run';endRun();notice(limitMessage(reason));}
+ }
 }
 function line(s){
  try{for(const p of parseLine(s))receive(p);}catch(e){notice(e.message);meta.transportEvents.push({type:'invalid_packet',at:new Date().toISOString()});}
@@ -76,7 +91,7 @@ $('disconnect').onclick=async()=>{
  stopAck=null;reading=false;await reader?.cancel();
 };
 $('start').onclick=()=>{
- if((records.length>=500000||collectedBytes>=128000000))return notice('Download this session and reload before recording more.');
+ const room=capacity();if(!room.remaining)return notice(limitMessage(room.reason));
  if(!latest||performance.now()-lastReceived>1500)return notice('Waiting for live device frames.');
  if(!$('track').value.trim())return notice('Give this run a track or reference name.');
  replay.clear();run={};fields.forEach(id=>run[id]=$(id).value.trim());
@@ -110,7 +125,7 @@ $('save-labels').onclick=()=>{if(!editing)return;fields.forEach(id=>editing[id]=
 $('new').onclick=()=>{
  if(unsaved)return notice('Download this session before starting a new one.');
  if(demoTimer){clearInterval(demoTimer);demoTimer=null;latest=null;lastReceived=0;fields.forEach(id=>$(id).value=id==='kind'?'music':'');}
- replay.clear();editing=null;collectedBytes=0;records=[];history=[];historyPackets=[];meta={format:2,created:new Date().toISOString(),demo:false,tracks:[],transportEvents:[]};
+ replay.clear();editing=null;collectedBytes=0;recordBytes=24;attachedBytes=0;records=[];history=[];historyPackets=[];meta={format:2,created:new Date().toISOString(),demo:false,tracks:[],transportEvents:[]};
  $('tracks').textContent='No runs yet.';renderSpectrum();$('events').replaceChildren();$('timer').textContent='00:00';
  importStatus('');notice('');status(port?'USB connected':'No device connected');controls();
 };
@@ -132,7 +147,7 @@ $('file').onchange=async()=>{
  const f=$('file').files[0];if(!f||importing)return;
  importing=true;controls();$('import').textContent='Opening…';notice('');
  try{
- if(f.size>1000000000)throw new Error('Session exceeds the 1 GB portable notebook limit.');
+ if(f.size>MAX_SESSION_BYTES)throw new Error('Session exceeds the 1 GB portable notebook limit.');
  importStatus(`Reading ${f.name} · ${(f.size/1048576).toFixed(1)} MB…`);
  const buffer=await f.arrayBuffer();
  importStatus('Checking session and embedded stem audio…');await paintImport();
@@ -144,7 +159,7 @@ $('file').onchange=async()=>{
   t.summary=summarize(data.records.slice(t.startFrame,t.endFrame));t.markers=t.markers||[];
  }
  // Keep the existing notebook intact until the replacement has been validated.
- replay.clear();editing=null;records=data.records;collectedBytes=records.reduce((n,p)=>n+p.length,0);meta=data.meta;historyPackets=records.slice(-256);history=historyPackets.map(decode);latest=history.at(-1);lastReceived=0;unsaved=false;
+ replay.clear();editing=null;records=data.records;recordBytes=records.reduce((n,p)=>Math.max(n,p.length),24);collectedBytes=records.reduce((n,p)=>n+p.length,0);meta=data.meta;countAttachments();historyPackets=records.slice(-256);history=historyPackets.map(decode);latest=history.at(-1);lastReceived=0;unsaved=false;
  renderTracks();
  const stems=meta.tracks.filter(t=>t.stemAudio).length;
  importStatus(`Opened ${f.name} · ${meta.tracks.length} runs${stems?` · ${stems} with embedded stems`:''}. Expand a run to replay and label it.`);
