@@ -1,7 +1,7 @@
 # Music Lab — dedicated USB recording
 
 Run `tools/music-lab/serve.sh`, then open http://127.0.0.1:8765/ in Chrome/Edge.
-The page uses Web Serial; no accounts, cloud, uploads, or device flash writes. Stereo microphone recording is enabled by default; untick it before connecting for compact features only.
+The page uses Web Serial; no accounts, cloud audio processing, or device flash writes. Optional stem analysis sends audio only to the local server on your laptop. Stereo microphone recording is enabled by default; untick it before connecting for compact features only.
 
 1. Connect ESP32. `MC_START_PCM` enables exclusive stereo recording. A static USB MUSIC / RECORD MODE message is drawn once at 20% brightness, then animations/personality/rendering and display transfers stop. Microphone analysis stays on.
 2. Label each reference, Start run before playback, mark issues, End run afterward.
@@ -143,7 +143,72 @@ and keeps channels separate; pass `0` to preserve recorded levels. Reanalysis st
 with fresh detector state, unlike a track recorded in the middle of an existing
 capture session; the notebook's recorded flags remain the original evidence.
 
-## Laptop models: useful next comparisons
+## Stems inside the timeline
+
+**Save your current notebook before restarting an older Music Lab server.** Recording
+and replay still work without any ML packages. To enable local separation, install
+the optional worker once (Python 3.12 is required for this environment):
+
+```sh
+tools/music-lab/setup-ml.sh
+tools/music-lab/serve.sh
+```
+
+1. End the run and **Disconnect USB**. Import a saved `.mcal` if needed, expand a
+   track and choose **Replay & label**.
+2. Choose **Analyze stems** under the microphone and detector lanes. Progress and
+   cancellation are shown there. Only one track runs at a time; the page disables
+   recording connection while its analysis job is running.
+3. Inspect the aligned **Drums, Bass, Vocals and Accompaniment** level lanes. They
+   share the original timeline's zoom, pan, selection and playhead. Click to seek,
+   drag to select, or click a lane name / **Solo** button to hear that source.
+   **Mic recording** switches back at the same position. Playback speed, selection
+   looping and quiet-replay boost work with stems too.
+4. Add your own labels as usual, then **Download session** again. Stem estimates
+   never change human annotations or recorded firmware decisions.
+
+The worker uses [Audio Separator](https://github.com/nomadkaraoke/python-audio-separator)
+0.47.0 with `htdemucs.yaml`, locally. First use downloads model weights; recordings
+are not sent to a model service. Audio is processed in 60-second passages with
+two seconds of surrounding context, then cropped back onto the exact original
+16 kHz stereo sample timeline. Gap markers remain visible; estimated sound near
+a gap cannot recover missing microphone evidence. Chunk boundaries can also have
+separation artifacts. Levels are 100 ms RMS bins on a shared display scale, **not
+beat timestamps or calibrated instrument-presence probabilities**. Vocals can
+contain speech; listen to the original mixture before deciding how the companion
+should react. This is an inspection aid, not an automatic detector retuning step.
+
+Compact level curves and source/model provenance travel in `.mcal` metadata
+(roughly 15–20 KB per minute). Four 16 kHz stereo PCM stem files stay in a local
+cache (~15.4 MB/minute), outside the notebook. **Free cached audio** removes them
+while retaining saved curves and labels; **Restore stem audio** regenerates them.
+Reopening a notebook validates that its reference belongs to the original PCM.
+It can still display saved curves when the optional analysis server is unavailable.
+
+Defaults live in `~/.cache/companion-music-lab/`: `venv/`, `models/` and `stems/`.
+Generated stem jobs use an approximately 1 GB cache with oldest-job eviction;
+model weights and temporary processing files are additional. Original notebooks
+are never evicted. Use `serve.sh --port 8766 --cache /path/to/stems` or
+`MUSIC_LAB_PYTHON=/path/to/venv/bin/python tools/music-lab/serve.sh` to override the
+server settings. A custom `MUSIC_LAB_ENV` during setup needs the matching worker
+Python override. The server binds only to loopback and requires same-origin API
+requests. Avoid starting another analysis tab while recording in a separate tab;
+the recording/analysis UI guard applies within the current page.
+
+Checks:
+
+```sh
+node tools/music-lab/stem-reference.test.mjs
+node tools/music-lab/stem-ui.test.mjs
+python3 tools/music-lab/server_test.py
+~/.cache/companion-music-lab/venv/bin/python tools/music-lab/stem_worker_test.py
+```
+
+These cover notebook persistence, exact alignment, cached audio seeking, request
+validation, cancellation/failure cleanup and chunk assembly. The chunk test uses
+a deterministic separator double; it does not download weights or run inference.
+
+## Other laptop model comparisons
 
 [YAMNet](https://github.com/tensorflow/models/tree/master/research/audioset/yamnet)
 is a candidate independent audio-event baseline: 521 classes including speech and
@@ -152,11 +217,9 @@ versus mono results. Its predictions should be suggestions, especially for singi
 speech over music, TV and rhythmic non-music. It requires a separate Python/ML
 environment; this repository's dependency-free recording page does not install it.
 
-[Demucs](https://github.com/facebookresearch/demucs) separates drums, bass, vocals
-and other instruments. It could help inspect kick/snare confusion offline; vocals
-are not a speech-versus-music label, and separation artifacts are not ground truth.
-No stem/model inference is installed or run by this change. WAV export makes those
-experiments possible without altering firmware or exposing recordings to a server.
+The integrated four-stem separation can help inspect kick/snare confusion and
+beatless passages. It does not independently establish speech versus music;
+human labels and held-out recordings remain the evaluation reference.
 
 Capture stays at the detector's native 16 kHz. More sample rate would add high
 frequencies but not improve timing or low-frequency resolution by itself. A useful

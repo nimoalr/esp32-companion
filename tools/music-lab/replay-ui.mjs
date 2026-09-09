@@ -1,26 +1,33 @@
+import {createStems} from './stem-ui.mjs';
 import {timeline,wav,pcmStats,intervals,annotation,evaluate} from './replay.mjs';
 const fmt=(s,precise=false)=>`${Math.floor(s/60)}:${(s%60).toFixed(precise?3:1).padStart(precise?6:4,'0')}`;
 export function createReplay(onEdit,notice){
  const $=id=>document.getElementById(id),audio=$('replay-audio'),canvas=$('replay-timeline');
  const W=1100,H=334,G=112,P=W-G;
  let track=null,records=[],map=null,url=null,stats=null,drag=null,editing=-1,undo=[],peaks=[],dance=[],listen=[];
- let view=0,span=1,selection=false,playingSelection=false,raf=0,lastPaint=0;
+ let view=0,span=1,selection=false,playingSelection=false,raf=0,lastPaint=0,audition=null,auditionName=null,audioGraph=null,stemGain=null;
+ const stems=createStems({getWav:()=>wav(records,{map}),onEdit:changed,notice,
+  onAudio:(url,name)=>{audition=url;auditionName=name;preview();},onSeek:t=>{audio.currentTime=t;draw();},onSelect:setRange,redraw:draw});
  const range=()=>[+$('label-start').value,+$('label-end').value];
  const x=t=>G+(t-view)/span*P;
  const pos=e=>{const r=canvas.getBoundingClientRect();return {x:(e.clientX-r.left)/r.width*W,y:(e.clientY-r.top)/r.height*H};};
  const time=px=>Math.max(0,Math.min(map.duration,view+(px-G)/P*span));
  function setRange(a,b){selection=true;$('label-start').value=Math.max(0,Math.min(a,map.duration)).toFixed(3);$('label-end').value=Math.max(0,Math.min(b,map.duration)).toFixed(3);draw();}
  function snapshot(){undo.push(JSON.stringify(track.annotations||[]));if(undo.length>30)undo.shift();$('label-undo').disabled=false;}
- function changed(){onEdit();$('replay-save-hint').textContent='Unsaved annotations · download session to keep them';}
+ function changed(){onEdit();$('replay-save-hint').textContent='Unsaved edits · download session to keep labels and stem curves';}
  function resetEdit(){editing=-1;$('label-save').textContent='Add annotation';$('label-heading').textContent='What should happen here?';$('label-cancel').hidden=true;}
  function expected(value){$('label-expected').value=value;document.querySelectorAll('[data-expected]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.expected===value)));}
  function download(p,name){const u=URL.createObjectURL(new Blob([p],{type:'audio/wav'})),a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),10000);}
  function preview(){
-  if(!track)return;const current=audio.currentTime||0;audio.pause();if(url)URL.revokeObjectURL(url);
+  if(!track)return;const current=audio.currentTime||0,wasPlaying=!audio.paused;audio.pause();if(url)URL.revokeObjectURL(url);
   const gain=$('replay-boost').checked?Math.min(100,26214/Math.max(1,...stats.peak)):1;
-  url=URL.createObjectURL(new Blob([wav(records,{map,channel:$('replay-channel').value,gain})],{type:'audio/wav'}));audio.src=url;audio.playbackRate=+$('replay-speed').value;
-  audio.onloadedmetadata=()=>{audio.currentTime=Math.min(current,map.duration);draw();};
-  $('replay-gain').textContent=`Preview gain ×${gain.toFixed(1)}. WAV export always keeps both original channels and levels.`;
+  url=audition?null:URL.createObjectURL(new Blob([wav(records,{map,channel:$('replay-channel').value,gain})],{type:'audio/wav'}));audio.src=audition||url;audio.playbackRate=+$('replay-speed').value;
+  audio.onloadedmetadata=()=>{audio.currentTime=Math.min(current,map.duration);if(wasPlaying)play();draw();};
+  $('replay-channel').disabled=!!audition;
+  $('stem-audition').textContent=audition?`Listening to estimated ${auditionName?.toLowerCase()||'stem'}`:'Listening to microphone recording';
+  if(audition&&!audioGraph){audioGraph=new AudioContext();stemGain=audioGraph.createGain();audioGraph.createMediaElementSource(audio).connect(stemGain);stemGain.connect(audioGraph.destination);}
+  if(stemGain)stemGain.gain.value=audition?gain:1;
+  $('replay-gain').textContent=audition?`Listening to estimated ${auditionName?.toLowerCase()||'stem'} · preview gain ×${gain.toFixed(1)}`:`Preview gain ×${gain.toFixed(1)}. WAV export always keeps both original channels and levels.`;
  }
  function clampView(){span=Math.max(Math.min(.25,map.duration),Math.min(map.duration,span));view=Math.max(0,Math.min(map.duration-span,view));}
  function zoom(factor,anchor=audio.currentTime){const relative=Math.max(0,Math.min(1,(anchor-view)/span));span*=factor;clampView();view=anchor-relative*span;clampView();draw();}
@@ -45,6 +52,7 @@ export function createReplay(onEdit,notice){
   $('replay-zoom-text').textContent=span>=map.duration-.001?'Full track':`${fmt(view)} – ${fmt(view+span)} · ${(map.duration/span).toFixed(1)}× zoom`;
   $('replay-pan').disabled=span>=map.duration-.001;$('replay-pan').value=map.duration>span?view/(map.duration-span)*1000:0;
   $('selection-info').textContent=selection&&b>a?`${fmt(a,true)} → ${fmt(b,true)} · ${(b-a).toFixed(3)}s selected`:'Click to seek · drag on a waveform to select a passage';
+  stems.draw(view,span,audio.currentTime,selection?[a,b]:null);
   $('replay-selection').disabled=!selection||b<=a;$('zoom-selection').disabled=!selection||b<=a;$('label-save').disabled=!selection||b<=a;
  }
  function editLabel(i){const l=track.annotations[i];editing=i;setRange(l.start,l.end);expected(l.expected);$('label-comment').value=l.label;$('label-save').textContent='Save annotation';$('label-heading').textContent=`Edit annotation ${i+1}`;$('label-cancel').hidden=false;audio.currentTime=l.start;if(l.start<view||l.end>view+span){view=l.start;span=Math.max(2,l.end-l.start)*1.2;clampView();}draw();}
@@ -62,7 +70,7 @@ export function createReplay(onEdit,notice){
   const e=evaluate(map,track.annotations||[]);
   $('label-score').textContent=`Human-labelled ${e.labelled.toFixed(2)}s · correctly dancing ${e.tp.toFixed(2)}s · missed dance ${e.fn.toFixed(2)}s · false dance ${e.fp.toFixed(2)}s · correctly quiet ${e.tn.toFixed(2)}s · conflicting labels excluded ${e.conflict.toFixed(2)}s. Unlabelled ranges and missing audio are excluded.`;
  }
- function play(){audio.play().catch(e=>notice(e.message));}
+ function play(){audioGraph?.resume().catch(e=>notice(e.message));audio.play().catch(e=>notice(e.message));}
  function playRange(){if(!selection)return;const [a,b]=range();if(b<=a)return;playingSelection=true;audio.currentTime=a;play();}
  function tick(now){if(!track)return;if(playingSelection){const [a,b]=range();if(audio.currentTime>=b){if($('replay-loop').checked)audio.currentTime=a;else{audio.pause();audio.currentTime=b;playingSelection=false;}}}
   if(now-lastPaint>32){if(!audio.paused&&(audio.currentTime>view+span||audio.currentTime<view)){view=audio.currentTime;clampView();}draw();lastPaint=now;}
@@ -101,14 +109,15 @@ export function createReplay(onEdit,notice){
  $('replay-section').onkeydown=e=>{if(!track||/INPUT|TEXTAREA|SELECT|BUTTON/.test(e.target.tagName))return;
   if(e.code==='Space'){e.preventDefault();$('replay-play').click();}else if(e.key.toLowerCase()==='i')$('label-in').click();else if(e.key.toLowerCase()==='o')$('label-out').click();else if(e.key==='+'||e.key==='='){e.preventDefault();zoom(.5);}else if(e.key==='-'){e.preventDefault();zoom(2);}else if(e.key==='ArrowRight'||e.key==='ArrowLeft'){e.preventDefault();audio.currentTime=Math.max(0,Math.min(map.duration,audio.currentTime+(e.key==='ArrowRight'?1:-1)*(e.shiftKey?5:1)));draw();}
  };
- function clear(){audio.pause();cancelAnimationFrame(raf);audio.removeAttribute('src');audio.load();if(url)URL.revokeObjectURL(url);url=null;track=null;map=null;records=[];peaks=[];undo=[];playingSelection=false;$('replay-section').hidden=true;}
- return {clear,open(t,p){try{
+ function clear(){stems.clear();audition=null;audio.pause();audioGraph?.suspend();cancelAnimationFrame(raf);audio.removeAttribute('src');audio.load();if(url)URL.revokeObjectURL(url);url=null;track=null;map=null;records=[];peaks=[];undo=[];playingSelection=false;$('replay-section').hidden=true;}
+ audio.onerror=()=>{if(audition){audition=null;stems.resetSolo();notice("Stem audio is no longer cached. Analyze this track again to recover it.");preview();}};
+ return {clear,isAnalyzing:()=>stems.busy,setCaptureBusy:v=>stems.setCaptureBusy(v),open(t,p){try{
   clear();track=t;records=p;map=timeline(records);stats=pcmStats(records);if(!stats.samples)throw new Error('This old run has features only. Record a new stereo run for microphone replay.');
   const peak=Math.max(1,...stats.peak);peaks=records.map((p,j)=>{const out=[0,0];if(!map.entries[j].a.hasAudio)return out;const v=new DataView(p.buffer,p.byteOffset,p.byteLength);for(let i=0;i<256;i++)for(let ch=0;ch<2;ch++)out[ch]=Math.max(out[ch],Math.abs(v.getInt16(68+i*4+ch*2,true))/peak);return out;});
   dance=intervals(map);listen=intervals(map,128);view=0;span=map.duration;selection=false;resetEdit();$('label-start').value=0;$('label-end').value=0;$('label-comment').value='';$('label-feedback').textContent='';$('label-undo').disabled=true;
   $('replay-title').textContent=t.track;$('replay-section').hidden=false;$('replay-save-hint').textContent='Download session to keep annotations';
   $('replay-stats').textContent=`Stereo 16 kHz · L/R RMS ${stats.rms.map(v=>v.toFixed(1)).join(' / ')} · peaks ${stats.peak.join(' / ')} · clipped samples ${stats.clipped.join(' / ')} · correlation ${stats.correlation?.toFixed(3)??'—'} · ${map.gaps.length} gap/boundary marker(s).`;
   $('replay-detected').textContent='Recorded algorithm would dance: '+(dance.length?dance.map(r=>`${fmt(r.start)}–${fmt(r.end)}`).join(' · '):'none');
-  preview();labels();draw();$('replay-section').scrollIntoView({behavior:'smooth'});$('replay-section').focus({preventScroll:true});
+  preview();labels();draw();stems.open(t,map);$('replay-section').scrollIntoView({behavior:'smooth'});$('replay-section').focus({preventScroll:true});
  }catch(e){clear();notice(e.message);}}};
 }

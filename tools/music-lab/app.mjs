@@ -12,13 +12,14 @@ function notice(s){$('notice').textContent=s;}
 const replay=createReplay(()=>{unsaved=true;},notice);
 function status(s){$('status').textContent=s;}
 function controls(){
- const fresh=performance.now()-lastReceived<1500;
+ const fresh=performance.now()-lastReceived<1500,analysing=replay.isAnalyzing();
+ replay.setCaptureBusy(!!port||!!run||connecting);
  $('start').disabled=!!run||!!editing||!latest||!fresh;$('save-labels').hidden=!editing;
  $('stop').disabled=!run;$('download').disabled=!!run||!records.length;
  $('capture-stereo').disabled=connecting||!!port;
- $('connect').disabled=connecting||!!port||!!demoTimer;$('disconnect').disabled=!port;
+ $('connect').disabled=analysing||connecting||!!port||!!demoTimer;$('disconnect').disabled=!port;
  $('demo').disabled=!!port||!!run||!!demoTimer||records.length>0;
- $('import').disabled=!!run||!!port||!!demoTimer;$('new').disabled=!!run;
+ $('import').disabled=analysing||!!run||!!port||!!demoTimer;$('new').disabled=analysing||!!run;
  fields.forEach(id=>$(id).disabled=!!run);
  document.querySelectorAll('[data-mark]').forEach(b=>b.disabled=!run);
 }
@@ -39,7 +40,7 @@ function line(s){
  if(s.includes('MC_SESSION:'))status(s.replace(/\x1b\[[0-9;]*m/g,'').slice(s.indexOf('MC_SESSION:')));
 }
 $('connect').onclick=async()=>{
- if(connecting||port)return;connecting=true;controls();
+ if(connecting||port||replay.isAnalyzing())return;connecting=true;controls();
  try{
   if(meta.demo&&records.length)throw new Error('Choose New session before collecting device evidence.');
   if(!navigator.serial)throw new Error('Use Chrome or Edge on localhost for USB capture.');
