@@ -1,5 +1,6 @@
 import hashlib
 import os
+import re
 import http.client
 import io
 import json
@@ -27,6 +28,35 @@ class ServerTest(unittest.TestCase):
     def call(self,method,path,body=None,headers=None):
         c=http.client.HTTPConnection('127.0.0.1',self.server.server_port)
         c.request(method,path,body,headers or {});r=c.getresponse();data=r.read();out=(r.status,dict(r.getheaders()),data);c.close();return out
+    def test_static_reader_is_fresh_even_with_cached_client(self):
+        for method in ('GET', 'HEAD'):
+            status, headers, body = self.call(method, '/trace.mjs', headers={
+                'If-Modified-Since': 'Wed, 01 Jan 2098 00:00:00 GMT',
+                'If-None-Match': 'old-reader',
+            })
+            self.assertEqual(status, 200)
+            self.assertEqual(headers['Cache-Control'], 'no-store')
+            if method == 'GET':
+                self.assertIn(b'MCALv004', body)
+        self.assertEqual(self.call('GET', '/')[1]['Cache-Control'], 'no-store')
+
+    def test_portable_module_graph_bypasses_preexisting_cache(self):
+        html = self.call('GET', '/')[2].decode()
+        pending = re.findall(r'<script type="module" src="([^"]+)"', html)
+        seen = set()
+        while pending:
+            url = pending.pop()
+            if url in seen:
+                continue
+            seen.add(url)
+            self.assertTrue(url.endswith('?v=portable4'), url)
+            status, headers, body = self.call('GET', '/' + url.removeprefix('./'))
+            self.assertEqual(status, 200)
+            self.assertEqual(headers['Cache-Control'], 'no-store')
+            pending.extend(re.findall(r"from '(\./[^']+)'", body.decode()))
+        self.assertIn('./trace.mjs?v=portable4', seen)
+        self.assertIn('./stem-audio.mjs?v=portable4', seen)
+
     def test_ready_reuse_and_range(self):
         status,_,body=self.call('POST','/api/stems',self.wav,{'Content-Type':'audio/wav'})
         self.assertEqual(status,202);self.assertEqual(json.loads(body)['id'],self.key);self.assertIsNone(self.jobs.active)

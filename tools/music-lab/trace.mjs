@@ -1,4 +1,4 @@
-import {AUDIO_STEMS,assetCRC,validateStemAudio} from './stem-audio.mjs';
+import {AUDIO_STEMS,assetCRC,validateStemAudio} from './stem-audio.mjs?v=portable4';
 export const RECORD_BYTES=64;
 export const PCM_RECORD_BYTES=1092;
 export const BAND_EDGES_HZ=[1,2,3,4,5,6,7,9,12,16,21,28,38,51,68,91,128].map(x=>x*62.5);

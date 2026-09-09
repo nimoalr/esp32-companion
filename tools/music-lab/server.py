@@ -141,6 +141,20 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
+    def end_headers(self):
+        if not urlparse(self.path).path.startswith('/api/'):
+            self.send_header('Cache-Control', 'no-store')
+        super().end_headers()
+
+    def send_head(self):
+        # Local development updates must replace the complete JS module graph,
+        # including previously cached readers of older .mcal versions.
+        if not urlparse(self.path).path.startswith('/api/'):
+            for header in ('If-Modified-Since', 'If-None-Match'):
+                if header in self.headers:
+                    del self.headers[header]
+        return super().send_head()
+
     def local_request(self):
         host = self.headers.get('Host', '')
         expected = {f'localhost:{self.server.server_port}', f'127.0.0.1:{self.server.server_port}'}

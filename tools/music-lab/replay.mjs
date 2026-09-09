@@ -1,6 +1,6 @@
 /* Sample-clock replay: sequence gaps become silence, never compressed time.
  * PCM is untouched in exports. Labels use seconds from this track's first frame. */
-import {decode} from './trace.mjs';
+import {decode} from './trace.mjs?v=portable4';
 export function timeline(records){
  const entries=[],gaps=[];let cursor=0,prev=null;
  for(let i=0;i<records.length;i++){

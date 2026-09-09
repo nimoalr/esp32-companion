@@ -1,5 +1,5 @@
-import {STEM_NAMES,validateReference,paintReference} from './stem-reference.mjs';
-import {AUDIO_STEMS,validateFLAC,validateStemAudio} from './stem-audio.mjs';
+import {STEM_NAMES,validateReference,paintReference} from './stem-reference.mjs?v=portable4';
+import {AUDIO_STEMS,validateFLAC,validateStemAudio} from './stem-audio.mjs?v=portable4';
 export function createStems({getWav,onEdit,notice,onAudio,onSeek,onSelect,redraw}){
  const $=id=>document.getElementById(id),canvas=$('stem-timeline');
  let track=null,map=null,reference=null,job=null,captureBusy=false,available=false,embedded=false,solo=null,view=0,span=1,drag=null,generation=0,feedback='';

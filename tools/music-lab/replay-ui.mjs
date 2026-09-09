@@ -1,5 +1,5 @@
-import {createStems} from './stem-ui.mjs';
-import {timeline,wav,pcmStats,intervals,annotation,evaluate} from './replay.mjs';
+import {createStems} from './stem-ui.mjs?v=portable4';
+import {timeline,wav,pcmStats,intervals,annotation,evaluate} from './replay.mjs?v=portable4';
 const fmt=(s,precise=false)=>`${Math.floor(s/60)}:${(s%60).toFixed(precise?3:1).padStart(precise?6:4,'0')}`;
 export function createReplay(onEdit,notice){
  const $=id=>document.getElementById(id),audio=$('replay-audio'),canvas=$('replay-timeline');

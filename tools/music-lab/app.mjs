@@ -1,26 +1,29 @@
-import {parseLine,decode,pack,unpack,summarize,summarizeCorpus,BAND_EDGES_HZ} from './trace.mjs';
-import {createReplay} from './replay-ui.mjs';
+import {parseLine,decode,pack,unpack,summarize,summarizeCorpus,BAND_EDGES_HZ} from './trace.mjs?v=portable4';
+import {createReplay} from './replay-ui.mjs?v=portable4';
 const $=id=>document.getElementById(id);
 let lastPerf=null,collectedBytes=0;
-let deviceConfig=null,stopAck=null,connecting=false,editing=null;
+let deviceConfig=null,stopAck=null,connecting=false,editing=null,importing=false;
 let heartbeat=null,writeChain=Promise.resolve(),deviceLost=0;
 function send(command){const target=port;writeChain=writeChain.catch(()=>{}).then(async()=>{if(!target?.writable)throw new Error("USB is disconnected");const w=target.writable.getWriter();try{await w.write(new TextEncoder().encode(command+"\n"));}finally{w.releaseLock();}});return writeChain;}
 let port,reader,reading=false,demoTimer,latest,lastReceived=0,history=[],historyPackets=[],records=[],run=null,started=0,unsaved=false;
 let meta={format:2,created:new Date().toISOString(),demo:false,tracks:[],transportEvents:[]};
 const fields=['track','kind','style','volume','setup','notes'];
+function importStatus(s,error=false){const el=$('import-status');el.textContent=s;el.style.color=error?'#ffb4aa':'';}
+const paintImport=()=>new Promise(resolve=>setTimeout(resolve,25));
 function notice(s){$('notice').textContent=s;}
 const replay=createReplay(()=>{unsaved=true;},notice);
 function status(s){$('status').textContent=s;}
 function controls(){
  const fresh=performance.now()-lastReceived<1500,analysing=replay.isAnalyzing();
- replay.setCaptureBusy(!!port||!!run||connecting);
- $('start').disabled=!!run||!!editing||!latest||!fresh;$('save-labels').hidden=!editing;
- $('stop').disabled=!run;$('download').disabled=!!run||!records.length;
+ replay.setCaptureBusy(!!port||!!run||connecting||importing);
+ $('start').disabled=importing||!!run||!!editing||!latest||!fresh;$('save-labels').hidden=!editing;
+ $('stop').disabled=!run;$('download').disabled=importing||!!run||!records.length;
  $('capture-stereo').disabled=connecting||!!port;
- $('connect').disabled=analysing||connecting||!!port||!!demoTimer;$('disconnect').disabled=!port;
- $('demo').disabled=!!port||!!run||!!demoTimer||records.length>0;
- $('import').disabled=analysing||!!run||!!port||!!demoTimer;$('new').disabled=analysing||!!run;
- fields.forEach(id=>$(id).disabled=!!run);
+ $('connect').disabled=importing||analysing||connecting||!!port||!!demoTimer;$('disconnect').disabled=!port;
+ $('demo').disabled=importing||!!port||!!run||!!demoTimer||records.length>0;
+ $('import').disabled=importing||analysing||!!run||!!port||!!demoTimer;$('new').disabled=importing||analysing||!!run;
+ fields.forEach(id=>$(id).disabled=importing||!!run);
+ $('tracks').inert=importing;$('replay-section').inert=importing;$('save-labels').disabled=importing;
  document.querySelectorAll('[data-mark]').forEach(b=>b.disabled=!run);
 }
 function receive(p){
@@ -109,7 +112,7 @@ $('new').onclick=()=>{
  if(demoTimer){clearInterval(demoTimer);demoTimer=null;latest=null;lastReceived=0;fields.forEach(id=>$(id).value=id==='kind'?'music':'');}
  replay.clear();editing=null;collectedBytes=0;records=[];history=[];historyPackets=[];meta={format:2,created:new Date().toISOString(),demo:false,tracks:[],transportEvents:[]};
  $('tracks').textContent='No runs yet.';renderSpectrum();$('events').replaceChildren();$('timer').textContent='00:00';
- notice('');status(port?'USB connected':'No device connected');controls();
+ importStatus('');notice('');status(port?'USB connected':'No device connected');controls();
 };
 $('download').onclick=()=>{
  try{
@@ -119,15 +122,35 @@ $('download').onclick=()=>{
  $('replay-save-hint').textContent='Session downloaded · includes annotations and all generated stem audio';
  }catch(e){notice(e.message);}
 };
-$('import').onclick=()=>{if(records.length&&unsaved){notice('Download your current session before opening another.');return;}$('file').click();};
+$('import').onclick=()=>{
+ if(importing)return;
+ if(records.length&&unsaved){const message='Download your current session before opening another.';notice(message);importStatus(message,true);return;}
+ // A failed import must be retryable by choosing the same file again.
+ $('file').value='';$('file').click();
+};
 $('file').onchange=async()=>{
- try{const f=$('file').files[0];if(!f)return;if(f.size>1000000000)throw new Error('Session exceeds the 1 GB portable notebook limit.');
- const data=unpack(await f.arrayBuffer());
+ const f=$('file').files[0];if(!f||importing)return;
+ importing=true;controls();$('import').textContent='Opening…';notice('');
+ try{
+ if(f.size>1000000000)throw new Error('Session exceeds the 1 GB portable notebook limit.');
+ importStatus(`Reading ${f.name} · ${(f.size/1048576).toFixed(1)} MB…`);
+ const buffer=await f.arrayBuffer();
+ importStatus('Checking session and embedded stem audio…');await paintImport();
+ const data=unpack(buffer);
  if(!Array.isArray(data.meta.tracks))throw new Error('Missing session notebook');
- for(const t of data.meta.tracks){if(!Number.isInteger(t.startFrame)||!Number.isInteger(t.endFrame)||t.startFrame<0||t.endFrame<t.startFrame||t.endFrame>data.records.length)throw new Error('Invalid run boundaries');t.summary=summarize(data.records.slice(t.startFrame,t.endFrame));t.markers=t.markers||[];}
+ for(const [i,t] of data.meta.tracks.entries()){
+  if(!Number.isInteger(t.startFrame)||!Number.isInteger(t.endFrame)||t.startFrame<0||t.endFrame<t.startFrame||t.endFrame>data.records.length)throw new Error('Invalid run boundaries');
+  importStatus(`Preparing run ${i+1} of ${data.meta.tracks.length} · ${t.track||'Untitled'}…`);await paintImport();
+  t.summary=summarize(data.records.slice(t.startFrame,t.endFrame));t.markers=t.markers||[];
+ }
+ // Keep the existing notebook intact until the replacement has been validated.
  replay.clear();editing=null;records=data.records;collectedBytes=records.reduce((n,p)=>n+p.length,0);meta=data.meta;historyPackets=records.slice(-256);history=historyPackets.map(decode);latest=history.at(-1);lastReceived=0;unsaved=false;
- renderTracks();notice(meta.demo?'This is a simulated session, not device evidence.':'Saved session opened.');controls();
- }catch(e){notice(e.message);}
+ renderTracks();
+ const stems=meta.tracks.filter(t=>t.stemAudio).length;
+ importStatus(`Opened ${f.name} · ${meta.tracks.length} runs${stems?` · ${stems} with embedded stems`:''}. Expand a run to replay and label it.`);
+ notice(meta.demo?'This is a simulated session, not device evidence.':'Saved session opened.');
+ }catch(e){const message=`Could not open ${f.name}: ${e.message}`;notice(message);importStatus(message,true);}
+ finally{importing=false;$('file').value='';$('import').textContent='Open saved session';controls();}
 };
 $('demo').onclick=()=>{
  meta.demo=true;$('track').value='Simulated 150 BPM groove';$('style').value='Demo';status('SIMULATED SIGNAL — no device evidence');
