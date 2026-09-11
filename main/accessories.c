@@ -13,8 +13,6 @@
 #define STAR_ORBIT   46
 #define STAR_CY      112
 #define STAR_PERIOD  1300
-#define X_HALF       30
-#define X_THICK      14
 
 /* z's */
 #define ZZ_X         (CX + 70)
@@ -32,7 +30,7 @@
 #define CHG_TAU_MS   160.f      /* ease of the sweeps */
 #define CHG_MAX_DPS  900.f      /* ...and their speed cap */
 
-static uint16_t col_star, col_x, col_zz, col_chg, col_track;
+static uint16_t col_star, col_zz, col_chg, col_track;
 
 static int add(acc_rect_t *out, int n, int x0, int y0, int x1, int y1);
 
@@ -41,7 +39,6 @@ static void colours(void)
     static bool done;
     if (done) return;
     col_star = gfx_rgb(255, 220, 60);
-    col_x = gfx_rgb(255, 140, 0);
     col_zz = gfx_rgb(160, 160, 170);
     col_chg = gfx_rgb(70, 210, 100);
     col_track = gfx_rgb(26, 26, 30);
@@ -62,6 +59,7 @@ void acc_set_angle(accessories_t *a, float deg)
 {
     a->angle_deg = deg;
 }
+void acc_set_anger(accessories_t *a,bool on){a->anger_on=on;}
 
 /* Rotate a point given relative to the screen centre by the face angle. */
 static void rot(const accessories_t *a, float x, float y, int *ox, int *oy)
@@ -89,7 +87,7 @@ void acc_set_zz(accessories_t *a, bool on, uint32_t now_ms)
 /* Props that turn with the face (the rim gauge does not). */
 static bool any_prop(const accessories_t *a)
 {
-    return a->ko_on || a->zz_on;
+    return a->ko_on || a->zz_on || a->anger_mix>0;
 }
 
 bool acc_any(const accessories_t *a)
@@ -201,6 +199,13 @@ static int zz_y(uint32_t now_ms, uint32_t t0)
 int acc_update(accessories_t *a, uint32_t now_ms, acc_rect_t out[ACC_MAX_DIRTY])
 {
     int n = 0;
+    uint32_t dt=a->anger_ms?now_ms-a->anger_ms:16;a->anger_ms=now_ms;
+    if(dt>100)dt=100;
+    a->anger_mix+=((a->anger_on?1.f:0.f)-a->anger_mix)*dt/(180.f+dt);
+    if(!a->anger_on && a->anger_mix<.01f)a->anger_mix=0;
+    if(a->anger_prev[0])n=add(out,n,a->anger_prev[0]-31,a->anger_prev[1]-31,a->anger_prev[0]+32,a->anger_prev[1]+32);
+    if(a->anger_mix>0){int x,y;rot(a,103,-116,&x,&y);n=add(out,n,x-31,y-31,x+32,y+32);a->anger_prev[0]=x;a->anger_prev[1]=y;}
+    else a->anger_prev[0]=0;
 
     /* rim gauge: the track sweeps in first, then the arc; on unplug the arc retracts, then the track */
     {
@@ -236,7 +241,7 @@ int acc_update(accessories_t *a, uint32_t now_ms, acc_rect_t out[ACC_MAX_DIRTY])
         }
     }
 
-    /* knocked out: stars move every frame, X eyes appear/disappear */
+    /* Knocked out: only the orbiting stars. The eyes remain in the eye renderer. */
     if (a->ko_on || a->ko_prev[0][0]) {
         int minx = W, miny = H, maxx = 0, maxy = 0;
         for (int i = 0; i < 3; i++) {
@@ -252,14 +257,6 @@ int acc_update(accessories_t *a, uint32_t now_ms, acc_rect_t out[ACC_MAX_DIRTY])
             a->ko_prev[i][1] = a->ko_on ? y : 0;
         }
         if (minx <= maxx) n = add(out, n, minx - STAR_R - 2, miny - STAR_R - 2, maxx + STAR_R + 3, maxy + STAR_R + 3);
-        if (!a->ko_on || now_ms - a->ko_t0_ms < 40) {
-            for (int e = 0; e < 2; e++) {
-                int cx, cy;
-                rot(a, (float)(a->eye_cx[e] - CX), (float)(a->eye_cy - CY), &cx, &cy);
-                const int m = X_HALF + X_THICK + 12;     /* diagonal extent when rotated */
-                n = add(out, n, cx - m, cy - m, cx + m + 1, cy + m + 1);
-            }
-        }
     }
 
     /* z's rise */
@@ -296,21 +293,19 @@ static bool inside_disc(const gfx_band_t *b, int r)
 void acc_paint(const accessories_t *a, const gfx_band_t *b, uint32_t now_ms)
 {
     colours();
+    if(a->anger_mix>0) {
+        int x,y;rot(a,103,-116,&x,&y);
+        float pulse=.82f+.18f*sinf(now_ms*.009f);
+        uint16_t red=gfx_rgb((int)(255*a->anger_mix*pulse),(int)(35*a->anger_mix),(int)(40*a->anger_mix));
+        /* Four inward arcs, like the comic anger mark, in a small clipped box. */
+        gfx_ring(b,x,y-25,19,5,130,230,red);gfx_ring(b,x+25,y,19,5,220,320,red);
+        gfx_ring(b,x,y+25,19,5,-50,50,red);gfx_ring(b,x-25,y,19,5,40,140,red);
+    }
     if (gauge_visible(a) && !inside_disc(b, CHG_R_OUT - CHG_THICK)) {
         if (a->chg_track > 0.f) gfx_ring(b, CX, CY, CHG_R_OUT, CHG_THICK, CHG_A0, CHG_A0 + (int)lrintf(a->chg_track), col_track);
         if (a->chg_arc > 0.f) gfx_ring(b, CX, CY, CHG_R_OUT, CHG_THICK, CHG_A0, CHG_A0 + (int)lrintf(a->chg_arc), col_chg);
     }
     if (a->ko_on) {
-        for (int e = 0; e < 2; e++) {
-            const float ex = (float)(a->eye_cx[e] - CX), ey = (float)(a->eye_cy - CY);
-            int x0, y0, x1, y1;
-            rot(a, ex - X_HALF, ey - X_HALF, &x0, &y0);
-            rot(a, ex + X_HALF, ey + X_HALF, &x1, &y1);
-            gfx_line(b, x0, y0, x1, y1, X_THICK, col_x);
-            rot(a, ex - X_HALF, ey + X_HALF, &x0, &y0);
-            rot(a, ex + X_HALF, ey - X_HALF, &x1, &y1);
-            gfx_line(b, x0, y0, x1, y1, X_THICK, col_x);
-        }
         for (int i = 0; i < 3; i++) {
             int x, y, rxp, ryp;
             star_pos(now_ms, a->ko_t0_ms, i, &x, &y);

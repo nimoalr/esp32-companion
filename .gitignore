@@ -8,3 +8,6 @@ sdkconfig.old
 tools/host/out/
 tools/host/bin/
 *.ppm
+
+# Local Python analysis helpers
+__pycache__/

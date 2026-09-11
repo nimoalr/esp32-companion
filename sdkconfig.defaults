@@ -2,6 +2,8 @@
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 
 # 8 MB octal PSRAM at 80 MHz. The renderer allocates nothing in PSRAM; it is
@@ -36,3 +38,6 @@ CONFIG_ESP_LCD_TOUCH_MAX_POINTS=1
 # the build to `main` and its dependencies, so esp_wifi / bt never compile.
 # 80 MHz QSPI: verified on the panel; the write beam must outrun the panel scan (docs/hardware.md, TE)
 CONFIG_EYES_LCD_PCLK_80M=y
+
+# A finite, expressive dim phase before panel-off sleep, on USB too.
+CONFIG_EYES_DROWSY_MIN_S=1800

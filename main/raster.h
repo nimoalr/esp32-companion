@@ -1,6 +1,6 @@
 /*
- * Analytic scanline rasteriser for eye shapes. Fixed point (Q16.16) throughout;
- * no floating point anywhere on the per-pixel or per-row path.
+ * Analytic scanline rasteriser for eye shapes. Fixed-point pixel paths;
+ * rotated geometry uses floating point per sub-row.
  *
  * A shape is a rounded rectangle with an independent, optionally elliptical
  * radius per corner (a capsule when all four equal min(hw, hh)), optionally
@@ -11,7 +11,7 @@
  *     arc is a positive bend).
  * Optionally the fill is shaded by a hot spot: a separable Gaussian lightness
  * falloff in screen space, sampled from two per-axis tables.
- * Each pixel row is sampled on four sub-scanlines; horizontal coverage on the
+ * Each pixel row is sampled on four sub-scanlines (two for busy dance scenes); horizontal coverage on the
  * edge pixels is exact. Coverage (0..255) indexes a 256-entry RGB565 LUT that
  * blends the eye colour over black.
  */
@@ -29,8 +29,14 @@ enum { RASTER_FX_NONE = 0, RASTER_FX_BARS, RASTER_FX_DISCO, RASTER_FX_SPOTS };
 #define RASTER_G2L_N 272    /* 256 + the largest dither offset */
 #define RASTER_DITHER_MAX 16
 
+/* Optional fixed-size polygon contours for symbol eyes. Edges are precomputed
+ * once per frame; row rasterization uses comparisons and fixed-point multiplies. */
+#define RASTER_PATH_EDGES 64
+typedef struct { int32_t y0, y1, x0, slope; } raster_edge_t;
+
 typedef struct {
     bool visible;
+    uint8_t aa_samples;    /* 2 for busy dance geometry, otherwise 4 (including default 0) */
     /* Geometry, Q16 pixels, screen coordinates */
     int32_t cx, cy;         /* centre */
     int32_t hw, hh;         /* half width / half height */
@@ -66,22 +72,27 @@ typedef struct {
      * Fill effects for the dance, in the eye's own frame so they tilt with it, through lut2 like
      * the hot spot (they take precedence over it): spectrum bars (eight, lit from their tops down
      * to the bottom of the eye, a one-pixel anti-aliased top, a one-pixel gap), a mirror ball
-     * (a facet grid turning along local x with facets flashing), light spots sweeping across.
+     * (a cached spherical projection), and projected spotlight cones.
      */
     int fx;                     /* RASTER_FX_NONE / BARS / DISCO / SPOTS */
+    const uint8_t *fx_tex;      /* cached 64 x 64 procedural lightness */
+    int32_t fx_dx, fx_dy;       /* Q16 camera offset from texture centre */
+    int32_t fx_sx, fx_sy;       /* Q16 texture coordinates per local pixel */
     int fx_mix;                 /* 0..256: how much of the effect shows against the plain fill */
     int32_t bar_top[8];         /* BARS: Q16 local y of each bar's top (local y grows downward; the bottom is +hh) */
     int32_t bar_w;              /* BARS: Q16 local width of a bar (2 hw / 8) */
     uint8_t bar_lit, bar_dim;   /* lightness levels 0..31 (all effects) */
-    int32_t disco_facet;        /* DISCO: Q16 facet size */
-    int32_t disco_spin;         /* DISCO: Q16 offset of the facet grid along local x (the ball turning) */
-    uint32_t disco_seed;        /* DISCO: which facets flash this frame */
-    int spots_n;                /* SPOTS: up to 3 light spots in local Q16 coordinates */
-    int32_t spot_x[3], spot_y[3], spot_r;
     /* Pixel bounding box, [x0, x1) x [y0, y1), already clipped to the screen */
     int px0, py0, px1, py1;
     const uint16_t *lut;    /* 256-entry coverage -> RGB565 (byte order as sent) */
+    int path_n;            /* 0 = ordinary analytic eye; otherwise even-odd contours */
+    raster_edge_t path[RASTER_PATH_EDGES];
+    int32_t path_x0, path_y0, path_x1, path_y1;
 } raster_shape_t;
+
+/* Append a closed contour of screen-space Q16 vertices. Start with path_n = 0.
+ * Returns false if the fixed edge budget would be exceeded. */
+bool raster_path_add(raster_shape_t *s, const int32_t (*xy)[2], int n);
 
 /* Fill in the derived fields (reciprocals, float mirror, flags) and the pixel bounding box from the geometry. */
 void raster_shape_finalize(raster_shape_t *s, int screen_w, int screen_h);

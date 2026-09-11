@@ -49,10 +49,10 @@ int main(void) {
     /* 5: knocked out, upright */
     eyes_set_face_angle(&eyes, 0.f); acc_set_angle(&acc, 0.f);
     for (int i = 0; i < 40; i++) { t += 16; acc_update(&acc, t, ar); }
-    anim_set(&sm, &eyes, ANIM_SLEEPING, t); acc_set_knocked_out(&acc, true, t);
-    settle(&sm, &eyes, sh, &t, 700); sh[0].visible = sh[1].visible = false; acc_update(&acc, t, ar); render(sh, &acc, t); ppm("out/c_ko.ppm");
+    anim_set(&sm, &eyes, ANIM_KNOCKED_OUT, t); acc_set_knocked_out(&acc, true, t);
+    settle(&sm, &eyes, sh, &t, 700); acc_update(&acc, t, ar); render(sh, &acc, t); ppm("out/c_ko.ppm");
     /* 6: sleeping face-down with zz (drawn upright here) */
-    acc_set_knocked_out(&acc, false, t); acc_set_zz(&acc, true, t); settle(&sm, &eyes, sh, &t, 900); acc_update(&acc, t, ar); render(sh, &acc, t); ppm("out/c_zz.ppm");
+    acc_set_knocked_out(&acc, false, t); acc_set_zz(&acc, true, t); anim_set(&sm, &eyes, ANIM_SLEEPING, t); settle(&sm, &eyes, sh, &t, 900); acc_update(&acc, t, ar); render(sh, &acc, t); ppm("out/c_zz.ppm");
     acc_set_zz(&acc, false, t);
 
     /* behaviour simulation */

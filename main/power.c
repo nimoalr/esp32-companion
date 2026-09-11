@@ -1,4 +1,5 @@
 #include "power.h"
+#include "power_policy.h"
 
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
@@ -209,23 +210,9 @@ power_state_t power_update(uint32_t now_ms, uint32_t touch_ms)
     /* Activity is stamped by other tasks (touch, audio) and can be a few ms
      * ahead of this loop's now_ms; a plain unsigned difference would wrap to
      * "idle for 49 days" and drop straight into DROWSY under the user's finger. */
-    const int32_t idle_ms = (int32_t)(now_ms - s_last_activity_ms);
-    switch (s_state) {
-    case POWER_ACTIVE:
-        if (idle_ms >= (int32_t)(CONFIG_EYES_ACTIVE_TIMEOUT_S * 1000u)) {
-            enter(POWER_DROWSY, now_ms);
-        }
-        break;
-    case POWER_DROWSY:
-        if ((int32_t)(s_last_activity_ms - s_state_since_ms) > 0) {
-            enter(POWER_ACTIVE, now_ms);
-        } else if (now_ms - s_state_since_ms >= CONFIG_EYES_DROWSY_MIN_S * 1000u && !power_on_usb()) {
-            enter(POWER_SLEEP, now_ms);     /* on USB power he only ever dozes: nothing is switched off */
-        }
-        break;
-    default:
-        break;
-    }
+    power_state_t next=power_policy_next(s_state,now_ms,s_last_activity_ms,s_state_since_ms,
+                                        CONFIG_EYES_ACTIVE_TIMEOUT_S*1000u,CONFIG_EYES_DROWSY_MIN_S*1000u);
+    if(next!=s_state)enter(next,now_ms);
 #endif
     return s_state;
 }
@@ -233,6 +220,12 @@ power_state_t power_update(uint32_t now_ms, uint32_t touch_ms)
 power_state_t power_state(void)
 {
     return s_state;
+}
+
+uint32_t power_idle_ms(uint32_t now)
+{
+    int32_t idle=(int32_t)(now-s_last_activity_ms);
+    return idle>0?(uint32_t)idle:0;
 }
 
 bool power_on_usb(void)
@@ -377,4 +370,25 @@ void power_battery(pmic_battery_t *out)
 bool power_motion_recent(uint32_t now_ms, uint32_t window_ms)
 {
     return s_last_motion_ms && (now_ms - s_last_motion_ms) <= window_ms;
+}
+
+void power_locked_begin(void)
+{
+    if (s_imu_ok) ESP_ERROR_CHECK(imu_power_down());
+    s_key = 0;
+    s_last_vbus_ms = 0;
+    hold_cpu(false);
+    /* Keep USB alive on cable; battery operation can automatically light-sleep. */
+    if (s_pmic_ok) pmic_read_vbus(&s_batt.vbus);
+    hold_nosleep(power_on_usb());
+}
+
+bool power_locked_poll(uint32_t now_ms)
+{
+    if (!s_pmic_ok || now_ms - s_last_vbus_ms < VBUS_MS) return false;
+    s_last_vbus_ms = now_ms;
+    bool sp = false, lp = false;
+    pmic_read_vbus(&s_batt.vbus);
+    hold_nosleep(power_on_usb());
+    return pmic_poll_key(&sp, &lp) == ESP_OK && (sp || lp);
 }

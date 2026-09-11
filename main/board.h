@@ -55,6 +55,9 @@
 /* ---- AXP2101 PMIC (shared I2C bus) ---------------------------------------- */
 #define BOARD_PMIC_ADDR        0x34             /* [HWREF][SCH] */
 
+/* BOOT / second button, active low [1.75C schematic, KEY / GPIO0]. */
+#define BOARD_BOOT_BUTTON      GPIO_NUM_0
+
 /* ---- Power ----------------------------------------------------------------
  * The panel connector J3 is fed from VCC3V3, which is AXP2101 DCDC1, the same
  * always-on rail that powers the ESP32-S3 itself [SCH]. Neither the maintained

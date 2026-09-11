@@ -27,7 +27,8 @@ int main(void) {
     eyes_init(&eyes, t); anim_init(&sm, &eyes, t); still(&eyes, t);
     char p[96];
     /* 1. every expression, settled */
-    for (int a = 0; a < ANIM_DANCE; a++) {
+    for (int a = 0; a < ANIM_COUNT; a++) {
+        if (a == ANIM_DANCE) continue; /* needs audio; the character preview drives it */
         anim_set(&sm, &eyes, (anim_id_t)a, t); still(&eyes, t);
         run(&sm, &eyes, sh, &t, 1400);
         render(sh); snprintf(p, sizeof p, "out/e_%02d.ppm", a); ppm_crop(p, 60, 406);
@@ -42,12 +43,12 @@ int main(void) {
     for (int i = 0; i < 11; i++) { anim_update(&sm, &eyes, t); eyes_update(&eyes, t, sh); render(sh); snprintf(p, sizeof p, "out/c_%02d.ppm", i); ppm_crop(p, 133, 333); t += 34; }
     /* 4. long dart strip: force a dart from (-14, 6) to (14, -8) */
     anim_set(&sm, &eyes, ANIM_NEUTRAL, t); still(&eyes, t); run(&sm, &eyes, sh, &t, 600);
-    eyes.idle.dart_to_x = -14 << 16; eyes.idle.dart_to_y = 6 << 16; eyes.idle.dart_from_x = eyes.idle.dart_to_x; eyes.idle.dart_from_y = eyes.idle.dart_to_y;
+    eyes.idle.dart_to_x = Q16(-14); eyes.idle.dart_to_y = Q16(6); eyes.idle.dart_from_x = eyes.idle.dart_to_x; eyes.idle.dart_from_y = eyes.idle.dart_to_y;
     eyes.idle.dart_t0_ms = t - 1000; eyes.idle.dart_dur_ms = 1; eyes.idle.dart_squash = 0;
     run(&sm, &eyes, sh, &t, 100);
     eyes.idle.rng = 7; eyes.idle.next_dart_ms = t;   /* fires now with a random target; override it right after */
     anim_update(&sm, &eyes, t); eyes_update(&eyes, t, sh);
-    eyes.idle.dart_to_x = 14 << 16; eyes.idle.dart_to_y = -8 << 16; eyes.idle.dart_dur_ms = 130; eyes.idle.dart_squash = Q16(0.28); eyes.idle.dart_lag_x = false; eyes.idle.blinking = false;
+    eyes.idle.dart_to_x = Q16(14); eyes.idle.dart_to_y = Q16(-8); eyes.idle.dart_dur_ms = 130; eyes.idle.dart_squash = Q16(0.28); eyes.idle.dart_lag_x = false; eyes.idle.blinking = false;
     for (int i = 0; i < 10; i++) { anim_update(&sm, &eyes, t); eyes_update(&eyes, t, sh); render(sh); snprintf(p, sizeof p, "out/d_%02d.ppm", i); ppm_crop(p, 133, 333); t += 16; }
     /* 5. transition strip: neutral -> surprised (anticipation + overshoot), frames 30 ms apart */
     anim_set(&sm, &eyes, ANIM_NEUTRAL, t); still(&eyes, t); run(&sm, &eyes, sh, &t, 600);
@@ -61,7 +62,7 @@ int main(void) {
     static const int look[4][2] = { { 0, -22 }, { 0, 0 }, { 0, 22 }, { -22, 0 } };
     for (int i = 0; i < 4; i++) {
         anim_set(&sm, &eyes, ANIM_NEUTRAL, t); still(&eyes, t);
-        eyes.idle.dart_to_x = eyes.idle.dart_from_x = look[i][0] << 16; eyes.idle.dart_to_y = eyes.idle.dart_from_y = look[i][1] << 16; eyes.idle.dart_dur_ms = 1; eyes.idle.dart_t0_ms = t - 10;
+        eyes.idle.dart_to_x = eyes.idle.dart_from_x = look[i][0] * Q16_ONE; eyes.idle.dart_to_y = eyes.idle.dart_from_y = look[i][1] * Q16_ONE; eyes.idle.dart_dur_ms = 1; eyes.idle.dart_t0_ms = t - 10;
         run(&sm, &eyes, sh, &t, 600); render(sh); snprintf(p, sizeof p, "out/g_%d.ppm", i); ppm_crop(p, 60, 406);
         printf("gaze %d: eye w %.1f h %.1f\n", i, (sh[0].hw * 2) / 65536.f, (sh[0].hh * 2) / 65536.f);
     }

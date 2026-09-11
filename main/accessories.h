@@ -1,5 +1,5 @@
 /*
- * Props drawn around the eyes: stars and X eyes
+ * Props drawn around the eyes: orbiting stars
  * when knocked out, floating z's when asleep. Pure C on gfx.h; the render
  * task composes them into the same bands as the eyes.
  */
@@ -31,16 +31,21 @@ typedef struct {
     float chg_track, chg_arc;       /* drawn extents in degrees from the start of the sweep */
     float chg_prev_track, chg_prev_arc;
     uint32_t chg_ms;
-    int eye_cx[2], eye_cy;  /* where the X eyes go (upright face) */
+    int eye_cx[2], eye_cy;  /* face anchors in upright coordinates */
     float angle_deg;        /* face rotation, clockwise */
     float prev_angle_deg;
     bool first;
+    bool anger_on;
+    float anger_mix;
+    uint32_t anger_ms;
+    int anger_prev[2];
 } accessories_t;
 
 void acc_init(accessories_t *a, int left_cx, int right_cx, int cy);
 void acc_set_knocked_out(accessories_t *a, bool on, uint32_t now_ms);
 void acc_set_zz(accessories_t *a, bool on, uint32_t now_ms);
 void acc_set_angle(accessories_t *a, float deg);
+void acc_set_anger(accessories_t *a, bool on);
 /* Rim gauge: shown while `on`; the arc length is the battery percentage, green while charging. */
 void acc_set_charge(accessories_t *a, bool on, int pct, bool charging);
 /* The screen was cleared behind our back: repaint the static parts next frame. */

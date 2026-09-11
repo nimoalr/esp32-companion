@@ -18,6 +18,19 @@ python3 tools/host/tile.py sheet.png 6 2 tools/host/out/e_*.ppm   # cols, downsc
 | `color_harness` | expression tints on three base colours and the mood extremes |
 | `feat_harness` | hot spot on/off, gaze-following hot spot, attention, face scale; prints per-frame timings |
 | `char_harness` | accessories and rotated faces, plus a behaviour simulation printout |
+| `character_test` | shake/KO/recovery integration, interrupted transitions, blink timing, rotated symbol bounds, scrolling reels and star dirty coverage; build with `-fsanitize=undefined -fno-sanitize-recover=all` |
+| `rim_test` | physical-disc visibility, hidden pauses, staggered peeks, rotated touch retreat, interrupted orbit and loop recovery for all ten rim actions |
+| `expression_preview` | all 51 poses plus attitude, playful, rim, high-roller, transition and before/after recovery videos; use `expressions.sh` to encode into `docs/expressions/` |
+| `dance_preview`, `dance.sh` | real spectrum, mirror-ball, spotlight and background-laser rendering; a synthetic kick/breakdown/return sequence in `docs/dance/` |
+| `dance_test` | all-fill laser occlusion, horizontal emitter row, rotated damage bounds, tiled rendering, independent 30–60 s timer, music response, clean exit, 20 Hz cap and dance timing at two frame rates |
+| `interaction_test` | all 26 idle choices, situational handling/conversation/food, purr affection phases, accepted-line gestures, scene priority, quiet rotation and tapped lower lids |
+| `personality_preview` | real behavior/renderer preview of petting and purring, knock recovery, and conversation; `personality.sh` exports a small MP4 |
+| `play_test` | continuous caresses, randomized sickness and games, rigid puck collisions, staged headbutts, crack compositing and procedural effects |
+| `play_preview` / `play_sounds` | six-panel animation preview and 16 kHz effect audition; run `play.sh` |
+| `interaction_preview` | a half-closed lower lid through an eye poke; writes `out/poke-preview.ppm` |
+| `dance_bench` | texture setup + eye raster timings, plus laser damage raster and estimated display traffic |
+| `audio_test` | exact firmware analysis and behavior on synthetic EDM, speech-like syllables, noise, hum, muted playback and audible breakdowns |
+| `audio_replay` | 16 kHz mono PCM16 WAV through actual audio analysis and behavior; optional target RMS (0 preserves input levels) and per-frame CSV |
 | `ui_harness` | every setup screen with synthetic sensor data |
 | `imu_cal_test` | accelerometer calibration maths: the three wizard poses on five sensor mountings, rejected poses, motion restart; exits non-zero on failure |
 | `sweep` | 60 Hz sweep through every expression with rotation, hot spot, face scale and attention; asserts nothing is drawn outside a shape's bounding box. Build with `-fsanitize=address,undefined` |
@@ -37,3 +50,33 @@ Timings are host numbers; use them for ratios, not for absolute budgets.
 `creature_round.sh`: three short, level-matched Junior auditions alternating words and interjections: the chosen sample treatment, a higher voice with formants preserved, and a metallic variant. Requires FFmpeg with rubberband and Python stdlib in addition to the existing macOS tools. Writes 16 kHz mono WAVs and a timing/level manifest under `docs/voice/`; see [the round's listening guide and clip contract](../../docs/voice/CREATURE_ROUND1.md). Does not regenerate the firmware bank.
 
 `familiar_babble.sh`: babbles and reactions through the selected Familiar treatment. Produces three babble families with word references plus a reactions/purr audition, using Junior and the existing `robot` processor. See [Familiar babbles](../../docs/voice/FAMILIAR_BABBLES.md) for clip order, the sample-bank approach, and the purr-loop follow-up. No firmware edits.
+
+Music calibration: [local USB Music Lab](../music-lab/README.md). `music_report`
+exports its compact sessions to CSV and JSON. `trace_test` writes a firmware-format
+fixture for the browser codec test; `rush_test` checks short-loop event detection.
+`dance_organic_preview` renders the independent disco cameras and two rush flourishes.
+
+Additional regression harnesses: `power_test` (finite idle policy), `speech_test`
+(actual voice-loop cancellation with mocked I/O), `glass_test` (shards, damage
+and anger mark). `review_preview` renders the latest four-panel refinements.
+
+`tools/host/glass_sounds.sh` regenerates the compact recorded glass effects and
+`docs/voice/glass_foley.wav` from bundled CC0 excerpts. See
+[`GLASS_SOUNDS.md`](../../docs/expressions/GLASS_SOUNDS.md) for sources and clip order.
+
+### Dance performance checks
+
+`dance_test` checks independent show occupancy across 32 ten-minute runs, the
+25 Hz spectrum target and 20 Hz lighting caps, both edge-quality settings,
+opaque eye interiors, damage cleanup, and transitions. `bar_runs_test` compares
+15,000 fractional/clipped spectrum rows with the original per-pixel path.
+`charge_cache_test` compares the cached charging ring with generic geometry
+and tiled output. `dance_quality` exports a four-versus-two-sample edge
+comparison to `out/dance-quality.ppm` and checks tiled equality.
+
+Regenerate the fixed rim cache from the repository root with
+`tools/host/build.sh charge_cache && tools/host/bin/charge_cache`. It uses
+22,894 bytes of flash and no persistent RAM. See
+[on-device benchmark instructions](../../docs/dance/PERFORMANCE.md).
+
+Stereo USB notebooks: `node tools/music-lab/export.mjs session.mcal output-dir` exports original 16 kHz stereo WAVs and range labels. `audio_replay input.wav 0 frames.csv` accepts mono or stereo and preserves recorded levels with `0`; see [Music Lab](../music-lab/README.md).

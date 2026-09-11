@@ -63,10 +63,18 @@ Shape (`raster.c`, `eyes.h`):
 * A per-eye angle (`angle`, degrees) on top of the face rotation: inner
   corners down for anger, outer corners down for sadness, one tilted eye for
   confusion, a counter-phase wobble for dizziness.
-* Everything stays analytic: the upright path is integer Q16, with one
+* Capsule eyes stay analytic: the upright path is integer Q16, with one
   square root per sub-scanline when the row's two corners share a radius and
   two when they do not; a bent lid or an angled eye switches to the float
   per-sub-row path already used for rotated faces (a quadratic per lid).
+* Heart eyes and slot reels use small polygon contours, with up to 64
+  precomputed edges per eye. The same four-subscanline coverage, RGB565 LUT,
+  hot spot and face rotation apply. Reel symbols scroll through a local window
+  and are clipped before rotation; each reel accelerates, slows and settles
+  independently. No bitmap frames or dynamic allocations are used.
+
+The [character expansion guide](expressions/README.md) catalogs all 51
+animations and links to videos rendered from these firmware sources.
 
 Secondary motion (`eyes.c`):
 

@@ -28,5 +28,9 @@ int main(void) {
     bench("sad (angle, bend)", &sm, &eyes, ANIM_SAD, 0.f);
     bench("neutral face 33 deg", &sm, &eyes, ANIM_NEUTRAL, 33.f);
     bench("angry face 33 deg", &sm, &eyes, ANIM_ANGRY, 33.f);
+    eyes_set_hotspot(&eyes, true);
+    bench("hearts shaded", &sm, &eyes, ANIM_HEARTS, 0.f);
+    bench("broken hearts shaded 33 deg", &sm, &eyes, ANIM_HEARTBREAK, 33.f);
+    bench("reels shaded", &sm, &eyes, ANIM_HIGH_ROLLER, 0.f);
     return 0;
 }

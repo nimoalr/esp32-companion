@@ -1,3 +1,18 @@
+/* Host replay compiles this exact analysis path; only device I/O is excluded. */
+#include "micdir.h"
+#include "audio_features.h"
+#include "rhythm_rush.h"
+#include "music_evidence.h"
+#ifndef AUDIO_ANALYSIS_HOST
+#include "music_trace.h"
+#endif
+#include <math.h>
+#include <string.h>
+#include <stdlib.h>
+#ifdef AUDIO_ANALYSIS_HOST
+#define portENTER_CRITICAL(lock) ((void)0)
+#define portEXIT_CRITICAL(lock) ((void)0)
+#else
 #include "audio.h"
 #include "micdir.h"
 
@@ -21,6 +36,8 @@
 
 static const char *TAG = "audio";
 
+#endif
+
 #define SAMPLE_RATE     16000
 #define FRAME           256                 /* samples per channel per analysis frame (16 ms) */
 #define BINS            (FRAME / 2)         /* 62.5 Hz per bin */
@@ -32,6 +49,7 @@ static const char *TAG = "audio";
 #define PRESENCE_FLOOR_LSB 30.f             /* raw RMS below this is room noise (measured ~18 in a quiet room) */
 #define PRESENCE_FULL_LSB  150.f            /* ...and above this it is unmistakably sound */
 
+#ifndef AUDIO_ANALYSIS_HOST
 static i2s_chan_handle_t s_rx, s_tx;
 
 static esp_codec_dev_handle_t s_dev;
@@ -40,7 +58,7 @@ static const audio_codec_ctrl_if_t *s_spk_ctrl_if;  /* kept across start/stop li
 static const audio_codec_if_t *s_spk_codec_if;
 static bool s_spk_opened;
 static int s_volume = 70;
-static volatile bool s_muted;
+
 static int16_t s_stereo[2 * 320];
 static const audio_codec_ctrl_if_t *s_ctrl_if;   /* created once, kept across start/stop */
 static bool s_opened;                             /* esp_codec_dev_open succeeded */
@@ -50,7 +68,10 @@ static TaskHandle_t s_task;
 static volatile bool s_run;
 
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
+#endif
+static volatile bool s_muted;
 static audio_features_t s_feat;
+static music_evidence_t s_music;
 
 /* analysis state */
 static float s_win[FRAME];
@@ -64,7 +85,9 @@ static float s_lp_x1, s_lp_x2, s_lp_y1, s_lp_y2;
 static float s_kick_mean, s_kick_prev, s_max_kick = 1.f;
 static float s_bass_ratio;
 static float s_dir, s_dir_conf, s_dir_lag;
+#ifndef AUDIO_ANALYSIS_HOST
 static int s_gain_db = CONFIG_EYES_AUDIO_GAIN_DB;
+#endif
 static float s_dir_off = 0.f, s_dir_gain = 0.5f;   /* raw lag -> -1..+1; the wizard sets these */
 static float s_dir_db_off = 0.f, s_dir_db_gain = 0.f; /* level difference (dB) -> -1..+1; 0 = unused */
 #define DIR_MAX_LAG 3                 /* cross-correlation lags for sustained sound */
@@ -73,13 +96,17 @@ static float s_dir_corr;
 static int s_dir_peak;
 static float s_dir_level_db;
 static float s_presence;              /* 0..1: is there real sound, from the raw level (quiet room ~18 LSB) */
-static float s_band_max[16], s_bands[16];
+static float s_band_max[16], s_bands[16], s_band_power[16];
+#ifndef AUDIO_ANALYSIS_HOST
+static struct {float kick,mean,previous,presence;unsigned flags;} s_trace;
+#endif
 /* speech: the mid band's envelope pulses at syllable rate (3-8 Hz) */
 static float s_sp_fast, s_sp_slow, s_sp_mod;
 static int s_sp_on, s_sp_off;
 static bool s_speech;
 static uint16_t s_dir_seen_n;
 static uint32_t s_transient_ms;
+static rhythm_rush_t s_rush;
 static float s_gap_ms;                /* current tempo estimate as a beat interval, 0 = none */
 static uint32_t s_last_beat_ms;
 static uint32_t s_beat_gaps[8];
@@ -183,6 +210,7 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
         for (int b = 0; b < 16; b++) {
             float pw = 0.f;
             for (int k = k_edge[b]; k < k_edge[b + 1]; k++) pw += s_re[k] * s_re[k] + s_im[k] * s_im[k];
+            s_band_power[b]=pw;
             const float lv = sqrtf(pw);
             s_band_max[b] *= 0.998f;
             if (lv > s_band_max[b]) s_band_max[b] = lv;
@@ -207,17 +235,19 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     /*
      * Onset: the bass must jump above its recent mean AND rise sharply from the previous frame
      * (a sustained bass note is not a beat), with real sound present. Once a tempo is locked the
-     * refractory period stretches to 0.7 of the beat interval, which rejects off-beats and the
+     * refractory period stretches to 0.55 of the beat interval, which rejects off-beats and the
      * doubled tempo they produce.
      */
     uint32_t refractory = BEAT_MIN_GAP_MS;
-    if (s_gap_ms > 0.f && (uint32_t)(0.7f * s_gap_ms) > refractory) refractory = (uint32_t)(0.7f * s_gap_ms);
+    if (s_gap_ms > 0.f && (uint32_t)(0.55f * s_gap_ms) > refractory) refractory = (uint32_t)(0.55f * s_gap_ms);
     const float kick_e = sqrtf(k_e / (float)FRAME);
     /* his own voice from the speaker is neither a beat nor a talker nor a direction: the levels and
      * the spectrum keep flowing (the dance visuals must not freeze), the detectors hold */
     const bool own_voice = s_muted;
-    const bool beat = !own_voice && kick_e > 1.6f * s_kick_mean && kick_e > 1.25f * s_kick_prev && s_presence > 0.25f &&
-                      (now_ms - s_last_beat_ms) >= refractory;
+    const float trace_mean=s_kick_mean, trace_prev=s_kick_prev;
+    const bool candidate = kick_e > 1.25f*s_kick_mean && kick_e > 1.10f*s_kick_prev && s_presence > .25f;
+    rhythm_rush_update(&s_rush,now_ms,candidate,s_gap_ms,s_bass_ratio,own_voice);
+    const bool beat = !own_voice && candidate && (now_ms-s_last_beat_ms)>=refractory;
     s_kick_prev = kick_e;
     s_kick_mean += (kick_e - s_kick_mean) * (1.f / 30.f);      /* ~0.5 s: spans a beat, not a bar */
     s_bass_prev = bass;
@@ -312,6 +342,8 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
         s_dir *= 0.995f;                 /* fade back to centre in silence, slowly */
     }
 
+    music_evidence_update(&s_music,bass,high,raw_lsb,own_voice);
+
     /* sub-bass share of the sound: music with a kick has plenty, conversation almost none */
     const float ratio = loud > 1e-5f ? kick_e / loud : 0.f;
     s_bass_ratio += (ratio - s_bass_ratio) * (1.f / 60.f);
@@ -337,19 +369,19 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
             }
             dev /= (float)s_gap_n;
             regularity = dev >= 0.5f ? 0.f : 1.f - 2.f * dev;
-            /* strict version: how many intervals sit within 12 % of the median (octave-folded) */
+            /* Admission confidence: real consecutive intervals, not half/double folds.
+             * Folding stays useful for motion regularity, but makes irregular speech
+             * with gaps of 300/600/800 ms look deceptively musical. */
             int good = 0;
             for (int i = 0; i < s_gap_n; i++) {
                 float g = (float)s_beat_gaps[i];
-                if (g > 1.5f * gap) g *= 0.5f;
-                if (g < 0.67f * gap) g *= 2.f;
                 if (fabsf(g - gap) <= 0.12f * gap) good++;
             }
-            tempo_conf = (float)good / (float)s_gap_n;
+            tempo_conf = s_gap_n >= 7 ? (float)good / (float)s_gap_n : 0.f;
         }
     }
     /* tempo lock for the refractory period: only while the rhythm looks regular and recent */
-    s_gap_ms = (regularity >= 0.5f && bpm >= 50.f && bpm <= 220.f) ? 60000.f / bpm : 0.f;
+    s_gap_ms = (s_gap_n >= 6 && tempo_conf >= 0.75f && bpm >= 85.f && bpm <= 185.f) ? 60000.f / bpm : 0.f;
     if (now_ms - s_last_beat_ms > 2500) { s_gap_ms = 0.f; s_gap_n = 0; s_gap_idx = 0; }   /* rhythm gone: start over */
     const float tot = l_e + r_e;
     const float bal = tot > 1e-6f ? (r_e - l_e) / tot : 0.f;
@@ -370,7 +402,8 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     const float sp_depth = s_sp_slow > 1e-4f ? s_sp_mod / s_sp_slow : 0.f;
     /* a voice close to the mics carries plenty of sub-bass (plosives, proximity), so the
      * bass share only rules out real music: a locked dance tempo with a kick under it */
-    const bool musical = tempo_conf >= 0.75f && bpm >= 85.f && bpm <= 185.f && s_bass_ratio >= 0.08f;
+    const bool musical = s_music.evidence >= 1.5f ||
+        (tempo_conf >= 0.75f && bpm >= 85.f && bpm <= 185.f && s_bass_ratio >= 0.08f);
     /* knocks and claps modulate the mid band too: a timed transient in the last 400 ms is not a syllable */
     if (s_micdir.n != s_dir_seen_n) { s_dir_seen_n = s_micdir.n; s_transient_ms = now_ms; }
     const bool knocking = s_transient_ms && (int32_t)(now_ms - s_transient_ms) < 400;
@@ -392,6 +425,15 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     s_feat.balance = s_balance;
     if (beat) s_feat.beat_count++;
     s_feat.last_beat_ms = s_last_beat_ms;
+    s_feat.rush_count=s_rush.count;s_feat.rush_ms=s_rush.event_ms;s_feat.rush_bpm=s_rush.bpm;
+    s_feat.music_conf=s_music.confidence;s_feat.music_bpm=s_music.bpm;s_feat.music_evidence=s_music.evidence;
+    /* A singer or sustained chord can keep the music audible without calling
+     * for a full jump. Tempo confidence and sub-bass weight set percussion
+     * intensity; this value never admits music on its own. */
+    const float recent = s_last_beat_ms && now_ms-s_last_beat_ms < 1200 ? 1.f : 0.f;
+    const float weight = fmaxf(0.f, fminf(1.f, (s_bass_ratio-.06f)*4.f));
+    const float drive = own_voice ? 0.f : recent * s_presence * weight * (.2f+.8f*tempo_conf);
+    s_feat.dance_drive += (drive-s_feat.dance_drive) * .025f;
     s_feat.bpm = bpm;
     s_feat.regularity = regularity;
     s_feat.tempo_conf = tempo_conf;
@@ -408,8 +450,46 @@ static void analyse(const int16_t *pcm, uint32_t now_ms)
     s_feat.dir_loud = s_micdir.loud;
     s_feat.dir_pre = s_micdir.pre;
     portEXIT_CRITICAL(&s_lock);
+#ifndef AUDIO_ANALYSIS_HOST
+    s_trace.kick=kick_e;s_trace.mean=trace_mean;s_trace.previous=trace_prev;s_trace.presence=s_presence;
+    s_trace.flags=candidate | (beat<<1) | (s_speech<<2) | (own_voice<<3) | ((peak>=32760)<<4) | ((s_rush.event_ms==now_ms)<<5);
+#else
+    (void)trace_mean;(void)trace_prev;
+#endif
 }
 
+static void analysis_reset(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    memset(&s_feat, 0, sizeof(s_feat));
+    portEXIT_CRITICAL(&s_lock);
+    music_evidence_reset(&s_music);
+    s_bass_mean = 0.f;
+    s_bass_prev = 0.f;
+    s_kick_mean = s_kick_prev = 0.f;
+    s_bass_ratio = 0.f;
+    s_dir = s_dir_conf = s_dir_lag = 0.f;
+    s_dir_seen_n = 0; s_transient_ms = 0; s_balance = 0.f;
+    micdir_reset(&s_micdir);
+    s_dir_corr = 0.f;
+    s_dir_peak = 0;
+    s_dir_level_db = 0.f;
+    s_lp_x1 = s_lp_x2 = s_lp_y1 = s_lp_y2 = 0.f;
+    s_max_kick = 1e-3f;
+    s_presence = 0.f;
+    for (int b = 0; b < 16; b++) { s_band_max[b] = 1e-3f; s_bands[b] = 0.f; }
+    s_sp_fast = s_sp_slow = s_sp_mod = 0.f;
+    s_sp_on = s_sp_off = 0;
+    s_speech = false;
+    s_gap_ms = 0.f;
+    memset(&s_rush,0,sizeof s_rush);
+    s_last_beat_ms = 0;
+    s_gap_n = s_gap_idx = 0;
+    s_max_bass = s_max_mid = s_max_high = s_max_loud = 1e-3f;
+
+}
+
+#ifndef AUDIO_ANALYSIS_HOST
 static void audio_task(void *arg)
 {
     static int16_t pcm[FRAME * 2];
@@ -425,6 +505,7 @@ static void audio_task(void *arg)
         portENTER_CRITICAL(&s_lock);
         s_feat.cpu_us = us;
         portEXIT_CRITICAL(&s_lock);
+        music_trace_offer(&s_feat,(uint32_t)(t0/1000),s_trace.kick,s_trace.mean,s_trace.previous,s_trace.presence,s_trace.flags,s_band_power,us,pcm);
     }
     s_task = NULL;
     vTaskDelete(NULL);
@@ -441,6 +522,7 @@ esp_err_t audio_start(void)
 
     /* Full duplex like the Waveshare BSP: the RX side alone left the ES7210's data line silent. */
     i2s_chan_config_t chan = I2S_CHANNEL_DEFAULT_CONFIG(CONFIG_EYES_AUDIO_I2S_NUM, I2S_ROLE_MASTER);
+    chan.dma_desc_num=6;chan.dma_frame_num=240; /* 90 ms at 16 kHz; speech drains 120 ms before PA off. */
     chan.auto_clear = true;
     ESP_RETURN_ON_ERROR(i2s_new_channel(&chan, &s_tx, &s_rx), TAG, "i2s channel");
     const i2s_std_config_t std = {
@@ -524,32 +606,10 @@ esp_err_t audio_start(void)
     gpio_config(&pa);
     gpio_set_level(BOARD_PA_EN, 0);
 
-    portENTER_CRITICAL(&s_lock);
-    memset(&s_feat, 0, sizeof(s_feat));
-    portEXIT_CRITICAL(&s_lock);
-    s_bass_mean = 0.f;
-    s_bass_prev = 0.f;
-    s_kick_mean = s_kick_prev = 0.f;
-    s_bass_ratio = 0.f;
-    s_dir = s_dir_conf = s_dir_lag = 0.f;
-    micdir_reset(&s_micdir);
-    s_dir_corr = 0.f;
-    s_dir_peak = 0;
-    s_dir_level_db = 0.f;
-    s_lp_x1 = s_lp_x2 = s_lp_y1 = s_lp_y2 = 0.f;
-    s_max_kick = 1e-3f;
-    s_presence = 0.f;
-    for (int b = 0; b < 16; b++) { s_band_max[b] = 1e-3f; s_bands[b] = 0.f; }
-    s_sp_fast = s_sp_slow = s_sp_mod = 0.f;
-    s_sp_on = s_sp_off = 0;
-    s_speech = false;
-    s_gap_ms = 0.f;
-    s_last_beat_ms = 0;
-    s_gap_n = s_gap_idx = 0;
-    s_max_bass = s_max_mid = s_max_high = s_max_loud = 1e-3f;
+    analysis_reset();
 
     s_run = true;
-    if (xTaskCreatePinnedToCore(audio_task, "audio", 6144, NULL, 6, &s_task, 0) != pdPASS) {
+    if (xTaskCreatePinnedToCore(audio_task, "audio", 6144, NULL, 9, &s_task, 0) != pdPASS) {
         s_run = false;
         audio_stop();
         return ESP_ERR_NO_MEM;
@@ -665,3 +725,5 @@ void audio_get_features(audio_features_t *out)
     *out = s_feat;
     portEXIT_CRITICAL(&s_lock);
 }
+
+#endif /* device I/O */

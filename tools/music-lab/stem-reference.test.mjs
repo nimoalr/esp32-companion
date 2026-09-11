@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {validateReference,paintReference} from './stem-reference.mjs';
+import {pack,unpack} from './trace.mjs';
+const hash='a'.repeat(64),r={format:'music-lab-stems-v1',source:{wavSHA256:hash,sampleRate:16000,channels:2,frames:3200},hopSamples:1600,unit:'0.1 dBFS',model:'htdemucs.yaml',levels:Object.fromEntries(['Mixture','Drums','Bass','Vocals','Other'].map(k=>[k,[-400,-500]]))};
+assert.equal(validateReference(r,3200,hash),r);
+assert.throws(()=>validateReference(r,3201,hash));assert.throws(()=>validateReference(r,3200,'b'.repeat(64)));
+assert.throws(()=>validateReference({...r,levels:{...r.levels,Drums:[-400]}},3200,hash));
+assert.throws(()=>validateReference({...r,levels:{...r.levels,Drums:[NaN,-500]}},3200,hash));
+const rects=[],ctx=new Proxy({fillRect:(...args)=>{assert(args.every(Number.isFinite));rects.push(args);}}, {get:(t,k)=>k in t?t[k]:()=>{},set:(t,k,v)=>{t[k]=v;return true;}});
+paintReference(ctx,r,{view:0,span:.2,playhead:.1,selection:[.05,.15],gaps:[{start:.1,end:.116}]});
+assert(rects.some(([x,y,w,h])=>x===606&&y===0&&w===1.5&&h===200));
+assert(rects.some(([x,y,w,h])=>x===359&&y===0&&Math.abs(w-494)<1e-8&&h===200));
+const annotations=[{start:0,end:.1,expected:'dance',label:'Human'}];
+const saved=unpack(await pack({tracks:[{stemReference:r,annotations}]},[]).arrayBuffer());
+assert.deepEqual(saved.meta.tracks[0].annotations,annotations);assert.deepEqual(saved.meta.tracks[0].stemReference,r);
+console.log('PASS reference identity, bounded curves, aligned playhead/selection/gap rendering and notebook persistence without label changes');

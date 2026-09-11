@@ -127,7 +127,7 @@ const char *ui_screen_name(ui_screen_t s)
 
 static void miccal_begin(ui_t *u, uint32_t now_ms);
 
-enum { MENU_CALIBRATE, MENU_LEVEL, MENU_BRIGHTNESS, MENU_COLOR, MENU_BATTERY, MENU_MICCAL, MENU_VOICE, MENU_DANCE, MENU_EYES, MENU_COUNT };
+enum { MENU_CALIBRATE, MENU_LEVEL, MENU_BRIGHTNESS, MENU_COLOR, MENU_BATTERY, MENU_MICCAL, MENU_VOICE, MENU_MUSIC_TRACE, MENU_DANCE, MENU_LOCK, MENU_EYES, MENU_COUNT };
 
 static const char *menu_label(const ui_t *u, int i, char *buf, int len)
 {
@@ -139,7 +139,9 @@ static const char *menu_label(const ui_t *u, int i, char *buf, int len)
     case MENU_BATTERY:    return "Battery";
     case MENU_MICCAL:     return u->settings->mic.valid ? "Calibrate mics" : "Calibrate mics  !";
     case MENU_VOICE:      return "Voice";
+    case MENU_MUSIC_TRACE:return u->music_recording?"Stop music capture":"Record music USB";
     case MENU_DANCE:      return "Dance mode";
+    case MENU_LOCK:       return "Locked Sleep";
     default:              return "Back to eyes";
     }
 }
@@ -148,8 +150,9 @@ static void paint_menu(const ui_t *u, const gfx_band_t *b)
 {
     chrome(b, "SETUP", "up/down  tap  hold=back");
     char buf[40];
-    for (int i = 0; i < MENU_COUNT; i++) {
-        const int y = LIST_Y + i * ROW_H;
+    const int first=u->menu_sel>5?u->menu_sel-5:0;
+    for (int i = first; i < MENU_COUNT && i<first+7; i++) {
+        const int y = LIST_Y + (i-first) * ROW_H;
         const bool sel = i == u->menu_sel;
         if (sel) {
             gfx_fill(b, BODY_X - 8, y, BODY_W + 16, ROW_H, C.sel_bg);
@@ -165,11 +168,11 @@ static void menu_input(ui_t *u, ui_input_t in, uint32_t now_ms)
     switch (in) {
     case UI_IN_UP:
         if (u->menu_sel < MENU_COUNT - 1) u->menu_sel++;
-        dirty_add(u, BODY_X - 8, LIST_Y, BODY_X + BODY_W + 8, LIST_Y + MENU_COUNT * ROW_H);
+        dirty_add(u, BODY_X - 8, LIST_Y, BODY_X + BODY_W + 8, LIST_Y + 7 * ROW_H);
         break;
     case UI_IN_DOWN:
         if (u->menu_sel > 0) u->menu_sel--;
-        dirty_add(u, BODY_X - 8, LIST_Y, BODY_X + BODY_W + 8, LIST_Y + MENU_COUNT * ROW_H);
+        dirty_add(u, BODY_X - 8, LIST_Y, BODY_X + BODY_W + 8, LIST_Y + 7 * ROW_H);
         break;
     case UI_IN_TAP:
         switch (u->menu_sel) {
@@ -199,6 +202,12 @@ static void menu_input(ui_t *u, ui_input_t in, uint32_t now_ms)
         case MENU_VOICE:
             u->voice_row = 0;
             goto_screen(u, UI_SCREEN_VOICE, now_ms);
+            break;
+        case MENU_MUSIC_TRACE:
+            action(u,UI_ACT_MUSIC_TRACE);
+            break;
+        case MENU_LOCK:
+            action(u, UI_ACT_LOCK_SLEEP);
             break;
         case MENU_DANCE:
             action(u, UI_ACT_DANCE);
