@@ -127,7 +127,7 @@ const char *ui_screen_name(ui_screen_t s)
 
 static void miccal_begin(ui_t *u, uint32_t now_ms);
 
-enum { MENU_CALIBRATE, MENU_LEVEL, MENU_BRIGHTNESS, MENU_COLOR, MENU_BATTERY, MENU_MICCAL, MENU_VOICE, MENU_MUSIC_TRACE, MENU_DANCE, MENU_EYES, MENU_COUNT };
+enum { MENU_CALIBRATE, MENU_LEVEL, MENU_BRIGHTNESS, MENU_COLOR, MENU_BATTERY, MENU_MICCAL, MENU_VOICE, MENU_MUSIC_TRACE, MENU_DANCE, MENU_LOCK, MENU_EYES, MENU_COUNT };
 
 static const char *menu_label(const ui_t *u, int i, char *buf, int len)
 {
@@ -141,6 +141,7 @@ static const char *menu_label(const ui_t *u, int i, char *buf, int len)
     case MENU_VOICE:      return "Voice";
     case MENU_MUSIC_TRACE:return u->music_recording?"Stop music capture":"Record music USB";
     case MENU_DANCE:      return "Dance mode";
+    case MENU_LOCK:       return "Locked Sleep";
     default:              return "Back to eyes";
     }
 }
@@ -204,6 +205,9 @@ static void menu_input(ui_t *u, ui_input_t in, uint32_t now_ms)
             break;
         case MENU_MUSIC_TRACE:
             action(u,UI_ACT_MUSIC_TRACE);
+            break;
+        case MENU_LOCK:
+            action(u, UI_ACT_LOCK_SLEEP);
             break;
         case MENU_DANCE:
             action(u, UI_ACT_DANCE);

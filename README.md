@@ -48,6 +48,12 @@ existing offsets.
 
 ## What it does
 
+**Locked Sleep.** Setup has a pocket/bag lock with a dim static lock icon.
+Both buttons briefly brighten it; only five presses of the second (BOOT)
+button within five seconds unlock it. The lock survives power cycles and
+starts without listening, audio capture, touch or animation tasks.
+See [Locked Sleep](docs/LOCKED_SLEEP.md) for controls and power behavior.
+
 **Eyes.** Two orange capsules blink every 3..10 s and dart to a new spot
 every 1..2.25 s, with the secondary motion that makes them read as alive:
 they squash on the way through a dart, widen into a sliver as they close,

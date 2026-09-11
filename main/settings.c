@@ -65,6 +65,7 @@ esp_err_t settings_init(void)
     if (nvs_get_u8(h, "vreg", &v) == ESP_OK && v <= 2) g_settings.voice_register = v;
     if (nvs_get_u8(h, "chat", &v) == ESP_OK && v <= 3) g_settings.chattiness = v;
     if (nvs_get_u8(h, "vol", &v) == ESP_OK && v <= 100) g_settings.volume = v;
+    if (nvs_get_u8(h, "locked", &v) == ESP_OK) g_settings.locked_sleep = v != 0;
     imu_cal_t cal;
     size_t len = sizeof(cal);
     if (nvs_get_blob(h, "cal2", &cal, &len) == ESP_OK && len == sizeof(cal) && cal.valid) {
@@ -104,4 +105,16 @@ esp_err_t settings_save(void)
     ESP_RETURN_ON_ERROR(err, TAG, "save");
     ESP_LOGI(TAG, "saved");
     return ESP_OK;
+}
+
+esp_err_t settings_set_locked(bool locked)
+{
+    nvs_handle_t h;
+    ESP_RETURN_ON_ERROR(nvs_open(NS, NVS_READWRITE, &h), TAG, "lock open");
+    esp_err_t err = nvs_set_u8(h, "locked", locked ? 1 : 0);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    if (err == ESP_OK) g_settings.locked_sleep = locked;
+    else ESP_LOGE(TAG, "could not persist lock: %s", esp_err_to_name(err));
+    return err;
 }

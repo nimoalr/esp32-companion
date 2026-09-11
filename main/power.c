@@ -371,3 +371,24 @@ bool power_motion_recent(uint32_t now_ms, uint32_t window_ms)
 {
     return s_last_motion_ms && (now_ms - s_last_motion_ms) <= window_ms;
 }
+
+void power_locked_begin(void)
+{
+    if (s_imu_ok) ESP_ERROR_CHECK(imu_power_down());
+    s_key = 0;
+    s_last_vbus_ms = 0;
+    hold_cpu(false);
+    /* Keep USB alive on cable; battery operation can automatically light-sleep. */
+    if (s_pmic_ok) pmic_read_vbus(&s_batt.vbus);
+    hold_nosleep(power_on_usb());
+}
+
+bool power_locked_poll(uint32_t now_ms)
+{
+    if (!s_pmic_ok || now_ms - s_last_vbus_ms < VBUS_MS) return false;
+    s_last_vbus_ms = now_ms;
+    bool sp = false, lp = false;
+    pmic_read_vbus(&s_batt.vbus);
+    hold_nosleep(power_on_usb());
+    return pmic_poll_key(&sp, &lp) == ESP_OK && (sp || lp);
+}

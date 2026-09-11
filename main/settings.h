@@ -15,6 +15,7 @@ typedef struct {
     mic_cal_t mic;               /* microphone axis, same rule */
     uint8_t voice_register;      /* 0 low, 1 mid, 2 high */
     uint8_t chattiness;          /* 0 quiet .. 3 talkative */
+    bool locked_sleep;          /* persisted pocket lock; only BOOT x5 clears it */
     uint8_t volume;              /* percent */
 } settings_t;
 
@@ -33,3 +34,6 @@ uint32_t settings_eye_rgb(void);
 /* Initialise NVS and load everything that is stored; missing keys keep their defaults. */
 esp_err_t settings_init(void);
 esp_err_t settings_save(void);
+
+/* Commit first; RAM changes only after a successful NVS commit. */
+esp_err_t settings_set_locked(bool locked);

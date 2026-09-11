@@ -45,6 +45,7 @@ typedef enum {
     UI_ACT_VOICE,           /* apply voice register / volume now */
     UI_ACT_SAY_WORD,        /* speak a sample word (ui_say_arg) */
     UI_ACT_SAY_MOOD,        /* speak a sample mood gesture (ui_say_arg) */
+    UI_ACT_LOCK_SLEEP,      /* persist pocket lock and restart into minimal mode */
     UI_ACT_MUSIC_TRACE,     /* toggle USB feature collection; returns to ordinary eyes */
 } ui_action_t;
 

@@ -9,6 +9,7 @@ name=$1
 shift || { echo "usage: build.sh <harness> [cflags]"; exit 1; }
 SRCS="$R/raster.c $R/eyes.c $R/eye_symbols.c $R/dance_fill.c $R/dance_lasers.c $R/anim.c $R/play.c $R/glass.c $R/sfx.c $R/adpcm.c $R/gfx.c $R/font_spleen_8x16.c $R/font_spleen_12x24.c $R/font_spleen_16x32.c $R/accessories.c $R/behavior.c $R/imu_cal.c $R/rhythm_rush.c $R/music_evidence.c"
 case "$name" in
+    lock_test) SRCS="$R/lock_policy.c $R/lock_screen.c $R/gfx.c $R/raster.c" ;;
     glass_sounds) SRCS="$R/sfx.c $R/adpcm.c" ;;
     bar_runs_test) SRCS="" ;;
     charge_cache) SRCS="" ;;

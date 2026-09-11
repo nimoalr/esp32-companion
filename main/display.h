@@ -74,3 +74,6 @@ void display_fill_black(void);
 uint32_t display_take_bytes(void);
 
 uint32_t display_pclk_hz(void);
+
+/* Stop frame pacing interrupts/timer; panel retains its static GRAM image. */
+void display_stop_pacing(void);

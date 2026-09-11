@@ -37,7 +37,7 @@ static const co5300_lcd_init_cmd_t s_init_cmds[] = {
     {0x3A, (uint8_t[]){0x55}, 1, 0},
     {0x35, (uint8_t[]){0x00}, 1, 0},
     {0x53, (uint8_t[]){0x20}, 1, 0},
-    {0x51, (uint8_t[]){0xFF}, 1, 0},
+    {0x51, (uint8_t[]){0x00}, 1, 0},
     {0x63, (uint8_t[]){0xFF}, 1, 0},
     {0x2A, (uint8_t[]){0x00, 0x06, 0x01, 0xD7}, 4, 0},
     {0x2B, (uint8_t[]){0x00, 0x00, 0x01, 0xD1}, 4, 600},
@@ -364,4 +364,11 @@ uint32_t display_take_bytes(void)
 uint32_t display_pclk_hz(void)
 {
     return CONFIG_EYES_LCD_PCLK_HZ;
+}
+
+void display_stop_pacing(void)
+{
+    display_wait_idle();
+    if (s_te_active) gpio_intr_disable(BOARD_LCD_TE);
+    if (s_pace_timer) esp_timer_stop(s_pace_timer);
 }

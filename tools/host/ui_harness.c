@@ -97,5 +97,12 @@ int main(void) {
     IN(UI_IN_TAP);assert(ui_take_action(&u)==UI_ACT_MUSIC_TRACE);
     u.music_recording=true;IN(UI_IN_TAP);assert(ui_take_action(&u)==UI_ACT_MUSIC_TRACE);
     puts("PASS: music capture start/stop action reachable in scrolling setup menu");
+    OPEN_ITEM(9);
+    assert(ui_take_action(&u)==UI_ACT_LOCK_SLEEP);
+    assert(ui_take_action(&u)==UI_ACT_NONE);
+    render(&u);write_ppm("out/ui_locked_sleep.ppm");
+    ui_init(&u,&g_settings,false,t);IN(UI_IN_TAP);
+    assert(ui_take_action(&u)==UI_ACT_EXIT);
+    puts("PASS: Locked Sleep and Back to eyes reachable in scrolling menu");
     return 0;
 }

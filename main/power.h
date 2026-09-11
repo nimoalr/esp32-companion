@@ -67,3 +67,7 @@ bool power_last_accel(int16_t raw[3], uint32_t *sample_ms);
 /* Battery telemetry, refreshed every few seconds by power_update(). */
 void power_battery(pmic_battery_t *out);
 bool power_motion_recent(uint32_t now_ms, uint32_t window_ms);
+
+/* Minimal boot path only: stop motion sensing, release CPU lock; poll PWR/USB. */
+void power_locked_begin(void);
+bool power_locked_poll(uint32_t now_ms);

@@ -26,6 +26,7 @@
 #include "eyes.h"
 #include "anim.h"
 #include "power.h"
+#include "locked_sleep.h"
 #include "settings.h"
 #include "battstat.h"
 #include "i2c_bus.h"
@@ -476,6 +477,16 @@ static void run_ui_actions(render_ctx_t *c, uint32_t now_ms)
     ui_action_t a;
     while ((a = ui_take_action(&c->ui)) != UI_ACT_NONE) {
         switch (a) {
+        case UI_ACT_LOCK_SLEEP:
+            if (settings_set_locked(true) == ESP_OK) {
+                speech_set_inhibited(true);
+                push_drain();
+                brightness_set_now(0);
+                for (int i = 0; i < 200 && speech_busy(); i++) vTaskDelay(pdMS_TO_TICKS(10));
+                if (audio_running()) audio_stop();
+                esp_restart(); /* No regular task exists in the locked boot path. */
+            }
+            break;
         case UI_ACT_MUSIC_TRACE:
             if(music_trace_enable(!music_trace_active())==ESP_OK) {
                 leave_ui(c,now_ms);
@@ -567,7 +578,8 @@ static void eyes_closed_now(render_ctx_t *c, uint32_t now_ms)
 /* SLEEP: panel off, light sleep until motion/touch (-> ACTIVE) or the deadline (-> DEEP). */
 static void do_sleep(render_ctx_t *c)
 {
-    /* a last word before the lights go out */
+    /* No queued voice/effect may restart audio while asleep. */
+    speech_set_inhibited(true);
     for (int i = 0; i < 200 && speech_busy(); i++) vTaskDelay(pdMS_TO_TICKS(10));
     push_drain();
     if (audio_running()) audio_stop();
@@ -593,6 +605,7 @@ static void do_sleep(render_ctx_t *c)
     /* Wake: eyes closed, panel back on black, then ease open at full brightness. */
     const uint32_t now_ms = ms_now();
     power_wake_to_active(now_ms);
+    speech_set_inhibited(false);
     eyes_closed_now(c, now_ms);
     c->prev[0] = c->prev[1] = rect_empty();
     display_sleep(false);
@@ -1081,6 +1094,11 @@ void app_main(void)
              esp_get_idf_version(), (int)esp_reset_reason(), (int)esp_sleep_get_wakeup_cause());
 
     ESP_ERROR_CHECK(settings_init());
+    if (g_settings.locked_sleep) {
+        /* Deliberately before USB capture, speech, touch and render task creation. */
+        ESP_ERROR_CHECK(i2c_bus_init());
+        locked_sleep_run(); /* Persists unlock and restarts; never returns. */
+    }
     music_trace_init();
     audio_set_dir_cal(&g_settings.mic);
     ESP_ERROR_CHECK(speech_init());
